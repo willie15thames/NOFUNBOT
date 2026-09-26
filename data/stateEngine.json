@@ -1,0 +1,8 @@
+{
+  "boards": {},
+  "timers": {},
+  "lastHashes": {},
+  "meta": {
+    "purpose": "Used by the state engine and board manager to prevent duplicate posts and noisy edits."
+  }
+}

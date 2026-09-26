@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "policies": {
+    "requireCommentsForNewProcesses": true,
+    "requiredCommentHeaders": [
+      "PROCESS NAME",
+      "PURPOSE",
+      "TRIGGER",
+      "CONDITIONS",
+      "FAILSAFE",
+      "ROLLBACK"
+    ],
+    "mustReviewPatchNotes": true,
+    "mustReviewLogs": true
+  },
+  "definitions": {
+    "onboarding-foundation": {
+      "id": "onboarding-foundation",
+      "name": "Onboarding Foundation",
+      "description": "Bootstraps the core setup and governance experience after setup completion.",
+      "preset": "onboarding-foundation",
+      "trigger": "setup-complete",
+      "enabled": true,
+      "conditions": [],
+      "tags": [],
+      "createdAt": 1773994321143,
+      "updatedAt": 1773994321143,
+      "steps": [
+        {
+          "order": 1,
+          "action": "deploy-commands",
+          "label": "Deploy Commands",
+          "runIf": [
+            "hasGuild"
+          ]
+        },
+        {
+          "order": 2,
+          "action": "apply-bot-identity",
+          "label": "Apply Bot Identity",
+          "runIf": [
+            "hasClient",
+            "hasGuild"
+          ]
+        },
+        {
+          "order": 3,
+          "action": "publish-patch-notes",
+          "label": "Publish Patch Notes",
+          "runIf": [
+            "hasGuild"
+          ]
+        },
+        {
+          "order": 4,
+          "action": "post-automation-status",
+          "label": "Post Automation Status",
+          "runIf": [
+            "hasGuild"
+          ]
+        }
+      ],
+      "commentPolicy": {
+        "required": true,
+        "headers": [
+          "PROCESS NAME",
+          "PURPOSE",
+          "TRIGGER",
+          "CONDITIONS",
+          "FAILSAFE",
+          "ROLLBACK"
+        ],
+        "scaffold": [
+          "PROCESS NAME: Onboarding Foundation",
+          "PURPOSE: Bootstraps the core setup and governance experience after setup completion.",
+          "TRIGGER: setup-complete",
+          "CONDITIONS: Verify guild state, permissions, and required services before executing.",
+          "FAILSAFE: Abort safely if required context is missing or the interaction is already settled.",
+          "ROLLBACK: If a step partially fails, stop creating new side effects and log the failing step."
+        ]
+      }
+    },
+    "governance-recovery": {
+      "id": "governance-recovery",
+      "name": "Governance Recovery",
+      "description": "Re-applies patch notes, guides, and validation surfaces after resets.",
+      "preset": "governance-recovery",
+      "trigger": "reset-complete",
+      "enabled": true,
+      "conditions": [],
+      "tags": [],
+      "createdAt": 1773994321144,
+      "updatedAt": 1773994321144,
+      "steps": [
+        {
+          "order": 1,
+          "action": "force-refresh-guides",
+          "label": "Refresh Guides",
+          "runIf": [
+            "hasGuild"
+          ]
+        },
+        {
+          "order": 2,
+          "action": "publish-patch-notes",
+          "label": "Publish Patch Notes",
+          "runIf": [
+            "hasGuild"
+          ]
+        },
+        {
+          "order": 3,
+          "action": "validate-settings",
+          "label": "Validate Settings",
+          "runIf": []
+        }
+      ],
+      "commentPolicy": {
+        "required": true,
+        "headers": [
+          "PROCESS NAME",
+          "PURPOSE",
+          "TRIGGER",
+          "CONDITIONS",
+          "FAILSAFE",
+          "ROLLBACK"
+        ],
+        "scaffold": [
+          "PROCESS NAME: Governance Recovery",
+          "PURPOSE: Re-applies patch notes, guides, and validation surfaces after resets.",
+          "TRIGGER: reset-complete",
+          "CONDITIONS: Verify guild state, permissions, and required services before executing.",
+          "FAILSAFE: Abort safely if required context is missing or the interaction is already settled.",
+          "ROLLBACK: If a step partially fails, stop creating new side effects and log the failing step."
+        ]
+      }
+    }
+  },
+  "runHistory": []
+}

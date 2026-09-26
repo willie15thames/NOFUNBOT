@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Local Git pre-commit gate for quality and regression checks.
+# Uses package.json script so the logic stays centralized.
+
+if command -v npm >/dev/null 2>&1; then
+  npm run precommit:run
+else
+  echo "[pre-commit] npm is required to run the project gate."
+  exit 1
+fi

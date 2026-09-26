@@ -1,0 +1,66 @@
+NOFUNLEAGUE ENGINEERING AI ACCOUNTABILITY DIRECTIVE v2
+
+PURPOSE
+This file governs any AI or developer modifying, refactoring, or repackaging the NOFUNLEAGUE codebase. The ZIP/source provided in the current session is the source of truth for the current implementation.
+
+PHASE 1 - BEFORE EDITING
+1. Read this entire file.
+2. Read PATCH_NOTES_AND_CONTEXT.txt and identify the recent changes that touch the requested area.
+3. Read CODEBASE_NAVIGATION.md and DEDUP_ARCHITECTURE.md.
+4. Extract and inspect the current source tree. Never rely on remembered prior sessions.
+5. Identify every file that will change.
+6. For every changed export/function, find callers before editing the signature.
+7. Identify current state owners before adding new state.
+8. Identify whether the requested feature already has a partial implementation.
+9. Write a short dependency map before modifying shared services.
+
+PHASE 2 - NO-REGRESSION RULES
+10. Preserve existing behavior unless the requested change explicitly changes it.
+11. Never delete a path because it looks duplicated until all callers and tests are mapped.
+12. Prefer adapter/compatibility wrappers over simultaneous signature changes.
+13. Do not flush or delete server structure in edit mode.
+14. Use find-or-create functions for structural Discord resources.
+15. Use the central message-send service where required by the current architecture.
+16. Do not create a new dedup layer. Extend the documented layer only when necessary and update DEDUP_ARCHITECTURE.md.
+17. Any new Map used for dedup/cooldown must have TTL cleanup or a max-size policy.
+18. Any new process timer must have explicit lifecycle management; no timer may be the sole authority for durable league state.
+19. No new critical loop may depend on process memory surviving a deployment/restart.
+20. Do not silently swallow critical errors. Optional cosmetic work may fail safely, but the result must remain observable.
+
+PHASE 3 - LEAGUE AUTOMATION RULES
+21. Never treat a timer expiry as proof that Madden advanced.
+22. Workflow week and source week are separate values.
+23. A new week is publishable only after source advancement is verified and required import validation passes.
+24. Use a league-specific distributed lock for advance/import/publish cycles.
+25. Use idempotency keys for provider control, webhook delivery and import processing.
+26. Provider capabilities are explicit. Unsupported capabilities must return a structured unsupported result.
+27. Discord publication occurs after durable database commit.
+28. Manual import remains an emergency fallback until direct providers are proven stable.
+
+PHASE 4 - AI RULES
+29. AI output must use a registered action catalog.
+30. Never add action types to a prompt without adding the matching executor/schema/test.
+31. Destructive actions require application-enforced confirmation.
+32. AI may not invent data, provider capabilities, completed actions, permissions or system state.
+33. Do not use self-reported AI confidence as a security control.
+34. Do not require or store hidden chain-of-thought. Store concise audit reasons/decision metadata only when explicitly defined by the schema.
+35. Runtime AI prompts must not contain secrets.
+36. AI-generated predictions are analysis, never authoritative league state.
+
+PHASE 5 - VERIFICATION
+37. Run node -c on every modified JS file.
+38. Run the TypeScript/config validation commands that apply to the changed surface.
+39. Run targeted tests for the changed flow.
+40. Run regression tests for setup, edit mode, AI mention routing, team assignment, game channel lifecycle, trade flow, stream flow and startup recovery.
+41. For provider work, test duplicate webhook, delayed webhook, malformed data, missing team, wrong week, partial import, provider 429/5xx, and restart recovery.
+42. Verify all new files are included in the release package.
+43. Verify the release package has index.js at its root when the deployment expects a flat package.
+44. Update patch notes with version/date/affected files/fix/risk/test evidence.
+45. Do not claim verification that was not actually performed.
+
+PHASE 6 - RELEASE GATE
+46. If any P0/P1 regression remains, do not release the feature to production.
+47. If a provider control path is unverified, expose the capability as unsupported/assisted, never as automatic.
+48. Keep compatibility flags until the new path passes the trial run.
+49. Preserve rollback by retaining the previous provider/path behind a feature flag until cutover is complete.
+50. A release is complete only when code, state migration, documentation, tests and operational recovery are all aligned.

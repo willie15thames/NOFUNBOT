@@ -1,0 +1,332 @@
+v203 - All 112 commands reachable (0 trimmed) via grouped aliases; top-level set unchanged
+
+- 12 previously cut admin commands now live under /game-channels (hub, schedule, live-sync), /streams restore and /workflow.
+- Same handlers and permissions; guides/manual show the real paths. See docs/COMMAND_ARCHITECTURE.md.
+
+v202 - League control plane (verified advance engine, providers, results, sessions) + AI action catalog v2
+
+- /game-channels: update, delete, advance-status, advance-settings, advance-now, advance-hold, advance-resume, sync-status, sync-now.
+- Advance engine never claims Madden advanced; publishes only after provider read-back + import validation. Shadow mode default ON.
+- Fixes audit BUG-001..BUG-011 (see PATCH_NOTES_AND_CONTEXT.txt [V202]). Destructive AI actions require the Confirm button.
+- npm test: 53 tests, 0 failures.
+
+v152 - Database migration prep + guild locks + dual-write + observability
+
+This version implements the Step-by-Step Guide requirements: DB readiness prerequisites,
+the singleton guildId fix, dual-write hybrid mode, guild-level destructive locks, and
+structured log correlation IDs.
+
+SCHEMA MIGRATION (prisma/migrations/20260319_v112_db_migration_prep):
+- ServerConfig: added 13 missing columns (payload, useSharedToneProfile, setupCompletedAt,
+  botAvatarMode, botAvatarUrl, botAvatarEmoji, serverTemplate, serverSubtemplate,
+  customStructureMode, customArrangementMode, customCatalogSelections, toneVisibility,
+  ageWarningEnabled). All 27 serverSettings DEFAULTS fields now have a DB destination.
+- Team: added isOpen, ownerId, displayTeam, logoUrl, replacementFor, isCustomTeam —
+  open-team registry can now write to Prisma.
+- League: added leagueTypeId, builtCategoryIds, builtChannelIds, commissionerRoleId,
+  isCustom, leagueTag — active league registry can now write to Prisma.
+- New table member_profiles: standalone profile model (distinct from MemberLedger),
+  stores timezone, timezoneLabel, nicknameBase, lastSeenDisplayName, streamCount.
+- New table guild_locks: serialization table for destructive command locking.
+  Primary key is (guildId, lockType) with expiry timestamp.
+- prisma/schema.prisma updated with all new fields plus MemberProfile and GuildLock models.
+
+SINGLETON GUILDID FIX (Guide prerequisite #5 and #6):
+- New src/services/serverConfigBootstrap.js: getGuildId() returns canonical guildId for
+  all singleton services. bootstrapServerConfig(guildId) upserts the ServerConfig row at
+  startup — guarantees FK exists before any other Prisma write. patchServerConfig() for
+  targeted field updates.
+- stabilityCoreMicroservice.js: bootstrapServerConfig() now runs as Phase 0 before
+  channel resolution, nickname sync, or any other startup work.
+
+HYBRID DUAL-WRITE (Guide DB sequence: write both, reads stay on JSON):
+- serverSettingsService.js: every saveSettings() call dual-writes to Prisma ServerConfig.
+  All 27 settings fields mapped to DB columns + full payload blob as overflow. Non-blocking,
+  best-effort — JSON remains primary read path.
+- wizardStateService.js: every _save() call dual-writes to Prisma WizardState. All 9 fields
+  mapped exactly (schema was already a perfect match).
+- memberLedgerService.js: every _save() call dual-writes all ledger entries to Prisma
+  MemberLedger table. Warnings, bans, kicks, notes, team history all persisted.
+
+GUILD-LEVEL DESTRUCTIVE LOCKS (Guide Phase 1: block overlapping destructive commands):
+- New src/services/guildLockService.js: in-memory lock Map with Prisma persistence.
+  acquire(guildId, lockType, userId) / release(guildId, lockType) / isLocked() / getLockInfo().
+  5-minute auto-expiry prevents stuck states on crash. Auto-purge every 2 minutes.
+- interactionRouter.js: guild lock check added before trash-the-bot and initialize-server.
+  Both commands now acquire lock on entry and release in finally blocks — crash-safe.
+  Clear user message shown when lock is already held with time remaining.
+- guildLockService hoisted to router top-level imports.
+
+STRUCTURED LOG CORRELATION (Guide Phase 1: add watchdog logs with IDs):
+- src/utils/logger.js: added setInteractionContext(id), setJobContext(id), clearContext().
+  Both pretty and JSON log formats now include interactionId and jobId when set.
+  JSON format: { ts, runId, interactionId?, jobId?, level, module, msg, data }.
+- interactionRouter.js handleInteraction(): generates ix-{short-id} per interaction,
+  sets context at entry, clears in finally — all logs within one interaction share the ID.
+- backgroundJobService.js createJob(): calls setJobContext(jobId) so all logs during a
+  job run are tagged with the job ID.
+
+v151 - 5 operational lock fixes (persistent storage, auth, Redis, DB, env)
+
+LOCK 1 FIXED — Ephemeral /tmp state wipe on every Railway restart:
+- railway-start.sh now detects when BOT_DATA_DIR is unset or inside /tmp and logs
+  a loud ⚠️ warning with exact fix instructions before the bot starts. No more
+  silent state loss — every restart shows the problem clearly in Railway logs.
+- .env.example updated: BOT_DATA_DIR=/data is now documented as strongly recommended,
+  with explanation that /tmp is wiped on every restart/deploy.
+
+LOCK 2 FIXED — COMMISSIONER_ROLE_ID missing from env docs and causing silent auth degradation:
+- .env.example rewritten: COMMISSIONER_ROLE_ID is now documented as "Strongly Recommended"
+  with clear explanation of what degrades without it (auth falls back to Discord Admin).
+- src/config/env.js: Added SOFT_REQUIRED warning system. At startup, if COMMISSIONER_ROLE_ID,
+  DATABASE_URL, or REDIS_URL are missing, the bot logs an explicit ⚠️ warning with the
+  exact consequence and fix — visible in Railway logs before first command.
+
+LOCK 3 FIXED — Redis/BullMQ silently inert with no indication:
+- railway-start.sh: explicit warning if REDIS_URL is missing before startup.
+- src/config/env.js: REDIS_URL added to SOFT_REQUIRED with warning at startup.
+- .env.example: REDIS_URL now documented as strongly recommended with Railway setup note.
+
+LOCK 4 FIXED — Prisma migrations not running, DB writes silently no-op:
+- railway-start.sh: if DATABASE_URL is set, now runs `prisma migrate deploy` automatically
+  before starting the bot, ensuring all migrations including v111 (AuditLog) are applied.
+- startupHealthCheckService.js: live DB ping at startup reports exact connection status.
+
+LOCK 5 FIXED — .env.example had wrong variable names causing broken fresh deploys:
+- .env.example completely rewritten with all correct variable names (COMMISSIONER_ROLE_ID
+  not COMM_ROLE, DISCORD_TOKEN not TOKEN), required vs optional sections, Railway-specific
+  notes, and BOT_DATA_DIR volume documentation.
+
+NEW SERVICES:
+- src/services/startupHealthCheckService.js: comprehensive dependency health check that
+  runs at bot startup. Checks all 5 locks (storage path, commissioner role, Redis, DB
+  connectivity, commissioner auth configured). Prints a clear ✅/⚠️ status table to logs.
+  Non-fatal — bot still starts if dependencies are missing.
+
+NEW COMMAND:
+- /health-status: run the health check on demand from Discord. Shows exactly which systems
+  are operational and what to do to fix any that aren't. Commissioner only.
+
+v150 - Code audit cleanup + Build Map Phase 1 & 2 implementation
+
+CRITICAL BUG FIXES:
+- BUG-01 FIXED: /audit-emojis ReferenceError — missing variable added to auditEmojis
+  destructure with default []. Command now runs without crashing.
+- BUG-02 FIXED: /set-bot-tone ReferenceError — buildSettings.audienceRating and
+  buildSettings.filterMode replaced with settings.audienceRating / settings.filterMode.
+  Variable was from a different scope (bot_setup_initialize button handler).
+- G-03 FIXED: /schedule-load-week crash — weeklyAutomation alias (only defined inside
+  dashboard case) replaced with weeklyAutomationService everywhere in schedule-load-week.
+
+GHOST VARIABLE FIXES:
+- I-04 FIXED: liveSync used in 5 command cases without any require in scope. Added
+  top-level require at the hoists block. Removed inline require from dashboard case.
+
+DEAD IMPORT CLEANUP:
+- Removed MessageFlags from discord.js destructure (never referenced).
+- Removed StringSelectMenuBuilder from discord.js destructure (never referenced).
+- Removed architectureSemantics top-level require (never called in this file).
+- Removed 4x inline require('discord.js') re-declarations inside case blocks.
+- Removed inline require('../config/env') re-declarations inside case blocks.
+- Removed inline require('../utils/helpers') re-declarations inside case blocks.
+
+ALIAS CLEANUP (inline → top-level):
+- scheduleRegistry = scheduleRegistryService: 5 alias declarations removed, callers
+  now use scheduleRegistryService directly.
+- gameCompat = gameChannelCompatService: alias removed, added top-level require.
+- weekly = weeklyAutomationService: alias removed, callers use service directly.
+- EmbedBuilder: EB alias inside hierarchy-status removed.
+- broadcastsService, waitlistService, gameChannelCompatService hoisted to top-level.
+- loadJson / saveJsonDebounced hoisted to top-level from inline uses.
+
+DUPLICATE COMMAND HANDLER REMOVAL (D-01 through D-08):
+- Deleted flat case 'ban-list' (dead — subcommand of /ban → sub=list).
+- Deleted flat case 'ban-player' (dead — subcommand of /ban → sub=add).
+- Deleted flat case 'unban' (dead — subcommand of /ban → sub=remove).
+- Deleted flat case 'game-channels-create' (dead — subcommand of /game-channels).
+- Deleted flat case 'game-channels-clear' (dead — subcommand of /game-channels).
+- Deleted flat case 'game-channels-rebuild' (dead — subcommand of /game-channels).
+- Deleted flat case 'member-history' (dead — subcommand of /member-record).
+- Deleted flat case 'member-note' (dead — subcommand of /member-record).
+
+SERVICE FIXES:
+- contentScanService.js: removed duplicate SOFT_SLUR_RX definition (line 24). Import
+  from contentSafetyService on line 14 is the single source of truth.
+- stateService.js: removed duplicate 'use strict' (was on line 1 AND line 19). Replaced
+  dead _db() helper (always returned null) with proper prismaSafe import.
+- container.js: deleted — was fully orphaned, referenced once as a try/catch fallback
+  that immediately fell through to a direct require anyway.
+- commissionerHandler.js: removed container.js fallback require in _requireChannelResolver,
+  now uses channelResolver directly.
+
+BUILD MAP PHASE 1 (Stabilization):
+- Added src/parsers/gameResultParser.js — extracted game channel routing from index.js,
+  resolving the TODO comment at line 521. index.js now has zero game business logic.
+- Added src/services/validationPipelineService.js — centralized pre-execution validation
+  pipeline for all commands. Implements Build Map Phase 2 validation layer.
+
+BUILD MAP PHASE 2 (Validation + Control Layer):
+- validationPipelineService: command classification system (instant / transactional /
+  orchestrated) covering all 70+ commands.
+- validationPipelineService: system state detection (live / installing / rebuilding /
+  degraded / killed) wired before hierarchy checks.
+- validationPipelineService: dependency validation framework for channel/role deps.
+- validationPipelineService: preflight destructive command gate.
+- interactionRouter: validation pipeline wired into _handleCommand — runs before
+  hierarchy enforcement, logs structured command entry for observability (Phase 8 prep).
+
+v149 - Security hardening, dynamic workflow engine, Docker build fix
+- CRITICAL FIX: Dockerfile now handles missing package-lock.json — npm ci is replaced with
+  a conditional that falls back to npm install --omit=dev, fixing "The application did not
+  respond" errors caused by container failing to build on Railway.
+- Added src/services/workflowEngineService.js: full trigger-based workflow engine with
+  define(), run(), onEvent(), emit(), and emitJobEvent() APIs. Three built-in workflows:
+  post-build, post-trash, post-league-reset. Commands and jobs now fire dynamic event hooks
+  instead of hardcoded sequential calls.
+- Added /workflow slash command: commissioners can list, log, and manually run any workflow.
+- Added src/services/securityMiddlewareService.js: centralized security layer with:
+  - Per-user/per-guild/per-command rate limiting (configurable windows, in-memory, GC'd)
+  - Input sanitization helpers (sanitizeInput, isValidSnowflake, isValidHttpsUrl)
+  - Persistent audit logging to AuditLog DB table with in-memory buffer fallback
+  - Permission enforcement helpers (checkPermissions, denyWithAudit)
+- Added /audit-log slash command: shows recent security events with severity indicators.
+- Added prisma/migrations/20260319_v111_audit_log_security/migration.sql: AuditLog table.
+- Wire security middleware into interactionCreate — rate limiter fires before router for all
+  non-autocomplete interactions.
+- trash-the-bot now emits job:trash-the-bot:completed workflow event and runs post-trash
+  workflow for guide refresh and automation status.
+- Added audit logging on trash-the-bot for security visibility.
+
+v146 - Railway Prisma relation repair and writable data-dir hardening
+- Fixed Prisma schema validation by adding missing ServerConfig back-relations for GuideState, WizardState, ChannelTopology, PendingOffense, StreamCredit, BackgroundJob, MemberLedger, and FeatureFlag.
+- Removed duplicate guildId field from WizardState in prisma/schema.prisma.
+- Hardened JSON storage path resolution so services use the resolved writable data directory instead of hard-coded /app/data assumptions.
+- Patched stateEngineService and leagueRegistryService to use shared storage path helpers.
+- Patched migration/export scripts to honor BOT_DATA_DIR fallback paths in containerized environments.
+
+NOFUNLEAGUE CHANGELOG
+====================
+
+v141 - Security hardening + microservice startup isolation + dynamic config sweep
+Date: 2026-03-18
+
+What changed
+- Reworked startup into isolated microservice modules:
+  - src/microservices/stabilityCoreMicroservice.js
+  - src/microservices/serverOperatingSystemMicroservice.js
+  - src/microservices/valueUnlockMicroservice.js
+  - src/microservices/automationAccessMicroservice.js
+  - src/services/microserviceRuntimeService.js
+- Refactored src/services/startupBuildOrderService.js to orchestrate the microservices instead of keeping the whole startup graph in one file.
+- Fixed the critical Postgres export path traversal risk in scripts/export-postgres-to-json.js by sanitizing keys and blocking path escape patterns.
+- Added src/services/accessPolicyService.js and removed ManageGuild-based commissioner escalation from shared admin checks.
+- Tightened staff-role resolution in:
+  - src/utils/helpers.js
+  - src/services/baseInitService.js
+  - src/services/leagueSetupService.js
+  - src/routing/interactionRouter.js
+- Scoped commissioner permission repair to explicit staff/admin lanes only in src/services/botAccessService.js.
+- Made AI readiness dynamic instead of fatal:
+  - src/config/env.js no longer hard-fails when ANTHROPIC_API_KEY is missing
+  - src/services/ai/anthropicService.js now exposes readiness/status and disables AI lanes gracefully
+- Moved more channel lookups from static literal names to shared dynamic config via:
+  - src/config/channels.js
+  - src/services/channelTopologyService.js
+  - src/services/channels/channelResolver.js
+  - src/services/timezoneGateService.js
+  - src/services/onboardingAutomationService.js
+  - src/routing/interactionRouter.js
+  - index.js
+- Removed one stale/unused setup helper from index.js.
+- Fixed package runtime inconsistency:
+  - package.json main -> index.js
+  - package.json start:prod -> node index.js
+- Added scripts/changelog-guard.js and package.json release:verify so changelog presence is part of release verification.
+
+Validation
+- Recursive node -c syntax scan: pass
+- JSON parse validation: pass
+- tsc --noEmit: pass
+
+v140 - Build order restructure + startup syntax hotfix
+Date: 2026-03-18
+
+What changed
+- Fixed the Unexpected token 'this' crash in src/services/hubReleaseService.js.
+- Added phased startup orchestration in src/services/startupBuildOrderService.js.
+- Updated index.js to boot through the new build order.
+
+[v142] 2026-03-18
+- Fixed Discord application command startup failure caused by duplicate slash command name `setup-league`.
+- Removed obsolete duplicate `/setup-league` definition that used legacy community/name/game options and conflicted with the active league-name setup flow.
+- Added registry safety dedupe in `src/commands.js` so duplicate command names are dropped with a warning instead of crashing command deployment.
+- Patched deprecated interaction reply usage in `index.js` by replacing `ephemeral: true` with `flags: 64`.
+- Rebuilt full distribution ZIP with updated changelog included.
+
+[v143] trash-the-bot interaction lane preservation fix
+- Preserved the active interaction channel and parent category during initialize/trash rebuilds so slash-command replies can complete without the lane being deleted mid-flight.
+- Added flush failure tracking for channel/category deletions to improve reboot diagnostics.
+- Forwarded preserveChannelIds/preserveCategoryIds through resetToInstallationMode for safer destructive rebuilds.
+
+[v145] railway storage hardening, prisma durability, and commissioner AI safety
+- Fixed Railway /app/data boot failure by making json storage resolve a writable data dir with BOT_DATA_DIR, project /data, then OS tmp fallback.
+- CIA-05: removed rejectUnauthorized:false from src/storage/jsonStore.js and src/queue/worker.js. Production SSL now uses RAILWAY_SSL_CERT_PATH when provided.
+- Added src/storage/prisma.js shared singleton so the bot uses one PrismaClient path instead of ad hoc client creation.
+- Updated prisma/seed.js to seed ServerConfig, WizardState, and 6 feature flags for the configured guild.
+- Added DB write-through for pending offenses, offense cooldowns, and stream credits in index.js.
+- Added DB fallback + resolution writeback for offense buttons in src/routing/interactionRouter.js.
+- SEC-04: removed user-facing internal error leakage from interactionRouter hot paths. Exact errors now stay in logs.
+- SEC-08: hardened commissioner AI gate so Administrator alone is not enough. Explicit commissioner role or allowlisted ID is required.
+- CIA-07: added commissioner AI rate limiting at 30 requests / 5 minutes / user and 200 requests / day / guild.
+- LOW-03: added hourly cleanup for gameInstigatorCooldowns alongside existing spam tracker cleanup.
+- Fixed deprecated interaction payload normalization so flags:64 stays flags:64 instead of being rewritten to ephemeral:true.
+
+
+[v147] first-wave remaining-plan implementation
+- Added persistent admin status cards via `src/services/statusCardService.js` so long-running setup and rebuild actions leave a readable in-channel trail for mobile and desktop users.
+- Added `src/services/backgroundJobService.js` and wired `/initialize-server` + `/trash-the-bot` to create, progress, complete, and fail `BackgroundJob` records when Prisma is available.
+- Added structured logging support in `src/utils/logger.js` with `LOG_FORMAT=json` and stable `RUN_ID` values for easier observability and log aggregation.
+- Added GitHub Actions CI workflow at `.github/workflows/ci.yml` to run install, Prisma generate, TypeScript checks, and release verification on push/PR.
+- Upgraded initialize/trash admin flows so progress is surfaced in persistent status cards instead of relying only on ephemeral replies.
+
+
+[v148] Railway runtime storage + Prisma generate guard
+- Default BOT_DATA_DIR to /tmp/nofunleague-data in railway-start.sh for read-only Railway runtimes
+- Skip runtime prisma generate when Prisma client already exists or node_modules is read-only
+- Prevent /app/data EACCES startup noise by exporting writable BOT_DATA_DIR before boot
+
+[v153]
+- Fixed fatal startup syntax error in src/routing/interactionRouter.js caused by a literal \n inserted into executable code during initialize-server flow.
+- Verified recursive JavaScript syntax scan passes across the full project.
+
+[v155]
+- Added Railway Redis + Postgres setup guide
+- Added .env.railway.example for production deployment
+- Added scripts/check-infra.js to summarize required and recommended runtime variables
+- Updated railway-start.sh to run infra checks before boot
+- Updated railway-start.sh to start BullMQ worker automatically when REDIS_URL is present
+- Added infra:check npm script
+
+
+[v158] Railway env validation + Prisma schema fix
+- Removed duplicate Team.logoUrl field from Prisma schema
+- Added infra validation for invalid DATABASE_URL prefixes and railway.internal misuse outside Railway
+- Refreshed .env.railway.example with clearer guidance
+- Added Railway remote deployment guide
+
+[v159]
+- Added centralized sendMessageService with preflight checks and bounded retry for transient message failures
+- Patched interaction router to run validation pipeline before command execution
+- Orchestrated commands now auto-defer via shared wrapper before heavy work
+- Hardened /manual to defer when attachment payloads are present
+- Hardened /initialize-server and /trash-the-bot with degraded-mode messaging and safer deferred reply flow
+- Status cards now post through centralized message send service
+
+[v160]
+- Added safe URL normalization utility to stop embed/message crashes from invalid URLs
+- Centralized payload sanitization in sendMessageService for embeds, images, thumbnails, and links
+- Hardened status card edits to reuse sanitized payloads
+- Hardened initialize-server and trash-the-bot to defer immediately and avoid pre-ack crashes
+- Added missing initialize-server guild lock release in finally block
+- Added process-level fatal guards for uncaught exceptions and unhandled rejections
+- Replaced direct URL parsing in key services with safe URL handling

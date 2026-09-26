@@ -1,0 +1,8 @@
+{
+  "mode": "manual",
+  "advanceHours": 48,
+  "autoCreateGameChannels": true,
+  "clearPreviousWeekChannels": true,
+  "lastAdvancedWeek": null,
+  "lastAutomationRunAt": null
+}

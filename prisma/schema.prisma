@@ -1,0 +1,482 @@
+/*
+ * NAVIGATION HEADER
+ * FILE: prisma/schema.prisma
+ * LAYER: Database schema and seed layer
+ * PURPOSE: Defines the database schema and persistence model.
+ * LOOK HERE FIRST WHEN DEBUGGING: Search this file for exported functions, top-level listeners, and state writes.
+ * RELATED FLOW: Used by persistence code and deployment/bootstrap workflows.
+ * NOTE: Keep comments in sync when adding new processes, handlers, or state transitions.
+ */
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOFUNLEAGUE Bot Schema V109
+// Hierarchy: server_config → communities → leagues → teams
+//            server_config → events
+//            users → user_communities → communities
+//            communities → role_mappings
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ServerConfig {
+  id                  String    @id @default(cuid())
+  guildId             String    @unique
+  template            String?
+  subtemplate         String?
+  theme               String?
+  timezoneGateEnabled Boolean   @default(false)
+  setupComplete       Boolean   @default(false)
+  botStatus           String    @default("active")
+  audienceRating      String    @default("pg13")
+  filterMode          String    @default("strict")
+  toneProfile         Json?
+  memberToneProfile   Json?
+  commToneProfile     Json?
+  botName             String    @default("myBot")
+  allowGifReplies     Boolean   @default(true)
+  requireTimezone     Boolean   @default(false)
+  serverInitialized       Boolean   @default(false)
+  useSharedToneProfile    Boolean   @default(false)
+  setupCompletedAt        DateTime?
+  botAvatarMode           String?
+  botAvatarUrl            String?
+  botAvatarEmoji          String?
+  serverTemplate          String?
+  serverSubtemplate       String?
+  customStructureMode     String?
+  customArrangementMode   String?   @default("auto")
+  customCatalogSelections Json?     @default("[]")
+  toneVisibility          String?   @default("public")
+  ageWarningEnabled       Boolean   @default(true)
+  payload                 Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  communities         Community[]
+  events              Event[]
+  guideStates         GuideState[]
+  wizardState         WizardState?
+  channelTopologies   ChannelTopology[]
+  pendingOffenses     PendingOffense[]
+  streamCredits       StreamCredit[]
+  backgroundJobs      BackgroundJob[]
+  memberLedgerEntries MemberLedger[]
+  featureFlags        FeatureFlag[]
+
+  @@map("server_config")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  guildId         String
+  userId          String
+  timezone        String?
+  timezoneLabel   String?
+  nicknameBase    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  communities     UserCommunity[]
+  teamMemberships TeamMember[]
+
+  @@unique([guildId, userId])
+  @@map("users")
+}
+
+model Community {
+  id              String    @id @default(cuid())
+  guildId         String
+  name            String
+  type            String    @default("social") // league, events, social, fanzone, competitive, community-driven, league-enabled, event-driven
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  serverConfig    ServerConfig  @relation(fields: [guildId], references: [guildId])
+  members         UserCommunity[]
+  leagues         League[]
+  roleMappings    RoleMapping[]
+
+  @@unique([guildId, name])
+  @@map("communities")
+}
+
+model UserCommunity {
+  userId          String
+  communityId     String
+  joinedAt        DateTime  @default(now())
+
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community       Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@id([userId, communityId])
+  @@map("user_communities")
+}
+
+model League {
+  id              String    @id @default(cuid())
+  communityId     String
+  name            String
+  game            String?
+  seasonType      String?
+  seasonWeeks     Int?
+  isActive            Boolean   @default(true)
+  leagueTypeId        String?
+  builtCategoryIds    Json?     @default("[]")
+  builtChannelIds     Json?     @default("[]")
+  commissionerRoleId  String?
+  isCustom            Boolean   @default(false)
+  leagueTag           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  community       Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  teams           Team[]
+  schedules       Schedule[]
+
+  @@map("leagues")
+}
+
+model Team {
+  id              String    @id @default(cuid())
+  leagueId        String
+  name            String
+  displayName     String?
+  location        String?
+  logoUrl         String?
+  isOpen          Boolean   @default(true)
+  ownerId         String?
+  displayTeam     String?
+  replacementFor  String?
+  isCustomTeam    Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  league          League      @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  members         TeamMember[]
+
+  @@unique([leagueId, name])
+  @@map("teams")
+}
+
+model TeamMember {
+  userId          String
+  teamId          String
+  joinedAt        DateTime  @default(now())
+
+  user            User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team            Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([userId, teamId])
+  @@map("team_members")
+}
+
+model Event {
+  id              String    @id @default(cuid())
+  guildId         String
+  name            String
+  description     String?
+  startTime       DateTime?
+  endTime         DateTime?
+  channelId       String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  serverConfig    ServerConfig  @relation(fields: [guildId], references: [guildId])
+
+  @@map("events")
+}
+
+model RoleMapping {
+  id              String    @id @default(cuid())
+  guildId         String
+  communityId     String?
+  roleId          String
+  roleName        String?
+  purpose         String?   // community-access, league-member, event-attendee, etc.
+  createdAt       DateTime  @default(now())
+
+  community       Community?  @relation(fields: [communityId], references: [id], onDelete: SetNull)
+
+  @@map("role_mappings")
+}
+
+model Schedule {
+  id              String    @id @default(cuid())
+  leagueId        String
+  week            Int
+  matchups        Json?
+  postedAt        DateTime?
+  advancedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  league          League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  @@unique([leagueId, week])
+  @@map("schedules")
+}
+
+// Legacy key-value store — kept for Railway deployments without full Postgres migration
+model BotKv {
+  key         String   @id
+  value       Json
+  source      String   @default("json")
+  checksum    String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("bot_kv")
+}
+
+model QueueAudit {
+  id         BigInt   @id @default(autoincrement())
+  queueName  String
+  jobName    String
+  status     String
+  payload    Json?
+  result     Json?
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("queue_audit")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V110 ADDITIONS — Guide State, Wizard State, Channel Topology,
+//                  Audit Events, Pending Offenses, Stream Credits,
+//                  Feature Flags, Background Jobs, Member Ledger
+// ─────────────────────────────────────────────────────────────────────────────
+
+model GuideState {
+  id                    String    @id @default(cuid())
+  guildId               String
+  channelId             String
+  guideChannelRole      String    // setup-wizard | welcome | league-guide | community
+  guideAnchorMessageId  String?
+  pinnedGuideMessageId  String?
+  lastActivityAt        DateTime?
+  idleRefreshAfterMs    Int       @default(900000)
+  lastRenderedStateHash String?
+  lastRefreshReason     String?
+  lastRefreshAt         DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, channelId])
+  @@map("guide_state")
+}
+
+model WizardState {
+  id                String    @id @default(cuid())
+  guildId           String    @unique
+  currentStep       String    @default("flow")
+  subStep           String?
+  completedSteps    Json      @default("[]")
+  activeMessageId   String?
+  installationMode  Boolean   @default(true)
+  editMode          Boolean   @default(false)
+  selectedSetupMode String?
+  lastAdvancedAt    DateTime?
+  lastBuildAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@map("wizard_state")
+}
+
+model ChannelTopology {
+  id              String    @id @default(cuid())
+  guildId         String
+  channelKey      String
+  channelId       String?
+  channelName     String?
+  displayLabel    String?
+  profileVersion  String?
+  lastVerifiedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, channelKey])
+  @@map("channel_topology")
+}
+
+model AuditEvent {
+  id          BigInt    @id @default(autoincrement())
+  guildId     String
+  userId      String?
+  eventType   String
+  category    String?
+  channelId   String?
+  payload     Json?
+  outcome     String?
+  errorMsg    String?
+  latencyMs   Int?
+  createdAt   DateTime  @default(now())
+
+  @@map("audit_events")
+}
+
+model PendingOffense {
+  id            String    @id
+  guildId       String
+  userId        String
+  channelId     String?
+  messageId     String?
+  offenseType   String
+  reasoning     String?
+  teamName      String?
+  confidence    String?
+  status        String    @default("pending")
+  resolvedBy    String?
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@map("pending_offenses")
+}
+
+model OffenseCooldown {
+  guildId       String
+  userId        String
+  lastFlaggedAt DateTime @default(now())
+
+  @@id([guildId, userId])
+  @@map("offense_cooldowns")
+}
+
+model StreamCredit {
+  id          BigInt    @id @default(autoincrement())
+  guildId     String
+  userId      String
+  teamName    String?
+  streamUrl   String?
+  messageId   String?
+  rewardLabel String?
+  creditedAt  DateTime  @default(now())
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, messageId])
+  @@map("stream_credits")
+}
+
+model FeatureFlag {
+  guildId       String
+  flag          String
+  enabled       Boolean   @default(false)
+  metadata      Json?
+  updatedAt     DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@id([guildId, flag])
+  @@map("feature_flags")
+}
+
+model BackgroundJob {
+  id            String    @id @default(cuid())
+  guildId       String
+  jobType       String
+  status        String    @default("queued")
+  triggeredBy   String?
+  payload       Json?
+  progress      Json?
+  result        Json?
+  errorMsg      String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@map("background_jobs")
+}
+
+model MemberLedger {
+  id                  String    @id @default(cuid())
+  guildId             String
+  userId              String
+  discordTag          String?
+  joinCount           Int       @default(0)
+  leaveCount          Int       @default(0)
+  kickCount           Int       @default(0)
+  banCount            Int       @default(0)
+  totalWarnings       Int       @default(0)
+  gameplayWarnings    Int       @default(0)
+  closeAppWarnings    Int       @default(0)
+  inactivityWarnings  Int       @default(0)
+  isBanned            Boolean   @default(false)
+  inactivityNotified  Boolean   @default(false)
+  lastActivityAt      DateTime?
+  lastJoinedAt        DateTime?
+  firstJoinedAt       DateTime?
+  notes               Json      @default("[]")
+  kickHistory         Json      @default("[]")
+  banHistory          Json      @default("[]")
+  teamHistory         Json      @default("[]")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  serverConfig  ServerConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, userId])
+  @@map("member_ledger")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  userId    String?
+  guildId   String?
+  targetId  String?
+  details   String?
+  severity  String   @default("info")
+  timestamp DateTime @default(now())
+
+  @@index([guildId, timestamp])
+  @@index([userId, timestamp])
+  @@map("audit_log")
+}
+
+model MemberProfile {
+  id                  String    @id @default(cuid())
+  guildId             String
+  userId              String
+  timezone            String?
+  timezoneLabel       String?
+  nicknameBase        String?
+  lastSeenDisplayName String?
+  streamCount         Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([guildId, userId])
+  @@map("member_profiles")
+}
+
+model GuildLock {
+  guildId   String
+  lockType  String
+  lockedBy  String?
+  lockedAt  DateTime @default(now())
+  expiresAt DateTime?
+
+  @@id([guildId, lockType])
+  @@map("guild_locks")
+}

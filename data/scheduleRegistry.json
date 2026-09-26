@@ -1,0 +1,11 @@
+{
+  "schema": "nofunleague-schedule-registry",
+  "version": 1,
+  "source": "local",
+  "currentWeek": null,
+  "weeks": {},
+  "teams": [],
+  "lastImportAt": null,
+  "lastExportAt": null,
+  "players": []
+}

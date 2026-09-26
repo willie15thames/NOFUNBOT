@@ -1,0 +1,11 @@
+{
+  "sourceMode": "custom_bot_managed",
+  "provider": "off",
+  "endpointUrl": "",
+  "autoSyncOnTrigger": false,
+  "loadCurrentWeekIntoLiveSchedule": true,
+  "runWeeklyAutomationAfterSync": true,
+  "lastSyncAt": null,
+  "lastSyncStatus": "idle",
+  "lastSyncSummary": null
+}

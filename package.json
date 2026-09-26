@@ -1,0 +1,54 @@
+{
+  "name": "nofunleague-bot",
+  "version": "21.9.0",
+  "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node index.js",
+    "start:prod": "node index.js",
+    "dev": "node --watch index.js",
+    "restart": "node index.js",
+    "doctor": "node scripts/doctor.js",
+    "tsc": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:seed": "node prisma/seed.js",
+    "db:bootstrap": "node scripts/db-bootstrap.js",
+    "db:migrate-json": "node scripts/migrate-json-to-postgres.js",
+    "db:export-json": "node scripts/export-postgres-to-json.js",
+    "stack:init": "npm run prisma:generate && npm run db:bootstrap && npm run db:migrate-json",
+    "queue:worker": "node src/queue/worker.js",
+    "postinstall": "prisma generate || echo prisma generate skipped",
+    "repair:deps": "rm -rf node_modules package-lock.json && npm install && npm install discord.js",
+    "start:railway": "sh scripts/railway-start.sh",
+    "start:health": "node health-server.js",
+    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js",
+    "deploy:preflight": "node scripts/predeploy-check.js",
+    "deploy:context": "node scripts/release-context.js",
+    "infra:check": "node scripts/check-infra.js",
+    "precommit:run": "node scripts/pre-commit-check.js",
+    "hooks:install": "node scripts/install-git-hooks.js",
+    "process:audit": "node scripts/pre-commit-check.js",
+    "test": "node tests/run-all.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@prisma/client": "^6.0.1",
+    "adm-zip": "^0.5.16",
+    "bullmq": "^5.16.0",
+    "discord.js": "^14.15.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^6.0.1",
+    "typescript": "^5.6.3"
+  }
+}
