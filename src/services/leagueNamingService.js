@@ -2,10 +2,10 @@
  * NAVIGATION HEADER
  * FILE: src/services/leagueNamingService.js
  * LAYER: Service layer / deterministic naming
- * PURPOSE: Restores the documented multi-league naming contract introduced in v18.
+ * PURPOSE: Stable channel keys inside league-owned categories; legacy names remain readable.
  * LOOK HERE FIRST WHEN DEBUGGING: leagueChannelName(), leaguePrefixCode().
  * RELATED FLOW: leagueSetupService, leagueFeatureService, league rules lookup.
- * NOTE: DO NOT silently change this format. Existing servers and lookup regexes depend on `<2-char-prefix>.<channel-key>`.
+ * NOTE: A category and stored resource IDs identify the league; channels use plain names.
  */
 
 'use strict';
@@ -45,22 +45,25 @@ function leaguePrefixCode(leagueName, fallbackLabel = 'league') {
 }
 
 /**
- * Canonical league-scoped text-channel name introduced by patch v18.
- * Example: "NOFUNLEAGUE" + "rules" -> "no.rules".
- * This remains deterministic so setup reruns can find/reuse the same channel.
+ * Channels are scoped by their league category, not by a name prefix.
+ * Example: "NOFUNLEAGUE" + "rules" -> "rules".
  */
 function leagueChannelName(leagueName, channelKey, fallbackLabel = 'league') {
-  const prefix = leaguePrefixCode(leagueName, fallbackLabel);
   const key = _channelKey(channelKey, 'channel');
-  return `${prefix}.${key}`.slice(0, MAX_DISCORD_CHANNEL_NAME);
+  return key.slice(0, MAX_DISCORD_CHANNEL_NAME);
 }
 
 /**
- * Compatibility alias retained for callers that were written against the old inline active-check naming rule.
- * Canonical and legacy are currently identical by design; keeping this helper makes future migrations explicit.
+ * Existing league channels may still have the old two-character prefix.
  */
 function legacyTwoCharChannelName(leagueName, channelKey) {
-  return leagueChannelName(leagueName, channelKey, 'lg');
+  return `${leaguePrefixCode(leagueName, 'lg')}.${_channelKey(channelKey, 'channel')}`.slice(0, MAX_DISCORD_CHANNEL_NAME);
+}
+
+function matchesLeagueChannelKey(name, key) {
+  const actual = String(name || '').toLowerCase();
+  const clean = _channelKey(key);
+  return actual === clean || new RegExp(`^[a-z0-9]{2}(?:[.-])?${clean}$`).test(actual);
 }
 
 module.exports = {
@@ -68,4 +71,5 @@ module.exports = {
   leaguePrefixCode,
   leagueChannelName,
   legacyTwoCharChannelName,
+  matchesLeagueChannelKey,
 };

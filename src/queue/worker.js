@@ -38,7 +38,8 @@ async function startWorker(redisUrl, databaseUrl) {
     enableReadyCheck: true,
     connectTimeout: 5000,
   });
-  const pool = new Pool({ connectionString: databaseUrl, ssl: getPgSslConfig() });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: getPgSslConfig(), connectionTimeoutMillis: 10000 });
+  connection.on('error',err=>console.error(`[worker] Redis: ${err.message}`));
 
   async function audit(status, jobName, payload, result, error) {
     try {
@@ -51,7 +52,14 @@ async function startWorker(redisUrl, databaseUrl) {
     }
   }
 
-  await Promise.all([connection.ping(), pool.query('SELECT 1')]);
+  let startupDeadline;
+  try{
+    await Promise.race([
+      Promise.all([connection.ping(),pool.query('SELECT 1')]),
+      new Promise((_,reject)=>{startupDeadline=setTimeout(()=>reject(Error('Worker dependency startup timed out')),15000);}),
+    ]);
+  }catch(error){connection.disconnect();await pool.end();throw error;}
+  finally{clearTimeout(startupDeadline);}
 
   const worker = new Worker('storage-sync', async job => {
     const { filename, data } = job.data || {};
@@ -79,9 +87,11 @@ async function startWorker(redisUrl, databaseUrl) {
     if (closing) return;
     closing = true;
     console.log(`[worker] shutdown requested (${signal})`);
+    const deadline=setTimeout(()=>process.exit(1),15000);deadline.unref();
     try { await worker.close(); } catch {}
     try { await connection.quit(); } catch { try { connection.disconnect(); } catch {} }
     try { await pool.end(); } catch {}
+    clearTimeout(deadline);
   }
   process.once('SIGTERM', () => shutdown('SIGTERM').finally(() => process.exit(0)));
   process.once('SIGINT', () => shutdown('SIGINT').finally(() => process.exit(0)));

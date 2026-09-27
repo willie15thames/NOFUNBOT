@@ -233,7 +233,18 @@ function saveJsonDebounced(filename, data, delayMs = 2000) {
   }, delayMs);
 }
 
+async function flushPendingWrites() {
+  const names=Object.keys(_timers);
+  for(const name of names){clearTimeout(_timers[name]);delete _timers[name];}
+  const failures=[];
+  for(const name of names){
+    const value=cache.get(name);mirrorToDisk(name,value);
+    if(process.env.DATABASE_URL && !(await writeThroughToDb(name,value,'shutdown')))failures.push(name);
+  }
+  if(failures.length)throw Error(`Pending writes saved to disk but database sync failed: ${failures.join(', ')}`);
+}
+async function closeStore(){if(dbPool){await dbPool.end();dbPool=null;}dbEnabled=false;}
 function getDataDir() { return DATA_DIR; }
 function getDataFilePath(filename) { return getFilePath(filename); }
 
-module.exports = { flushSpaceWrites, loadJson, saveJson, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };
+module.exports = { flushPendingWrites, closeStore, flushSpaceWrites, loadJson, saveJson, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };

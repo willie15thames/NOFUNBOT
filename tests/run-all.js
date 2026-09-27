@@ -16,7 +16,7 @@ const files = fs.readdirSync(dir).filter(f => f.endsWith('.test.js')).sort();
 let failed = 0;
 for (const f of files) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nfl-test-'));
-  const env = { ...process.env, BOT_DATA_DIR: dataDir, DISCORD_TOKEN: 'test-token', CLIENT_ID: '111111111111111111', GUILD_ID: '222222222222222222', AI_ENABLED: 'false', REDIS_URL: '', DATABASE_URL: '' };
+  const env = { ...process.env, NODE_ENV: 'test', APP_ENV: 'test', BOT_DATA_DIR: dataDir, DISCORD_TOKEN: 'test-token', CLIENT_ID: '111111111111111111', GUILD_ID: '222222222222222222', AI_ENABLED: 'false', REDIS_URL: '', DATABASE_URL: '' };
   const r = spawnSync(process.execPath, [path.join(dir, f)], { env, encoding: 'utf8', timeout: 120000 });
   const out = `${r.stdout || ''}`.split('\n').filter(l => /^\s*(✔|✘)|passed|^\s{6}/.test(l)).join('\n');
   console.log(out);

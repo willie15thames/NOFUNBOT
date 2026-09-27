@@ -27,7 +27,7 @@ The old db:bootstrap entry point now executes committed Prisma migrations instea
 5. Use the repository Dockerfile, start command `sh scripts/railway-start.sh`, and healthcheck `/ready`. Deploy the fixed commit. Verify Node 22, package version/commit, schema readiness and fresh uptime before running setup commands.
 6. If Prisma reports an existing unbaselined database, unfinished migration or conflicting legacy keys, stop and inspect that exact error. Do not run db push or mark migrations applied without verifying the actual schema and data.
 
-The diagnostic text does not prove that no tables exist. A failed schema probe means required tables/columns could not be read. Channel counts may reflect a partial build or template-specific expectations; do not create guessed channel names. League channel naming remains the documented two-character prefix format. The AI prose/JSON parse failure is a separate symptom; no action was executed in that screenshot.
+The diagnostic text does not prove that no tables exist. A failed schema probe means required tables/columns could not be read. Channel counts may reflect a partial build or template-specific expectations; do not create guessed channel names. RC4 removes the two-character text-channel prefix for new league channels; existing names remain supported. The AI prose/JSON parse failure is a separate symptom; no action was executed in that screenshot.
 
 ## Verification
 

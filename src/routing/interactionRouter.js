@@ -229,6 +229,15 @@ function _guardInstallationModeComponent(interaction) {
 }
 
 async function handleInteraction(interaction) {
+  require('../services/commandAliasService').resolveInteractionAlias(interaction);
+  const structural=guildLock.isDestructiveCommand(interaction.commandName)||/^(bot_setup_initialize|setup_)/.test(interaction.customId||'');
+  if(!structural||!interaction.guild)return _handleInteractionWithContext(interaction);
+  const result=await require('../storage/criticalStore').withExclusive(`v204:structure:${interaction.guild.id}`,()=>_handleInteractionWithContext(interaction));
+  if(result.acquired)return result.value;
+  const payload={content:'A server structure update is already running. Wait for it to finish before trying again.',flags:64};
+  return interaction.deferred||interaction.replied?interaction.editReply(payload):interaction.reply(payload);
+}
+async function _handleInteractionWithContext(interaction) {
   const context=require('../league/spaceContext');
   const registry=require('../services/activeLeagueService');
   const league=registry.findLeagueForChannel(interaction.channel);
@@ -1885,18 +1894,6 @@ async function _handleCommand(interaction, commandMeta = null) {
   }
   log.info(`[cmd] ${interaction.commandName} class=${vpResult.commandClass || 'unknown'} user=${interaction.user?.id}`);
 
-  // ── Guild-level lock: block overlapping destructive commands ──────────
-  if (guildLock.isDestructiveCommand(interaction.commandName)) {
-    const existing = guildLock.getLockInfo(guild.id, interaction.commandName);
-    if (existing) {
-      const remainingSecs = Math.ceil(existing.remainingMs / 1000);
-      return interaction.reply({
-        content: `⏳ **${interaction.commandName}** is already running in this server. Wait ~${remainingSecs}s or check the status card for progress.`,
-        flags: 64,
-      }).catch(() => null);
-    }
-  }
-
   // ── 6-Layer Hierarchy Enforcement ──────────────────────────────────────
   if (!isComm()) { // hierarchy checks apply to non-commissioners
     try {
@@ -2086,9 +2083,9 @@ async function _handleCommand(interaction, commandMeta = null) {
         if (before.length === after.length) {
           return interaction.editReply({ content: `❌ Community **${targetName}** not found.` });
         }
-        serverSettings.saveSettings({ ...settings, communities: after });
         const { deleteCommunityChannels } = spaceAutoGenService;
         await deleteCommunityChannels(guild, targetName);
+        serverSettings.saveSettings({ ...settings, communities: after });
         return interaction.editReply({ content: `✅ Community **${targetName}** and all its channels and roles have been removed.` });
       } catch (err) {
         return interaction.editReply({ content: safeUserError(err, '❌ Delete failed. Check the logs and try again.') });
@@ -3067,13 +3064,7 @@ case 'initialize-server': {
   }
   let statusCard = null;
   let bgJob = null;
-  // Acquire guild lock — prevent overlapping destructive runs
-  const _initLockAcquired = await guildLock.acquire(guild.id, 'initialize-server', interaction.user?.id);
-  if (!_initLockAcquired) {
-    const msg = '⏳ Server initialization is already running. Wait for it to finish or check the status card.';
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ content: msg }).catch(() => null);
-    return interaction.reply({ content: msg, flags:64 }).catch(() => null);
-  }
+  // Structural lock is owned by handleInteraction.
   try {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply({ content: '🧹 Switching to installation mode…' }).catch(() => null);
@@ -3159,7 +3150,7 @@ case 'initialize-server': {
     if (interaction.replied || interaction.deferred) return interaction.editReply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.') }).catch(() => null);
     return interaction.reply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.'), flags: 64 }).catch(() => null);
   } finally {
-    await guildLock.release(guild.id, 'initialize-server');
+    // Outer structural lock releases after this handler and state flush complete.
   }
 }
 
@@ -3256,11 +3247,7 @@ case 'trash-the-bot': {
   }
   let statusCard = null;
   let bgJob = null;
-  // Acquire guild lock — prevent overlapping destructive runs
-  const _trashLockAcquired = await guildLock.acquire(guild.id, 'trash-the-bot', interaction.user?.id);
-  if (!_trashLockAcquired) {
-    return _updateLongInteraction(interaction, ackMode, { content: '⏳ A reboot is already in progress for this server. Wait for it to finish or check the status card.', flags:64 }).catch(() => null);
-  }
+  // Structural lock is owned by handleInteraction.
   try {
     bgJob = await backgroundJobService.createJob({
       guildId: guild.id,
@@ -3365,7 +3352,7 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
     await recoverySelfHealService.healWizardGuide(fallbackCh, () => wizardRendererService.buildWizardPayload(guild, 'Trash reboot hit an error, but the setup guide was restored.'), singleMessageWizardService).catch(() => null);
     return _updateLongInteraction(interaction, ackMode, { content:`❌ Trash-the-bot failed. ${fallbackCh ? `The setup lane was restored in <#${fallbackCh.id}>.` : 'The setup lane may need to be reopened manually.'} Check the server logs for the exact error.`, flags:64 }).catch(() => null);
   } finally {
-    await guildLock.release(guild.id, 'trash-the-bot');
+    // Outer structural lock releases after this handler and state flush complete.
   }
 }
 
@@ -4170,7 +4157,7 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const team = interaction.options.getString('team');
       const url = interaction.options.getString('url') || '';
       const streamOps = streamOpsService;
-      const player = streamOps.addCount(_state, team, url);
+      const player = await streamOps.addCount(_state, team, url,{guildId:guild.id,operationId:interaction.id});
       if (!player) return interaction.reply({ content:'❌ Could not find that team.', flags:64 });
       return interaction.reply({ content:`✅ Restored one stream credit to **${player.displayTeam}**. Total: **${player.streamCount || 0}**.`, flags:64 });
     }
@@ -4676,17 +4663,17 @@ Clear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 }
       if (sub === 'count') {
         const key = interaction.options.getString('team-or-user');
         const url = interaction.options.getString('url') || '';
-        const player = streamOps.addCount(_state, key, url);
+        const player = await streamOps.addCount(_state, key, url,{guildId:guild.id,operationId:interaction.id});
         if (!player) return interaction.reply({ content:'❌ Could not find that team or owner.', flags:64 });
         return interaction.reply({ content:`✅ **${player.displayTeam}** now has **${player.streamCount || 0}** stream credits.`, flags:64 });
       }
       if (sub === 'remove') {
         const key = interaction.options.getString('team-or-user');
-        const player = streamOps.removeCount(_state, key);
+        const player = await streamOps.removeCount(_state, key,{guildId:guild.id,operationId:interaction.id});
         if (!player) return interaction.reply({ content:'❌ Could not find that team or owner.', flags:64 });
         return interaction.reply({ content:`✅ Removed one stream credit. **${player.displayTeam}** now has **${player.streamCount || 0}**.`, flags:64 });
       }
-      const resetCount = streamOps.resetAll(_state);
+      const resetCount = await streamOps.resetAll(_state,{guildId:guild.id,operationId:interaction.id});
       return interaction.reply({ content:`🧽 Reset stream counts for **${resetCount}** tracked team records.`, flags:64 });
     }
 

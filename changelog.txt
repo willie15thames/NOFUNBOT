@@ -1,3 +1,12 @@
+V204.5 stability repair candidate — package 21.10.0-rc.6
+Transactional results and stream history, membership compensation/recovery, safe template ownership and deletion retries, canonical scoped players, full-operation structural locks, validated DNS, isolated active checks, stable nicknames, periodic readiness and supervised workers. See docs/RC6_STABILITY_AND_DEPLOYMENT.md for verification evidence and mandatory staging gates.
+
+V204.4 community identity and connection correction — package 21.10.0-rc.5
+Preserve guild profile names, restore identifiable old bot team nicknames, show league team identity in scoped active checks, create taggable private membership roles, fail closed on active-check post and community permission errors, and remove inactive members from one league only. See docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md.
+
+V204.3 template and fallback correction — package 21.10.0-rc.4
+Ordinary league channel names inside unique categories, stable member nicknames, guarded template edit cleanup, scoped rules and private active checks, base permission isolation and visible core guide/permission failures. See docs/V204_TEMPLATE_AND_FALLBACK_AUDIT.md.
+
 V204.2 storage guard — package 21.10.0-rc.3
 Configured BOT_DATA_DIR must be writable; no silent fallback to another path. Two focused tests. See docs/V204_DATABASE_HOTFIX.md.
 

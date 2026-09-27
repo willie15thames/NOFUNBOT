@@ -35,13 +35,14 @@ function resolveParticipant(state, record, team, supplied) {
   const matches = (state.openTeamRegistry || []).filter(t => String(t.leagueId) === String(record.leagueId) && [t.baseTeam,t.displayTeam].some(x => norm(x)===norm(team)) && t.ownerId);
   return matches.length === 1 ? String(matches[0].ownerId) : null;
 }
-async function recordResult(guildId, record, state) {
-  return store.transact(key(guildId), empty(), data => {
+function recordResultIn(data, record, state) {
     const old = data.results[record.matchupKey];
-    const homeUserId = old ? old.homeUserId : resolveParticipant(state,record,record.homeTeam,record.homeUserId);
-    const awayUserId = old ? old.awayUserId : resolveParticipant(state,record,record.awayTeam,record.awayUserId);
+    if(old&&(old.leagueId!==record.leagueId||[norm(old.homeTeam),norm(old.awayTeam)].sort().join('|')!==[norm(record.homeTeam),norm(record.awayTeam)].sort().join('|')))throw Error('Result source belongs to a different matchup');
+    const sameHome=old&&norm(old.homeTeam)===norm(record.homeTeam);
+    const homeUserId = old ? (sameHome?old.homeUserId:old.awayUserId) : resolveParticipant(state,record,record.homeTeam,record.homeUserId);
+    const awayUserId = old ? (sameHome?old.awayUserId:old.homeUserId) : resolveParticipant(state,record,record.awayTeam,record.awayUserId);
     const saved = { ...record, homeUserId, awayUserId, status: 'ACTIVE' };
-    const revision = createHash('sha256').update(JSON.stringify([record.homeScore,record.awayScore,record.sourceRevision])).digest('hex');
+    const revision = createHash('sha256').update(JSON.stringify([record.homeTeam,record.awayTeam,record.homeScore,record.awayScore,record.sourceRevision])).digest('hex');
     if (old?.revision === revision && old.status==='ACTIVE') return old;
     saved.revision=revision;
     for (const uid of [homeUserId,awayUserId]) if(uid) touch(data,uid);
@@ -49,8 +50,10 @@ async function recordResult(guildId, record, state) {
     data.events.push({ type: old ? 'result-corrected' : 'result', key: record.matchupKey, previous: old || null, at:Date.now() });
     data.results[record.matchupKey] = saved;
     return saved;
-  });
 }
+async function recordResult(guildId,record,state){return transaction(guildId,data=>recordResultIn(data,record,state));}
+async function transaction(guildId,mutate){return store.transact(key(guildId),empty(),mutate);}
+async function snapshot(guildId){return store.read(key(guildId),empty());}
 async function retract(guildId, matchupKey, actor) {
   return store.transact(key(guildId), empty(), data => {
     const item=data.results[matchupKey]; if(!item || item.status==='RETRACTED') return false;
@@ -72,6 +75,40 @@ async function recordStat(guildId, entry) {
     data.events.push({type:old?'stat-corrected':'stat',id:entry.id,previous:old||null,at:Date.now()});
     data.stats[entry.id]={...entry};return entry;
   });
+}
+
+// Stream source identity, cooldown and award are one existing lifetime transaction.
+async function adjustStreamProgress(guildId,player,delta,operationId){
+ if(!player.leagueId||!player.userId)throw Error('Select a claimed team in its league before adjusting stream progress');
+ return transaction(guildId,data=>{
+  data.streamAccounts ||= {};data.streamAdjustments ||= {};
+  if(operationId&&data.streamAdjustments[operationId])return data.streamAdjustments[operationId];
+  const key=`${player.leagueId}:${player.userId}`;
+  const account=data.streamAccounts[key] ||= {count:Number(player.streamCount||0),lastCreditAt:player.lastStreamCreditAt||player.streamLog?.at(-1)?.timestamp||0};
+  account.count=delta===null?0:Math.max(0,account.count+delta);
+  const result={...account};
+  if(operationId)data.streamAdjustments[operationId]=result;
+  data.events.push({type:'stream-progress-adjusted',operationId:operationId||null,leagueId:player.leagueId,userId:player.userId,delta,at:Date.now()});
+  return result;
+ });
+}
+async function creditStream(guildId,input,seed={}){
+ if(!input.messageId||!input.userId||!input.leagueId||!input.game||!input.seasonId||!Number.isFinite(input.cooldown)||input.cooldown<0||!Array.isArray(input.rewards))throw Error('Stream credit needs a source, member, league, game, season and valid cooldown/rewards');
+ return transaction(guildId,data=>{
+  const id=`stream:${input.messageId}`;data.streamAccounts ||= {};data.stats ||= {};
+  if(data.stats[id])return{ok:false,reason:'duplicate'};
+  const accountKey=`${input.leagueId}:${input.userId}`;
+  const account=data.streamAccounts[accountKey] ||= {count:Number(seed.count||0)%16,lastCreditAt:Number(seed.lastCreditAt||0)};
+  const now=Date.now();
+  if(now-account.lastCreditAt<input.cooldown)return{ok:false,reason:'cooldown',remainingMs:input.cooldown-(now-account.lastCreditAt)};
+  touch(data,input.userId);const count=account.count+1;
+  data.stats[id]={id,userId:input.userId,leagueId:input.leagueId,metric:'stream_credits',value:1,game:input.game,seasonId:input.seasonId};
+  data.events.push({type:'stat',id,at:now});
+  const reward=input.rewards.find(r=>r.count===count)||null;
+  if(reward){const awardId=`stream-award:${input.messageId}`;data.awards[awardId]={id:awardId,userId:input.userId,leagueId:input.leagueId,title:reward.label,status:'ACTIVE',recordedAt:now};data.events.push({type:'award',id:awardId,at:now});}
+  account.count=count>=16?0:count;account.lastCreditAt=now;
+  return{ok:true,count,nextCount:account.count,lastCreditAt:now,reward};
+ });
 }
 
 async function career(guildId,userId) {
@@ -98,4 +135,4 @@ async function importLegacy(guildId,state) {
     return {imported,unresolved};
   });
 }
-module.exports={recordStat,METRICS,archiveCompetition,presence,award,recordResult,retract,revokeAward,career,importLegacy};
+module.exports={adjustStreamProgress,creditStream,transaction,snapshot,recordResultIn,recordStat,METRICS,archiveCompetition,presence,award,recordResult,retract,revokeAward,career,importLegacy};

@@ -1,3 +1,10 @@
+[V204.5 / package 21.10.0-rc.6] Stability repair candidate
+Must not regress prior private spaces or lifetime history. Review patch notes and review logs before deployment. Thirteen RC5 fault cases repaired; focused tests plus prior suite retained. Structural locks, membership journals, transactional scores/stream history, DNS checks, supervised worker/readiness and retryable cleanup. Read docs/RC6_STABILITY_AND_DEPLOYMENT.md. Networked PostgreSQL CI, live Discord, worker fault injection and paired backup restore remain release gates.
+
+RC5 community identity and connection correction: Discord nicknames are one per guild. Keep profile names stable and show league teams in scoped posts. Readable mentionable roles are created for each new league/event. Active-check send failure no longer starts a timer; inactivity removal is league-only. Community role/permission failures are visible. See docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md.
+
+RC4 template and fallback correction: ordinary league channel names, stable guild nicknames, guarded template edit cleanup, scoped rules presets and private active-check fallback. Base permission refresh excludes league assets and core guide/permission errors propagate. Static scan counts and unresolved risk register: docs/V204_TEMPLATE_AND_FALLBACK_AUDIT.md. Stage before deploying.
+
 RC3 storage guard: an explicitly configured BOT_DATA_DIR now fails startup if inaccessible instead of falling back to another path. Test before merging the existing RC2 branch.
 
 [2026-09-27 UTC] V204 database alignment hotfix for package 21.10.0-rc.2

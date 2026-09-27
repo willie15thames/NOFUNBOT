@@ -1,3 +1,11 @@
+# RC5 community identity and connection correction
+
+Package 21.10.0-rc.5 supersedes RC4. A Discord nickname applies to the whole server, so new team and timezone nicknames are no longer assigned automatically. Identifiable old bot team nicknames are cleared to reveal the Discord profile name; other custom nicknames remain. Team labels appear in league-specific posts. New league and event membership roles are readable, unique and mentionable for tagging without server-wide privileges. Active-check send errors leave the timer unset, and inactivity removal revokes only that league's team and role. Community access no longer reports success after role or permission failures; pending private league categories are excluded from community permission edits. See `V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md` for the wiring matrix, evidence and limitations. Existing opaque role names are not automatically renamed. Live staging remains required.
+
+# RC4 template and fallback correction
+
+Package 21.10.0-rc.4 supersedes RC3. League channel names use their ordinary key because unique categories and resource IDs establish ownership. Legacy prefixed names remain readable. Member nicknames no longer oscillate between league channels. Template edits remove only identifiable obsolete bot channels and empty old categories, retaining manual and private resources. Rules presets, active checks and base permission edits now honor the selected league boundary. Core guide/permission failures are reported. See `V204_TEMPLATE_AND_FALLBACK_AUDIT.md` for exact scope, scan counts and outstanding work. The Word audit now includes Section 30. This has not been validated in a live Discord guild.
+
 # RC3 packaging update
 
 Package 21.10.0-rc.3 fails startup when an explicitly configured BOT_DATA_DIR cannot be written. This prevents a silent fallback to a different JSON directory. A focused test covers the failure and valid volume path. The RC2 branch is already on GitHub; push this revision to the same branch before opening or merging the pull request. Staging migration, backup restore and live Discord permission checks remain required.

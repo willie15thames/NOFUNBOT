@@ -20,7 +20,7 @@ const { resolveTemplateProfile, getServerTemplatesMap } = require('./templateReg
 const SERVER_TEMPLATES = getServerTemplatesMap();
 const patchNotesService = require('./patchNotesService');
 const { getStaffRoles: getConfiguredStaffRoles } = require('./accessPolicyService');
-const { getReadOnlyBaseChannelNames, isStaffRepairChannel, getConfiguredChannelName, findConfiguredChannel } = require('./channelTopologyService');
+const { getReadOnlyBaseChannelNames, isStaffRepairChannel, findConfiguredChannel } = require('./channelTopologyService');
 
 
 function isDeletableGuildChannel(ch, opts = {}) {
@@ -255,32 +255,15 @@ async function findOrCreateCategory(guild, name, permissionOverwrites) {
 
 async function findOrCreateText(guild, category, name, topic = '', opts = {}) {
   const lowerName = String(name || '').toLowerCase();
-  const regKey = _normalizeKey(guild.id, name);
+  // Names repeat across categories. The parent ID is part of channel identity.
+  const regKey = `${guild.id}:${category.id}:${lowerName}`;
 
   // V196: Check text registry first
   const cached = _buildTextRegistry.get(regKey);
-  if (cached) {
-    // Move to correct parent if misplaced
-    if (cached.parentId !== category.id) {
-      await cached.setParent(category.id, { lockPermissions: false, reason: 'V196: text registry parent correction' }).catch(() => null);
-    }
-    return cached;
-  }
+  if (cached) return cached;
 
-  // V187 FIX: Search by name GLOBALLY first (not just under this category).
   const exactParent = guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === lowerName && c.parentId === category.id);
   if (exactParent) { _buildTextRegistry.set(regKey, exactParent); return exactParent; }
-
-  // V202 (BUG-009): never adopt (move) a same-named channel out of a scoped category — weekly game channels,
-  // team spaces and league-built categories own their channels. Other adoption behavior is unchanged (V187).
-  const anyParent = guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === lowerName && !_isProtectedScopeCategory(guild, c.parent));
-  if (anyParent) {
-    if (anyParent.parentId !== category.id) {
-      await anyParent.setParent(category.id, { lockPermissions: false, reason: 'V187: channel existed under wrong parent' }).catch(() => null);
-    }
-    _buildTextRegistry.set(regKey, anyParent);
-    return anyParent;
-  }
 
   const created = await createText(guild, category, name, topic, opts);
 
@@ -411,28 +394,28 @@ async function postBaseGuideMessages(guild) {
   const rules = findConfiguredChannel(guild, 'rules', { textOnly: true });
   const settings_pbgm = serverSettings.getSettings();
   const guideChName = templateLogic.getGuideChannelName(settings_pbgm);
-  const guide = guild.channels.cache.find(c => c.isTextBased?.() && (String(c.name || '').toLowerCase() === String(guideChName || '').toLowerCase() || String(c.name || '').toLowerCase() === 'server-guide' || String(c.name || '').toLowerCase() === 'server-guide'));
+  const guide = findConfiguredChannel(guild, 'serverGuide', { textOnly: true })
+    || guild.channels.cache.find(c => c.isTextBased?.() && c.name === guideChName && /^👋 Welcome to/i.test(String(c.parent?.name || '')));
   const join = findConfiguredChannel(guild, 'howToJoin', { textOnly: true });
   const polls = findConfiguredChannel(guild, 'polls', { textOnly: true });
 
   async function replaceBotPosts(ch, embed) {
     if (!ch) return;
-    const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);
+    const recent = await ch.messages.fetch({ limit: 20 });
+    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
     for (const m of (recent ? [...recent.values()] : [])) {
       if (m.author?.id !== guild.members.me?.id) continue;
       const title = String(m.embeds?.[0]?.title || '');
       if (title && (title === embed.title || /Server Rules|Base Server Guide|League Guide|Server Guide|How to Join|Welcome to|Polls & Voting/i.test(title))) await m.delete().catch(() => null);
     }
-    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
   }
 
   const settings = serverSettings.getSettings();
-  const openTeamsName = getConfiguredChannelName('openTeams') || 'open-teams';
-  const hasLeague = !!(guild.channels.cache.find(c => c.isTextBased?.() && /^..\.open-teams$/i.test(c.name || '')) || guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === openTeamsName));
+  const hasLeague = require('./activeLeagueService').listActiveLeagues().length > 0;
   const guideTitle = '🧭 Server Guide';
   // V199 FIX: Append commands/actions block to every core channel guide
   const _cmdBlock = channelGuideService.getCommandsBlock;
-  await Promise.allSettled([
+  await Promise.all([
     replaceBotPosts(welcome, { color: 0x2ecc71, title: '👋 Welcome to the Server', description: `${templateLogic.buildWelcomeText(guild.name, settings)}\n\nThis channel is read-only on purpose so the important info stays visible.${_cmdBlock('welcome')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(rules, { color: 0x4da3ff, title: '📖 Server Rules', description: `${buildServerRulesText()}${_cmdBlock('rules')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(guide, { color: 0x5865f2, title: guideTitle, description: `${templateLogic.buildBaseGuideText(settings)}\n\n• Staff-only tools stay hidden from members.\n• Trash talk is allowed. Slurs and hateful nonsense are not.${_cmdBlock('server-guide')}`, timestamp: new Date().toISOString() }),
@@ -448,6 +431,8 @@ async function postBaseGuideMessages(guild) {
 
   for (const ch of guild.channels.cache.values()) {
     if (!ch.isTextBased?.()) continue;
+    // League guides are posted by the selected league's lifecycle.
+    if (require('./activeLeagueService').findLeagueForChannel(ch)) continue;
     const rawName = String(ch.name || '').toLowerCase();
     const cleanName = rawName.replace(/^[^\w-]+/, '').trim();
     if (coreNames.has(cleanName)) continue;
@@ -471,11 +456,13 @@ async function normalizeBaseChannelPolicies(guild) {
   const tasks = [];
   for (const ch of guild.channels.cache.values()) {
     if (!ch.isTextBased?.()) continue;
+    // Plain league channel names must retain their private league overwrites.
+    if (require('./activeLeagueService').findLeagueForChannel(ch) || _isProtectedScopeCategory(guild, ch.parent)) continue;
     const name = String(ch.name || '').toLowerCase();
     const parentName = String(ch.parent?.name || '').toLowerCase();
     const isStaff = isStaffRepairChannel(ch) || isStaffRepairChannel(parentName) || /staff & commissioner/i.test(parentName);
     if (isStaff) {
-      tasks.push(ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }).catch(() => null));
+      tasks.push(ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }));
       continue;
     }
     if (readOnly.has(name)) {
@@ -504,11 +491,13 @@ async function normalizeBaseChannelPolicies(guild) {
           SendMessagesInThreads: ow.deny?.includes?.(PermissionFlagsBits.SendMessagesInThreads) ? false : undefined,
           ManageMessages: ow.allow?.includes?.(PermissionFlagsBits.ManageMessages) ? true : undefined,
           ManageChannels: ow.allow?.includes?.(PermissionFlagsBits.ManageChannels) ? true : undefined,
-        }).catch(() => null));
+        }));
       }
     }
   }
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 
@@ -623,12 +612,14 @@ async function createTemplateStructure(guild, state, templateKey = 'gaming', opt
   // postBaseGuideMessages: posts/replaces guide embeds in core channels (parallel internally)
   // publishPatchNotes: creates/updates patch notes category + channel
   // These 4 are independent. _silentDedupSweep runs AFTER all channels are finalized.
-  await Promise.allSettled([
+  const finalResults = await Promise.allSettled([
     normalizeBaseChannelPolicies(guild),
     reorderBaseCategoryStack(guild),
     postBaseGuideMessages(guild),
     patchNotesService.publishPatchNotes(guild).catch(() => null),
   ]);
+  const finalFailure = finalResults.find(result => result.status === 'rejected');
+  if (finalFailure) throw finalFailure.reason;
   // Dedup sweep runs last — needs to see the final state of all channels
   await _silentDedupSweep(guild);
   const { buildSelectionSummary } = require('./customMixService');
@@ -736,6 +727,8 @@ async function applyEditChanges(guild, state, templateKey = 'gaming', options = 
 
   // Refresh cache to see current guild state accurately
   await guild.channels.fetch().catch(() => null);
+  const templateReconciliation = require('./templateReconciliationService');
+  const priorTemplate = templateReconciliation.capture(guild);
 
   const customSelections = Array.isArray(options.customSelections) ? options.customSelections : [];
   const isCustomMix = customSelections.length > 0 && customSelections.some(s => /^(gaming|sports|community|media):/.test(s));
@@ -766,7 +759,7 @@ async function applyEditChanges(guild, state, templateKey = 'gaming', options = 
     findOrCreateText(guild, staffCat, 'scoresheets', 'Private score/stat processing intake.', { staffOnly: true }),
   ]);
 
-  // Layer template-specific channels (non-destructive — findOrCreate)
+  // Layer the selected template before removing bot-owned assets from the old one.
   // V198 FIX: Two-phase parallel — categories first, then all channels
   if (isCustomMix) {
     const { buildChannelSpecs } = require('./customMixService');
@@ -799,19 +792,28 @@ async function applyEditChanges(guild, state, templateKey = 'gaming', options = 
     }));
   }
 
+  const desiredSpecs = isCustomMix
+    ? require('./customMixService').buildChannelSpecs(customSelections).map(s => ({ name: s.categoryName, channels: s.channels }))
+    : (template.categories || [])
+      .map(s => ({ name: String(s.name || '').replace('{server}', serverName), channels: s.channels || [] }))
+      .filter(s => !/welcome to|discipline|staff & commissioner/i.test(s.name));
+  const templateCleanup = await templateReconciliation.reconcile(guild, priorTemplate, desiredSpecs, cat => _isProtectedScopeCategory(guild, cat));
+
   // V198 FIX: Parallel final steps (same as createTemplateStructure)
-  await Promise.allSettled([
+  const finalResults = await Promise.allSettled([
     normalizeBaseChannelPolicies(guild),
     reorderBaseCategoryStack(guild),
     postBaseGuideMessages(guild),
   ]);
+  const finalFailure = finalResults.find(result => result.status === 'rejected');
+  if (finalFailure) throw finalFailure.reason;
   await _silentDedupSweep(guild);
 
   const { buildSelectionSummary } = require('./customMixService');
   const mixSummary = isCustomMix ? buildSelectionSummary(customSelections) : null;
   return {
     serverName,
-    flushSummary: { deletedChannels: 0, deletedCategories: 0 },
+    flushSummary: templateCleanup,
     template: isCustomMix ? 'Custom Mix' : template.name,
     structureMode: 'edit-apply',
     templateSummary: mixSummary || getTemplateSummary(template),

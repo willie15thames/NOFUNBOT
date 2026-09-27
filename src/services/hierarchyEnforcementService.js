@@ -130,10 +130,8 @@ function memberNeedsTimezoneGate(memberId, settings) {
  */
 function buildEnforcedNickname(member, profile) {
   if (!profile?.timezone) return null;
-  const { timezoneLabel, stripTimezoneSuffix } = require('./nicknamePolicyService');
-  const label = String(profile.timezoneLabel || timezoneLabel(profile.timezone) || profile.timezone || '').toUpperCase();
-  const baseName = stripTimezoneSuffix(profile.lastSeenDisplayName || member?.displayName || member?.user?.username || 'member');
-  return `${baseName} (${label})`.slice(0, 32);
+  // Preserve the compatibility entry point without a competing policy.
+  return require('./nicknamePolicyService').buildDesiredNickname(member, require('../state'));
 }
 
 /**

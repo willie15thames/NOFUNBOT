@@ -4,8 +4,7 @@
  * LAYER: League control plane (V202)
  * PURPOSE: The ONE owner of game results (audit §10 / BUG-006). Every result path — /report-result, the
  *          game-results component modal, and future provider imports — calls submitGameResult(). It validates,
- *          dedupes by matchupKey + sourceRevision, persists the authoritative record (gameResults.json →
- *          BotKv Postgres write-through), applies standings exactly once (with reverse on supersede/retract),
+ *          dedupes by matchupKey + sourceRevision, commits authoritative results and standings in the lifetime BotKv transaction, applies standings exactly once (with reverse on supersede/retract),
  *          marks the game session complete, keeps the legacy projections (state.ocrGameResults,
  *          componentRegistry submissions) in sync, and emits one observability event.
  * LOOK HERE FIRST WHEN DEBUGGING: submitGameResult(), retractGameResult(), getResult(), listResults().
@@ -16,7 +15,7 @@
 
 'use strict';
 
-const { loadJson, saveJsonDebounced } = require('../storage/jsonStore');
+const { loadJson, saveJson } = require('../storage/jsonStore');
 const { matchupKey: buildMatchupKey, normalizeTeam } = require('./canonicalModel');
 const gameSessions = require('./gameSessionService');
 const { makeLogger } = require('../utils/logger');
@@ -33,12 +32,6 @@ function _load() {
     results: raw.results && typeof raw.results === 'object' ? raw.results : {},
     events: Array.isArray(raw.events) ? raw.events : [],
   };
-}
-
-function _save(store) {
-  if (store.events.length > MAX_EVENTS) store.events.splice(0, store.events.length - MAX_EVENTS);
-  saveJsonDebounced(FILE, store, 300);
-  return store;
 }
 
 function _int(v) {
@@ -70,12 +63,30 @@ function _canonicalTeamName(league, teamName) {
   return league.teams.find(t => normalizeTeam(t) === n) || teamName;
 }
 
-function _applyStandings(state, leagueId, league, record, sign) {
-  const leagueSetup = require('../services/leagueSetupService');
-  const home = _canonicalTeamName(league, record.homeTeam);
-  const away = _canonicalTeamName(league, record.awayTeam);
-  if (sign > 0) leagueSetup.recordGameResult(leagueId, home, away, record.homeScore, record.awayScore);
-  else leagueSetup.reverseGameResult(leagueId, home, away, record.homeScore, record.awayScore);
+function _applyStandings(ledger, state, leagueId, league, record, sign) {
+  const home=_canonicalTeamName(league,record.homeTeam),away=_canonicalTeamName(league,record.awayTeam);
+  const records=ledger.standings[leagueId] ||= JSON.parse(JSON.stringify(loadJson(`standings_${leagueId}.json`,{})||{}));
+  records[home] ||= {w:0,l:0,pf:0,pa:0}; records[away] ||= {w:0,l:0,pf:0,pa:0};
+  for(const [team,field,n]of [[home,'pf',record.homeScore],[home,'pa',record.awayScore],[away,'pf',record.awayScore],[away,'pa',record.homeScore]])records[team][field]=Math.max(0,Number(records[team][field]||0)+sign*n);
+  if(record.homeScore!==record.awayScore){const winner=record.homeScore>record.awayScore?home:away,loser=winner===home?away:home;records[winner].w=Math.max(0,(records[winner].w||0)+sign);records[loser].l=Math.max(0,(records[loser].l||0)+sign);}
+}
+const scopeKey=()=>require('./spaceContext').current()||'__root__';
+function resultLedger(data){
+  data.resultLedgers ||= {};
+  const scope=scopeKey();
+  return data.resultLedgers[scope] ||= {...JSON.parse(JSON.stringify(_load())),standings:{}};
+}
+function projectLedger(ledger,state){
+  saveJson(FILE,{schema:'nofunleague-game-results',version:2,results:ledger.results,events:ledger.events});
+  for(const [id,records]of Object.entries(ledger.standings))saveJson(`standings_${id}.json`,records);
+  if(state){state.ocrGameResults.length=0;for(const record of Object.values(ledger.results))_syncLegacyOcr(state,record);}
+}
+async function recoverProjections(guildId,state){
+  const data=await require('../services/lifetimeHistoryService').snapshot(guildId);
+  for(const [scope,ledger]of Object.entries(data.resultLedgers||{})){
+    if(scope!=='__root__'&&!require('../services/activeLeagueService').getLeague(scope))continue;
+    await require('./spaceContext').run(scope==='__root__'?null:scope,()=>projectLedger(ledger,state));
+  }
 }
 
 function _syncLegacyOcr(state, record, remove = false) {
@@ -141,10 +152,14 @@ async function submitGameResult(input = {}, ctx = {}) {
   if (!key) return { ok: false, code: 'invalid-identity', reason: 'Could not build a matchup identity.' };
 
   const sourceRevision = input.sourceRevision != null ? String(input.sourceRevision) : null;
-  const store = _load();
+  const history=require('../services/lifetimeHistoryService');
+  const historyGuildId=ctx.guild?.id||process.env.GUILD_ID;
+  const committed=await history.transaction(historyGuildId,data=>{
+  const store = resultLedger(data);
   const existing = store.results[key] || null;
 
   // ── Dedupe: same matchup + same revision (or no revision on either side) → no second write, no second standings update ──
+  if(existing&&String(existing.leagueId)!==String(identityLeague))throw Error('Result key belongs to another league');
   if (existing) {
     const sameRevision = (existing.sourceRevision || null) === sourceRevision;
     const sameScore = existing.homeScore === homeScore && existing.awayScore === awayScore
@@ -172,30 +187,25 @@ async function submitGameResult(input = {}, ctx = {}) {
     standingsApplied: false,
   };
 
-  const historyGuildId = ctx.guild?.id || process.env.GUILD_ID;
-  const lifetime = await require('../services/lifetimeHistoryService').recordResult(historyGuildId, record, state);
-  record.homeUserId = lifetime.homeUserId; record.awayUserId = lifetime.awayUserId;
-
-  // ── Standings: reverse the superseded record first, then apply the new one (never double count) ──
-  const standings = { updated: false, leagueId: standingsTarget.leagueId, reason: standingsTarget.reason || null };
-  if (standingsTarget.leagueId) {
-    try {
-      if (existing?.standingsApplied && existing.standingsLeagueId) {
-        _applyStandings(state, existing.standingsLeagueId, state.leagueConfig?.proAm?.[existing.standingsLeagueId], existing, -1);
-      }
-      _applyStandings(state, standingsTarget.leagueId, standingsTarget.league, record, +1);
-      record.standingsLeagueId = standingsTarget.leagueId;
-      record.standingsApplied = true;
-      standings.updated = true;
-    } catch (e) {
-      standings.reason = `standings-failed: ${e.message}`;
-      log.error(`standings update failed for ${key}: ${e.message}`);
-    }
+  const lifetime=history.recordResultIn(data,record,state);
+  record.homeUserId=lifetime.homeUserId;record.awayUserId=lifetime.awayUserId;
+  const standings={updated:false,leagueId:standingsTarget.leagueId,reason:standingsTarget.reason||null};
+  if(existing?.standingsApplied&&existing.standingsLeagueId)_applyStandings(store,state,existing.standingsLeagueId,state.leagueConfig?.proAm?.[existing.standingsLeagueId],existing,-1);
+  if(standingsTarget.leagueId){
+    _applyStandings(store,state,standingsTarget.leagueId,standingsTarget.league,record,1);
+    record.standingsLeagueId=standingsTarget.leagueId;record.standingsApplied=true;standings.updated=true;
   }
-
-  store.results[key] = record;
-  store.events.push({ type: existing ? 'superseded' : 'recorded', matchupKey: key, at: now, source: record.source, sourceRevision });
-  _save(store);
+  Object.assign(data.results[key],record);
+  store.results[key]=record;
+  store.events.push({type:existing?'superseded':'recorded',matchupKey:key,at:now});
+  if(store.events.length>MAX_EVENTS)store.events.splice(0,store.events.length-MAX_EVENTS);
+  return {ok:true,deduped:false,superseded:!!existing,record,standings};
+  });
+  // Read the committed authority; projections never increment counters themselves.
+  const ledger=(await history.snapshot(historyGuildId)).resultLedgers[scopeKey()];
+  projectLedger(ledger,state);
+  if(committed.deduped)return committed;
+  const {record,standings}=committed;
 
   // ── Session completion + legacy projections ──
   if (record.channelId) {
@@ -219,9 +229,9 @@ async function submitGameResult(input = {}, ctx = {}) {
     } catch (e) { log.warn(`standings refresh failed: ${e.message}`); }
   }
 
-  try { require('../services/observabilityService').recordFlowOutcome('game-result', { outcome: 'success', matchupKey: key, superseded: !!existing, standingsUpdated: standings.updated }); } catch {}
+  try { require('../services/observabilityService').recordFlowOutcome('game-result', { outcome: 'success', matchupKey: key, superseded: committed.superseded, standingsUpdated: standings.updated }); } catch {}
   log.info(`recorded ${key} ${homeTeam} ${homeScore}-${awayScore} ${awayTeam} source=${record.source} standings=${standings.updated ? standingsTarget.leagueId : 'n/a'}`);
-  return { ok: true, deduped: false, superseded: !!existing, record, standings };
+  return committed;
 }
 
 /**
@@ -235,25 +245,22 @@ async function retractGameResult({ week, team1, team2, leagueId = null }, ctx = 
   const w = _int(week);
   const a = normalizeTeam(team1), b = normalizeTeam(team2);
   if (w == null || !a || !b) return { ok: false, reason: 'invalid-input' };
-  const store = _load();
-  let removed = 0;
-  for (const [key, rec] of Object.entries(store.results)) {
-    const h = normalizeTeam(rec.homeTeam), aw = normalizeTeam(rec.awayTeam);
-    if (leagueId && String(rec.leagueId) !== String(leagueId)) continue;
-    if (Number(rec.week) !== w) continue;
-    if (!((h === a && aw === b) || (h === b && aw === a))) continue;
-    if (rec.standingsApplied && rec.standingsLeagueId) {
-      try { _applyStandings(state, rec.standingsLeagueId, state.leagueConfig?.proAm?.[rec.standingsLeagueId], rec, -1); }
-      catch (e) { log.error(`standings reverse failed for ${key}: ${e.message}`); }
+  const history=require('../services/lifetimeHistoryService'),guildId=ctx.guild?.id||process.env.GUILD_ID;
+  const removed=await history.transaction(guildId,data=>{
+    const ledger=resultLedger(data);let count=0;
+    for(const [key,rec]of Object.entries(ledger.results)){
+      if(leagueId&&String(rec.leagueId)!==String(leagueId)||Number(rec.week)!==w)continue;
+      const h=normalizeTeam(rec.homeTeam),aw=normalizeTeam(rec.awayTeam);
+      if(!((h===a&&aw===b)||(h===b&&aw===a)))continue;
+      if(rec.standingsApplied&&rec.standingsLeagueId)_applyStandings(ledger,state,rec.standingsLeagueId,state.leagueConfig?.proAm?.[rec.standingsLeagueId],rec,-1);
+      if(data.results[key])data.results[key].status='RETRACTED';
+      data.events.push({type:'result-retracted',key,actor:ctx.actor||null,at:Date.now()});
+      delete ledger.results[key];ledger.events.push({type:'retracted',matchupKey:key,at:Date.now()});count++;
     }
-    await require('../services/lifetimeHistoryService').retract(ctx.guild?.id || process.env.GUILD_ID, key, ctx.actor);
-    _syncLegacyOcr(state, rec, true);
-    delete store.results[key];
-    store.events.push({ type: 'retracted', matchupKey: key, at: Date.now() });
-    removed++;
-  }
-  if (removed) _save(store);
-  return { ok: true, removed };
+    return count;
+  });
+  projectLedger((await history.snapshot(guildId)).resultLedgers[scopeKey()],state);
+  return{ok:true,removed};
 }
 
 function getResult(key) { return _load().results[key] || null; }
@@ -267,4 +274,4 @@ function getStatusSummary() {
   return { total: all.length, withStandings: all.filter(r => r.standingsApplied).length, lastRecordedAt: all.reduce((m, r) => Math.max(m, r.submittedAt || 0), 0) || null };
 }
 
-module.exports = { FILE, submitGameResult, retractGameResult, resolveStandingsLeague, getResult, listResults, getStatusSummary };
+module.exports = { recoverProjections, FILE, submitGameResult, retractGameResult, resolveStandingsLeague, getResult, listResults, getStatusSummary };
