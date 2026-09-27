@@ -288,7 +288,17 @@ await _handleCommand(interaction, _validation);
 
   } catch (err) {
     log.error('Interaction error:', err.message, err.stack);
-    const msg = '❌ Something went wrong. Check the bot console.';
+    require('../services/runtimeIncidentService').capture(err, {
+      source: 'interaction-router',
+      eventType: 'interaction-failure',
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      userId: interaction.user?.id,
+      commandName: interaction.commandName,
+      customId: interaction.customId,
+      severity: 'error',
+    }).catch(() => null);
+    const msg = '❌ Something went wrong. The incident was logged for review.';
     if (interaction.replied || interaction.deferred) await safeEdit(interaction, msg).catch(() => null);
     else await safeInitialReply(interaction, { content: msg, flags:64 }).catch(() => null);
   } finally {
@@ -1497,7 +1507,9 @@ if (cid === 'bot_setup_initialize') {
         await timezoneGateService.postGatePrompt(interaction.member).catch(() => null);
       }
     }
-    const nextLine = templateProfile.leagueFriendly ? 'Server commands are now unlocked. Add league-enabled communities later when you are ready.' : 'Server commands are now unlocked for this template. League prompts stay hidden unless staff later enables a league-friendly community.';
+    const nextLine = templateProfile.leagueFriendly
+      ? 'Server commands are now unlocked. Create your Madden league with `/setup-league` when you are ready.'
+      : 'Server commands are now unlocked. Communities are optional; `/setup-league` creates an independent managed league space when you are ready.';
     const identityLine = identityResult?.displayName ? `
 Bot display synced to: **${identityResult.displayName}**` : '';
     const audienceWarning = serverSettings.requiresAgeWarning(buildSettings.audienceRating)

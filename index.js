@@ -55,12 +55,16 @@ try {
 }
 
 
+const runtimeIncidents = require('./src/services/runtimeIncidentService');
+
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL GUARD] Unhandled rejection:', reason?.stack || reason);
+  runtimeIncidents.capture(reason, { source: 'process', eventType: 'unhandled-rejection', severity: 'error' }).catch(() => null);
 });
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL GUARD] Uncaught exception:', err?.stack || err);
+  runtimeIncidents.capture(err, { source: 'process', eventType: 'uncaught-exception', severity: 'fatal' }).catch(() => null);
 });
 
 const client = new Client({
@@ -74,6 +78,13 @@ const client = new Client({
     GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.GuildMember, Partials.User],
+});
+
+client.on('error', err => {
+  runtimeIncidents.capture(err, { source: 'discord-client', eventType: 'discord-client-error', severity: 'error' }).catch(() => null);
+});
+client.on('shardError', err => {
+  runtimeIncidents.capture(err, { source: 'discord-shard', eventType: 'discord-shard-error', severity: 'error' }).catch(() => null);
 });
 
 // ── 3. Slash command definitions ──────────────────────────────
@@ -964,6 +975,16 @@ client.once('clientReady', async () => {
       guild.emojis.fetch(),
     ]);
     log.info(`Discord cache populated in ${Date.now() - _bootStart}ms`);
+
+    // Public release feed is production-only, version-deduped, and reads only PUBLIC_PATCH_NOTES.md.
+    await require('./src/services/patchNotesService').publishPatchNotes(guild).catch(err => {
+      runtimeIncidents.capture(err, {
+        source: 'public-patch-notes',
+        eventType: 'public-patch-publication-failed',
+        guildId: guild.id,
+        severity: 'warn',
+      }).catch(() => null);
+    });
 
     // Permission check — sync, instant from cache
     const botMember = guild.members.cache.get(client.user.id);

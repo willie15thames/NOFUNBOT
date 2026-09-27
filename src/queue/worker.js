@@ -80,6 +80,12 @@ async function startWorker(redisUrl, databaseUrl) {
   worker.on('failed', async (job, err) => {
     console.error('[worker] failed:', job?.name, err?.message);
     await audit('failed', job?.name || 'unknown', job?.data || null, null, err?.message || 'unknown error');
+    require('../services/runtimeIncidentService').capture(err, {
+      source: 'queue-worker',
+      eventType: 'queue-job-failed',
+      jobId: job?.id,
+      severity: 'error',
+    }).catch(() => null);
   });
 
   let closing = false;

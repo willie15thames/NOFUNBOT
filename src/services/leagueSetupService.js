@@ -657,6 +657,13 @@ async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, 
     },
   });
   } catch (err) {
+    require('./runtimeIncidentService').capture(err, {
+      source: 'league-setup',
+      eventType: 'league-build-failed',
+      guildId: guild.id,
+      leagueId: reserved.id,
+      severity: 'error',
+    }).catch(() => null);
     const session = err.buildId && require('../league/build/leagueBuildService').get(err.buildId);
     const clean = session?.state === 'ROLLED_BACK';
     if (activeLeagueService.getLeague(reserved.id)) activeLeagueService.removeLeague(reserved.id);

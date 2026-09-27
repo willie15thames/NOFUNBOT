@@ -66,6 +66,12 @@ async function markCompleted(jobId, result) {
 
 async function markFailed(jobId, error, progress) {
   if (!jobId) return null;
+  require('./runtimeIncidentService').capture(error, {
+    source: 'background-job',
+    eventType: 'background-job-failed',
+    jobId,
+    severity: 'error',
+  }).catch(() => null);
   return prismaSafe(prisma => prisma.backgroundJob.update({
     where: { id: String(jobId) },
     data: {

@@ -414,3 +414,13 @@ v204.7 RC3 final release-gate follow-up:
   cross into a later interaction payload.
 - Added the required workflow ownership/failsafe/rollback contract metadata
   to tradeWorkflowService.js.
+
+V1 PUBLIC SURFACE + RUNTIME OBSERVABILITY
+- Added PUBLIC_PATCH_NOTES.md as the sole Discord-facing release-note source.
+- Internal RC/test/migration/CI notes remain backend-only.
+- Public release version is independent from the internal npm/build version.
+- Public patch publication is production-only and version-deduped through BotKv.
+- Added centralized runtime incident capture into the existing AuditEvent table with redaction, fingerprinting, and duplicate suppression.
+- Added catches for process, Discord client/shard, interaction, provider HTTP, background-job, queue-worker, and league-build failures.
+- Fixed managed-space capacity logic so ARCHIVING/REPAIR_REQUIRED records do not consume live league slots and stale PREPARING reservations self-archive.
+- Clarified Base server UX: `/setup-league` creates an independent managed league; a league-enabled community is not a prerequisite.

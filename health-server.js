@@ -25,11 +25,17 @@ function buildHealthPayload() {
     environment: flags.appEnv,
     releaseChannel: flags.releaseChannel,
     version: flags.releaseVersion,
+    publicRelease: {
+      version: flags.publicReleaseVersion,
+      channel: flags.publicReleaseChannel,
+    },
     flags: {
       runPrismaMigrationsOnBoot: flags.runPrismaMigrationsOnBoot,
       runDbBootstrapOnBoot: flags.runDbBootstrapOnBoot,
       runJsonMigrationOnBoot: flags.runJsonMigrationOnBoot,
       enableQueueWorker: flags.enableQueueWorker,
+      publicPatchNotesEnabled: flags.publicPatchNotesEnabled,
+      runtimeIncidentCaptureEnabled: flags.runtimeIncidentCaptureEnabled,
     },
     checks: {
       hasDatabaseUrl: !!process.env.DATABASE_URL,
