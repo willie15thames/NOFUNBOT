@@ -1,3 +1,6 @@
+V204.2 storage guard — package 21.10.0-rc.3
+Configured BOT_DATA_DIR must be writable; no silent fallback to another path. Two focused tests. See docs/V204_DATABASE_HOTFIX.md.
+
 V204 database hotfix — package 21.10.0-rc.2
 Canonical bot_kv/queue_audit queries, safe legacy reconciliation and full-schema bootstrap. See docs/V204_DATABASE_HOTFIX.md.
 

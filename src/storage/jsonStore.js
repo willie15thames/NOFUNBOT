@@ -17,8 +17,19 @@ const os = require('os');
 const { createHash } = require('crypto');
 
 function resolveWritableDataDir() {
+  // An explicitly configured volume is authoritative. Falling back to a
+  // different directory would make state appear to vanish after a restart.
+  if (process.env.BOT_DATA_DIR) {
+    const configured = process.env.BOT_DATA_DIR;
+    try {
+      fs.mkdirSync(configured, { recursive: true });
+      fs.accessSync(configured, fs.constants.R_OK | fs.constants.W_OK);
+      return configured;
+    } catch (err) {
+      throw new Error(`BOT_DATA_DIR is unavailable (${configured}): ${err.message}`);
+    }
+  }
   const candidates = [
-    process.env.BOT_DATA_DIR,
     path.join(process.cwd(), 'data'),
     path.join(os.tmpdir(), 'nofunleague-data'),
   ].filter(Boolean);

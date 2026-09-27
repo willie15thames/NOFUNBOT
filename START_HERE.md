@@ -1,8 +1,8 @@
 # NOFUNBOT audit update release candidate
 
-Package version: 21.10.0-rc.2. Archive label: v204.1 database hotfix.
+Package version: 21.10.0-rc.3. Archive label: v204.2 storage guard.
 
-Read `docs/V204_DATABASE_HOTFIX.md` first. RC1 referenced mixed-case PostgreSQL tables after migrations renamed them. RC2 aligns those paths and preserves legacy records through an additive migration.
+Read `docs/V204_DATABASE_HOTFIX.md` first. RC1 referenced mixed-case PostgreSQL tables after migrations renamed them. RC2 aligns those paths and preserves legacy records through an additive migration. RC3 refuses to use a different directory when an explicitly configured BOT_DATA_DIR is unavailable.
 
 The updated 30-page Word report is `docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx`. It contains the original baseline findings plus the implemented changes, lifetime history behavior and outstanding stability work. Older audit documents remain as historical references.
 

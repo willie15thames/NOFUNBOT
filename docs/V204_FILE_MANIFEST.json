@@ -1,5 +1,5 @@
 {
-  "version": "21.10.0-rc.2",
+  "version": "21.10.0-rc.3",
   "base_git_commit": "6178d125469612630f749b15971993ac2623c021",
   "hotfix_files": [
     "PATCH_NOTES_AND_CONTEXT.txt",
@@ -20,7 +20,8 @@
     "src/queue/worker.js",
     "src/storage/criticalStore.js",
     "src/storage/jsonStore.js",
-    "tests/postgres.integration.js"
+    "tests/postgres.integration.js",
+    "tests/storageDataDir.test.js"
   ],
   "files": [
     {
@@ -97,7 +98,7 @@
     },
     {
       "path": "PATCH_NOTES_AND_CONTEXT.txt",
-      "sha256": "81717e65f10932a32c744215e37299a3bfe61476d6c9fe9c9b4529d3c32e809d"
+      "sha256": "62290cad484f7864e3ddb81934bbd3ad1ec6e7f5513e68d7fba0cabc3e75b6f3"
     },
     {
       "path": "PATCH_V184_RELIABILITY_HARDENING.md",
@@ -105,11 +106,11 @@
     },
     {
       "path": "START_HERE.md",
-      "sha256": "176dfc357f0aaa40c33a4c930244d69f081ef1299b2970af8261732d2ad7be50"
+      "sha256": "f0531f77385b9bd6162c18f45a2b587178ba064785169f45d34b509659604e53"
     },
     {
       "path": "changelog.txt",
-      "sha256": "3ea89a82bd06b40ec31ee756c217c16995c3c914ff46268306c077e4144ccc56"
+      "sha256": "5b49b6192e9176f8938ed6b5cb8c18c39147cf548a5557db5134aa6ddff855b8"
     },
     {
       "path": "data/JSON_OWNERSHIP_MAP.md",
@@ -165,7 +166,7 @@
     },
     {
       "path": "docs/V204_DATABASE_HOTFIX.md",
-      "sha256": "d8e8f2ce761762e5497fb80796eb39870dd1a6d6af535f45103213608a9ec155"
+      "sha256": "1e0a20c501dc652cef5da191d023b8c8b3d9facfc35f6fbc7e6f0186b6de3b0e"
     },
     {
       "path": "docs/V204_DEPENDENCY_MAP.md",
@@ -173,11 +174,11 @@
     },
     {
       "path": "docs/V204_RELEASE_NOTES.md",
-      "sha256": "f285fd3ae1a1947c6f22c6c1c5db23dba7a9c9596363e61cd8b54ae18184189e"
+      "sha256": "e3e794e111e323b1fabf9fa014207e297febba9447bcac3311d99e8b12f550a2"
     },
     {
       "path": "docs/VERIFICATION.md",
-      "sha256": "2a5bd47ad164a3f48e72498ffa5cbf4ec45866c01804abd550f12f675e27c541"
+      "sha256": "9dfcb2545f8320837334a33efb62949d048b8db19d6fecf6e954cd5af4dc3a7e"
     },
     {
       "path": "docs/ai/NOFUNLEAGUE_COMMISSIONER_AI_RUNTIME_v2.txt",
@@ -193,11 +194,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "9324cd68cace8822dc971433e60735bd02a340056e50d8609d72f6620a76a9ad"
+      "sha256": "08e1133f07b1311f918a5f60db368b4b14d6e4050d99862a3f40c42459325646"
     },
     {
       "path": "package.json",
-      "sha256": "f3156f06e8bc11cfe834c216f811acf484acd03fd8976626dda91d9a061e66b6"
+      "sha256": "b6df5a78d779e4c92d8d4018965c6ee77209135971df74601e4ab566c890dbdc"
     },
     {
       "path": "prisma/migrations/0001_init/migration.sql",
@@ -1005,7 +1006,7 @@
     },
     {
       "path": "src/storage/jsonStore.js",
-      "sha256": "2ebcd224e261661e6fc53edda1b1a7fdd4f1a9e506fbb6b23ed71d75fb079462"
+      "sha256": "9f3b18c4b75c0dcdb81ad84ddd66083e952e5f5bd79f3ada9e761bcf13e97d47"
     },
     {
       "path": "src/storage/prisma.js",
@@ -1092,6 +1093,10 @@
       "sha256": "533882e97447b2ac6d57168dbac76e923e92860c132cd02ed2e26adc041322df"
     },
     {
+      "path": "tests/storageDataDir.test.js",
+      "sha256": "9347bbfc36286d3f62434ae93366f1843e97f36bfa7a9b5412b6493e544ac825"
+    },
+    {
       "path": "tests/utils.test.js",
       "sha256": "5e327f6da98313732b45a982431772fe49c1bb98bb24173ae06b800a0499b052"
     },
@@ -1100,5 +1105,5 @@
       "sha256": "e6f85e88fb6f9e52cb2cc322ada67e3da929e77b3ed499e32e8e3bb57b392c3e"
     }
   ],
-  "note": "Full RC1 source plus RC2 database correction. Excludes live state, installed dependencies and its own manifest checksum. No remote push or deployment performed."
+  "note": "Full RC1 source, RC2 database correction and RC3 configured-storage guard. Includes the data ownership document; excludes tracked sample JSON, live state, installed dependencies and its own manifest checksum. RC3 has not been remotely pushed or deployed."
 }

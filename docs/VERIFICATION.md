@@ -1,3 +1,7 @@
+# RC3 storage guard verification
+
+Package 21.10.0-rc.3 adds a configured-directory startup guard. Local suite: 88 checks across 13 files, 0 failures. `npm run tsc` and changed-file syntax checks pass. RC3 has not run on networked PostgreSQL, GitHub CI, Docker or Railway. The RC2 checks below remain the database correction baseline.
+
 # RC2 database hotfix verification
 
 Package 21.10.0-rc.2 corrects mixed-case SQL references left in RC1. See V204_DATABASE_HOTFIX.md. All 86 local checks, changed-file syntax and TypeScript configuration checks passed. All six migrations and preservation/conflict/rollback SQL checks passed in the PGlite embedded PostgreSQL engine. The networked PostgreSQL integration test, GitHub CI and live Railway/Discord checks were not run; GitHub write permission was denied. The record below is the earlier RC1 baseline.

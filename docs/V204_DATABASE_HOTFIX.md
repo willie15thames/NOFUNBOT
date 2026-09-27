@@ -1,6 +1,10 @@
 # V204 database table alignment hotfix
 
-Package 21.10.0-rc.2 supersedes the database paths in 21.10.0-rc.1.
+Package 21.10.0-rc.3 includes the RC2 database correction and an explicit storage-directory guard.
+
+## RC3 storage guard
+
+When BOT_DATA_DIR is set, the JSON compatibility store now fails startup if that directory cannot be created or written. It cannot silently fall back to ./data or /tmp and begin writing to a different location. An unset BOT_DATA_DIR retains the prior local development fallback. The Railway start script still requires a writable /data mount; a new empty mount does not import files from a former ephemeral directory. Two focused tests cover rejection and use of a valid configured directory.
 
 ## Dependency map and scope
 
@@ -27,6 +31,6 @@ The diagnostic text does not prove that no tables exist. A failed schema probe m
 
 ## Verification
 
-Local: 86 checks across 12 files pass; TypeScript configuration and syntax of every changed JavaScript file pass. Real PostgreSQL fixtures are included for canonical table agreement, concurrent writes, rollback, connection reopen, JSON compatibility writes, legacy preservation, idempotence and conflicting-value refusal. The GitHub CI result must be checked before merge. No production migrations or Discord operations were performed.
+Local: 88 checks across 13 files pass; TypeScript configuration and syntax of every changed JavaScript file pass. Real PostgreSQL fixtures are included for canonical table agreement, concurrent writes, rollback, connection reopen, JSON compatibility writes, legacy preservation, idempotence and conflicting-value refusal. The GitHub CI result must be checked before merge. No production migrations or Discord operations were performed.
 
-Additional validation: all six SQL migrations executed successfully in PGlite, an embedded PostgreSQL engine. Required canonical tables, legacy-history preservation, repeat reconciliation, conflict refusal and transaction rollback passed. This does not replace the networked PostgreSQL/Prisma/queue integration gate. GitHub write access returned 403, so no remote branch, pull request, CI run or deployment was created.
+Additional validation: all six SQL migrations executed successfully in PGlite, an embedded PostgreSQL engine. Required canonical tables, legacy-history preservation, repeat reconciliation, conflict refusal and transaction rollback passed. This does not replace the networked PostgreSQL/Prisma/queue integration gate. RC2 is on the remote fix/v204-postgres-table-names branch; RC3 is local and has not been pushed, tested by GitHub CI or deployed.

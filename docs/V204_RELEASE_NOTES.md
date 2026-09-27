@@ -1,3 +1,7 @@
+# RC3 packaging update
+
+Package 21.10.0-rc.3 fails startup when an explicitly configured BOT_DATA_DIR cannot be written. This prevents a silent fallback to a different JSON directory. A focused test covers the failure and valid volume path. The RC2 branch is already on GitHub; push this revision to the same branch before opening or merging the pull request. Staging migration, backup restore and live Discord permission checks remain required.
+
 # RC2 correction
 
 Package 21.10.0-rc.2 supersedes RC1 database paths. Read V204_DATABASE_HOTFIX.md before deployment: canonical tables are bot_kv and queue_audit, and the updated audit is 30 pages. The notes below preserve the original RC1 implementation record.
