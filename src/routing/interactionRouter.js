@@ -364,10 +364,20 @@ if (cmd === 'delete-league' && optionName === 'league') {
     return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to reset', value: '_none_' }]);
   }
 
+  const COMMUNITY_OPTIONS = new Set(['name','community']);
+  if (['edit-community','delete-community','toggle-team-mode'].includes(cmd) && COMMUNITY_OPTIONS.has(optionName)) {
+    const communities = serverSettings.getSettings().communities || [];
+    const options = communities
+      .map(c => ({ name: `${c.name} — ${c.type}`.slice(0,100), value: c.name }))
+      .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused))
+      .slice(0,25);
+    return interaction.respond(options.length ? options : [{ name:'⚠️ No saved communities', value:'_none_' }]);
+  }
+
   const TEAM_OPTIONS = ['team','team1','team2','winner','loser','your-team','target-team','original-team','base-team','display-team'];
   if (TEAM_OPTIONS.includes(optionName)) {
     const allTeams = new Map();
-    const activeLeagueId = _state.leagueConfig.leagueTypeId || null;
+    const activeLeagueId = require('../league/spaceContext').current() || _state.leagueConfig.leagueId || null;
 
     // For release-team: only show CLAIMED teams in the active league
     if (cmd === 'release-team') {
@@ -567,7 +577,6 @@ function _wizardStatus(settings = serverSettings.getSettings(), prefs = wizardPr
   const memberTone = serverSettings.getEffectiveToneProfile(settings, 'member');
   const commTone = serverSettings.getEffectiveToneProfile(settings, 'commissioner');
   const missing = [];
-  if (!prefs.selectedSetupMode) missing.push('setup mode');
   if (!settings.customStructureMode) missing.push('structure mode');
   if (!settings.serverTemplate) missing.push('server template');
   const subOpts = settings.serverTemplate ? getTemplateSubtemplateOptions(settings.serverTemplate) : [];
@@ -575,8 +584,7 @@ function _wizardStatus(settings = serverSettings.getSettings(), prefs = wizardPr
   if (!settings.audienceRating) missing.push('audience level');
   if (!memberTone.length) missing.push('member AI tone');
   if (!settings.useSharedToneProfile && !commTone.length) missing.push('commissioner AI tone');
-  if (prefs.selectedSetupMode === 'custom' && settings.customStructureMode === 'custom') {
-    if (!settings.customArrangementMode) missing.push('custom arrangement');
+  if (settings.customStructureMode === 'custom') {
     if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) missing.push('custom categories/channels');
   }
   return { canInitialize: missing.length === 0, missing };
@@ -1003,13 +1011,13 @@ if (cid === 'setup_wizard_seed_refresh') {
     const nextStage = 'mode';
     wizardStateService.patch({ installationMode: true, currentStep: nextStage, lastAdvancedAt: Date.now(), lastGuideRefreshAt: Date.now() });
     wizardPrefs.savePrefs({ selectedSetupMode: null, standardSelected: false, customSelected: false });
-    const payload = wizardRendererService.buildWizardPayload(guild, 'Choose setup mode, structure mode, and template to begin.');
+    const payload = wizardRendererService.buildWizardPayload(guild, 'Choose a structure strategy and server template to begin.');
     let starter = null;
     if (interaction.message?.editable && interaction.message?.channelId === (setupCh?.id || interaction.channelId)) {
       await interaction.message.edit({ ...payload, files: [] }).catch(() => null);
       starter = interaction.message;
     } else {
-      starter = await _ensureSetupWizardStarterMessage(setupCh || interaction.channel, 'Choose setup mode, structure mode, and template to begin.').catch(() => null);
+      starter = await _ensureSetupWizardStarterMessage(setupCh || interaction.channel, 'Choose a structure strategy and server template to begin.').catch(() => null);
     }
     if (starter?.id) {
       wizardStateService.setActiveMessageId(starter.id);
@@ -1058,23 +1066,20 @@ if (cid === 'wizard_next') {
   const currentStep = wiz.currentStep || 'mode';
 
   if (currentStep === 'mode') {
-    if (!wizardPrefs.getPrefs().selectedSetupMode && settings.customStructureMode && settings.serverTemplate) {
-      wizardPrefs.savePrefs({ selectedSetupMode: 'standard', standardSelected: true, customSelected: false });
-    }
-    if (!wizardPrefs.getPrefs().selectedSetupMode || !settings.customStructureMode || !settings.serverTemplate) {
-      return interaction.followUp({ content:'⚠️ Choose structure mode and server template before continuing.', flags:64 }).catch(() => null);
+    if (!settings.customStructureMode || !settings.serverTemplate) {
+      return interaction.followUp({ content:'⚠️ Choose a structure strategy and server template before continuing.', flags:64 }).catch(() => null);
     }
     const nextStage = settings.customStructureMode === 'custom' ? 'custom_structure' : 'tone';
     wizardStateService.patch({ currentStep: nextStage, lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: nextStage });
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild,
       nextStage === 'custom_structure'
-        ? 'Now choose your custom category/channel picks and arrangement style.'
+        ? 'Now choose the exact custom packs you want. The bot will arrange them by pack.'
         : 'Now choose audience level and AI tones.'));
   }
   if (currentStep === 'custom_structure') {
-    if (!settings.customArrangementMode || !Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) {
-      return interaction.followUp({ content:'⚠️ Choose custom arrangement mode and at least one custom category/channel before continuing.', flags:64 }).catch(() => null);
+    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) {
+      return interaction.followUp({ content:'⚠️ Choose at least one custom pack before continuing.', flags:64 }).catch(() => null);
     }
     wizardStateService.patch({ currentStep: 'tone', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'tone' });
@@ -1162,10 +1167,6 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_server_template_select') 
   const nextSettings = { ...serverSettings.getSettings(), serverTemplate: selected === '__clear__' ? '' : selected, serverSubtemplate: '' };
   serverSettings.saveSettings(nextSettings);
   const subCount = selected === '__clear__' ? 0 : getTemplateSubtemplateOptions(selected).length;
-  if (!wizardPrefs.getPrefs().selectedSetupMode && selected !== '__clear__') {
-    wizardStateService.patch({ installationMode: true });
-    wizardPrefs.savePrefs({ selectedSetupMode: 'standard', standardSelected: true, customSelected: false });
-  }
   const msg = selected === '__clear__'
     ? 'Server template selection cleared.'
     : subCount
@@ -1186,10 +1187,6 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
   try { await interaction.deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customStructureMode: selected === '__clear__' ? '' : selected });
-  if (!wizardPrefs.getPrefs().selectedSetupMode && selected !== '__clear__' && selected !== 'custom') {
-    wizardStateService.patch({ installationMode: true });
-    wizardPrefs.savePrefs({ selectedSetupMode: 'standard', standardSelected: true, customSelected: false });
-  }
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, selected === '__clear__' ? 'Structure mode selection cleared.' : `Structure mode saved: **${String(selected).toUpperCase()}**.`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_arrangement_select') {
@@ -1408,7 +1405,7 @@ if (cid === 'bot_setup_initialize') {
     // Load one authoritative settings snapshot — never alias as liveSettings or wizardSettings
     const buildSettings = serverSettings.getSettings() || {};
     const templateProfile = templateLogic.getTemplateProfile(buildSettings);
-    const chosenStructure = prefs.selectedSetupMode === 'standard' ? 'base' : (buildSettings.customStructureMode || 'base');
+    const chosenStructure = buildSettings.customStructureMode || 'base';
 
     // V186 FIX: Edit mode uses non-destructive path — no flush, no state reset, no channel deletion.
     // Only a FULL initial build (serverInitialized === false) should flush and rebuild from scratch.
@@ -1920,7 +1917,7 @@ async function _handleCommand(interaction, commandMeta = null) {
     return interaction.reply({ content:'⚠️ No active league or managed sub-server exists yet. Finish server setup first, then create a league, event, or other managed space before using this action.', flags:64 });
   }
 
-  const scopedCommands = new Set(['create-game','report-result','retract-score','game-channels','schedule-import','schedule-load-week','advance-week','player-of-the-week','potw-confirm','yearly-award','superbowl-champion','attr-award','set-stat-leaders','set-team-identity','add-open-team','set-team-logo','open-teams','streams','stream-board']);
+  const scopedCommands = new Set(['create-game','report-result','retract-score','game-channels','schedule-import','schedule-load-week','advance-week','player-of-the-week','potw-confirm','yearly-award','superbowl-champion','attr-award','set-stat-leaders','register-team','release-team','set-team-identity','add-open-team','remove-open-team','set-team-logo','open-teams','refresh-open-teams','streams','stream-board']);
   if (activeLeagueCount > 1 && scopedCommands.has(cmd) && !require('../league/spaceContext').current()) return interaction.reply({content:'Run this command inside the intended private league channel.',flags:64});
 
   switch (cmd) {
@@ -2297,12 +2294,12 @@ async function _handleCommand(interaction, commandMeta = null) {
 case 'register-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
       const rawTeamValue = interaction.options.getString('team');
-      const [teamName] = String(rawTeamValue || '').split('::');
+      const [teamName, teamLeagueId] = String(rawTeamValue || '').split('::');
       const user = interaction.options.getUser('user');
       const { claimTeam } = openTeamsService;
       const member = await guild.members.fetch(user.id).catch(()=>null);
       if (!member) return interaction.reply({content:'❌ Could not find member.',flags:64});
-      const result = await claimTeam(guild, member, teamName, {});
+      const result = await claimTeam(guild, member, teamName, { leagueId: teamLeagueId || null });
       if (!result.success) return interaction.reply({content:`❌ ${result.reason}`,flags:64});
       try { await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, result.entry.leagueId || null); } catch {}
       try { teamRegistry.syncFromState(_state); } catch {}
@@ -2373,18 +2370,24 @@ case 'register-team': {
     }
     case 'set-team-identity': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const orig = interaction.options.getString('original-team');
+      const rawOrig = interaction.options.getString('original-team');
+      const [orig, encodedLeagueId] = String(rawOrig || '').split('::');
+      const currentLeagueId = require('../league/spaceContext').current();
+      if (encodedLeagueId && currentLeagueId && String(encodedLeagueId) !== String(currentLeagueId)) {
+        return interaction.reply({ content:'❌ That team belongs to a different league. Run this command inside the intended league channel.', flags:64 });
+      }
       const location = interaction.options.getString('location');
       const name = interaction.options.getString('name');
       const user = interaction.options.getUser('user');
       const display = buildDisplayTeam(location,name,orig);
       const key = norm(orig);
       const existing = _state.players.get(key);
-      _state.players.set(key,{...existing,userId:user?.id||existing?.userId,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
       const reg = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===key);
+      if (!existing && !reg) return interaction.reply({ content:`❌ Team slot **${orig}** was not found in this league.`, flags:64 });
+      _state.players.set(key,{...existing,userId:user?.id||existing?.userId||reg?.ownerId||null,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
       if (reg) { reg.displayTeam=display; await openTeamsService.refreshOpenTeamsBoard(guild); }
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ Identity Updated').addFields({name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
+      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ League Team Identity Updated').setDescription('This changes the team identity inside this league only. It does not change the member’s Discord server nickname.').addFields({name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
     }
     case 'add-open-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
@@ -2777,7 +2780,7 @@ case 'setup-wizard-start': {
     }
     wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'mode' });
-    const ch = await _postSetupWizardMessage(guild, 'Choose setup mode, structure mode, and template to begin.', { stage: 'mode' });
+    const ch = await _postSetupWizardMessage(guild, 'Choose a structure strategy and server template to begin.', { stage: 'mode' });
     await recoverySelfHealService.healPatchNotes(guild, patchNotesService).catch(() => null);
     await patchNotesService.publishPatchNotes(guild).catch(() => null);
     const msg = ch ? `🛠️ Setup wizard is ready in <#${ch.id}>.` : `🛠️ Setup wizard opened in **${_setupWizardFallbackText()}**.`;
@@ -3120,7 +3123,7 @@ case 'initialize-server': {
     await workflowEngine.run('post-build', { guild, state: _state, client: _client });
     wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'mode' });
-    const ch = await _postSetupWizardMessage(guild, `**${result.serverName}** is in installation mode now. Choose setup mode, structure mode, and template to begin.`, { stage: 'mode' });
+    const ch = await _postSetupWizardMessage(guild, `**${result.serverName}** is in installation mode now. Choose a structure strategy and server template to begin.`, { stage: 'mode' });
     await postRebootFinalizationService.finalizeSetupLaneAfterReboot(guild, ch, () => wizardRendererService.buildWizardPayload(guild, '**Installation mode is active.** Continue setup from this guide.'), { currentStep: 'mode', deleteUserMessages: true }).catch(() => null);
     const msg = ch ? `🧹 Installation mode is live in <#${ch.id}>.` : '🧹 Installation mode is live in **#setup-wizard**.';
     await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null });

@@ -22,6 +22,23 @@ function capture(guild) {
   return { candidates: [...candidates.values()], saved };
 }
 
+
+function recordDesired(guild, specs) {
+  const saved = loadJson(FILE, {}) || {};
+  const channels = [];
+  for (const spec of specs || []) {
+    const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === spec.name);
+    if (!cat) continue;
+    for (const [name] of spec.channels || []) {
+      const ch = guild.channels.cache.find(c => c.isTextBased?.() && c.name === name && c.parentId === cat.id);
+      if (!ch || !isTemplateTopic(ch.topic)) continue;
+      channels.push({ id: ch.id, name: ch.name, topic: ch.topic, parentId: ch.parentId });
+    }
+  }
+  saved[guild.id] = { channels, updatedAt: Date.now() };
+  saveJson(FILE, saved);
+  return { recorded: channels.length };
+}
 async function reconcile(guild, snapshot, specs, isProtectedCategory = () => false) {
   const wanted = new Set(specs.flatMap(spec => (spec.channels || []).map(([name]) => `${spec.name}\0${name}`)));
   const desired = [];
@@ -57,4 +74,4 @@ async function reconcile(guild, snapshot, specs, isProtectedCategory = () => fal
   saveJson(FILE, snapshot.saved);
   return { deletedChannels, deletedCategories, preserved };
 }
-module.exports = { capture, reconcile, isTemplateTopic };
+module.exports = { capture, reconcile, recordDesired, isTemplateTopic };

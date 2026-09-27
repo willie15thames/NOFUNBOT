@@ -153,6 +153,24 @@ function parseFast(content) {
   return null;
 }
 
+function teamAssignmentSlashGuidance(message) {
+  const content = String(message?.content || '').replace(/\s+/g, ' ').trim();
+  if (!/\bassign\b/i.test(content)) return null;
+  const mentioned = message?.mentions?.users?.find?.(u => String(u.id) !== String(message?.client?.user?.id));
+  if (!mentioned) return null;
+  let team = null;
+  let m = content.match(/\bassign\s+<@!?\d+>\s+(?:to|as)\s+(?:the\s+)?(.+?)\s*$/i);
+  if (m) team = m[1];
+  if (!team) {
+    m = content.match(/\bassign\s+(?:the\s+)?(.+?)\s+to\s+<@!?\d+>\s*$/i);
+    if (m) team = m[1];
+  }
+  if (!team) return null;
+  team = team.replace(/<@!?\d+>/g, '').replace(/[.`]/g, '').trim().slice(0, 60);
+  if (!team) return null;
+  return `Use \`/teams assign team:${team} user:@${mentioned.username}\` for team ownership. \`/set-team-identity\` only changes that team's league-scoped display/branding; it does not assign the member or change their server nickname.`;
+}
+
 async function tryReplyVerdict(message, guild, state, services) {
   if (!message.reference?.messageId) return false;
   const ref = await message.channel.messages.fetch(message.reference.messageId).catch(()=>null);
@@ -241,6 +259,14 @@ if (/^(?:reset|wipe|delete\s+all\s+leagues|reset\s+league|wipe\s+league)\b/i.tes
   const rateCheck = _claimCommissionerAiQuota(guild?.id || message.guildId, message.author.id);
   if (!rateCheck.ok) {
     await message.reply(rateCheck.message).catch(() => null);
+    return;
+  }
+
+  // Deterministic command routing for a common non-AI mutation. Team assignment is intentionally
+  // not in the AI action catalog, so never let the model invent an action or confuse it with branding.
+  const assignmentGuidance = teamAssignmentSlashGuidance(message);
+  if (assignmentGuidance) {
+    await message.reply(assignmentGuidance).catch(() => null);
     return;
   }
   

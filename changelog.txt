@@ -1,3 +1,6 @@
+V204.6 wizard, reconciliation and scoped-command wiring — package 21.10.0-rc.7
+Structure strategy is now the wizard’s single build authority; initial template builds record exact ownership so later edits can safely remove obsolete bot-owned resources; team mutations parse league-qualified choices and require league scope; community selectors autocomplete persisted names; installation state reads the authoritative wizard state. See docs/V204_6_WIZARD_WIRING_RC7.md.
+
 V204.5 stability repair candidate — package 21.10.0-rc.6
 Transactional results and stream history, membership compensation/recovery, safe template ownership and deletion retries, canonical scoped players, full-operation structural locks, validated DNS, isolated active checks, stable nicknames, periodic readiness and supervised workers. See docs/RC6_STABILITY_AND_DEPLOYMENT.md for verification evidence and mandatory staging gates.
 

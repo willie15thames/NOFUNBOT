@@ -70,7 +70,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName('edit-community')
     .setDescription('Modify a community name or type (Commissioner only)')
-    .addStringOption(o => o.setName('name').setDescription('Current community name').setRequired(true))
+    .addStringOption(o => o.setName('name').setDescription('Current community name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('new-name').setDescription('New name (leave blank to keep current)').setRequired(false))
     .addStringOption(o => o.setName('type').setDescription('New community type').setRequired(false)
       .addChoices(
@@ -87,7 +87,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName('delete-community')
     .setDescription('Remove a community and all its channels and roles (Commissioner only)')
-    .addStringOption(o => o.setName('name').setDescription('Community name to delete').setRequired(true))
+    .addStringOption(o => o.setName('name').setDescription('Community name to delete').setRequired(true).setAutocomplete(true))
     .addBooleanOption(o => o.setName('confirm').setDescription('Type true to confirm deletion').setRequired(true))
     .setDefaultMemberPermissions(P),
 
@@ -159,7 +159,7 @@ new SlashCommandBuilder()
   new SlashCommandBuilder()
     .setName('toggle-team-mode')
     .setDescription('Change community type between league-enabled / event-driven / social (Commissioner only)')
-    .addStringOption(o => o.setName('community').setDescription('Community name').setRequired(true))
+    .addStringOption(o => o.setName('community').setDescription('Community name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('mode').setDescription('New mode').setRequired(true)
       .addChoices(
         { name: 'League enabled (teams + competition)', value: 'league-enabled' },

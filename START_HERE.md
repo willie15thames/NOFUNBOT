@@ -1,8 +1,8 @@
 # NOFUNBOT audit update release candidate
 
-Package version: 21.10.0-rc.6. Archive label: v204.5 stability repairs.
+Package version: 21.10.0-rc.7. Archive label: v204.6 wizard and wiring repairs.
 
-Start with `docs/RC6_STABILITY_AND_DEPLOYMENT.md` for the current repair matrix and exact VS Code, GitHub, Railway, staging and rollback steps. RC6 repairs the thirteen RC5 fault cases. The current Word supplement is `docs/NOFUNBOT_RC6_Stability_Audit.docx`; older reports below are historical. Run `npm ci` followed by `npm run verify:local`.
+Start with `docs/V204_6_WIZARD_WIRING_RC7.md` for the RC7 delta, then `docs/RC6_STABILITY_AND_DEPLOYMENT.md` for the underlying RC6 repair matrix and exact VS Code, GitHub, Railway, staging and rollback steps. RC6 repairs the thirteen RC5 fault cases. The current Word supplement is `docs/NOFUNBOT_RC6_Stability_Audit.docx`; older reports below are historical. Run `npm ci` followed by `npm run verify:local`.
 
 RC5 preserves the member's native server name, shows team identity inside its league posts, creates readable taggable roles for new leagues and events, and prevents an active-check failure or one league's inactivity rule from harming other memberships. Read `docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md` for the complete wiring record and the live checks still needed.
 

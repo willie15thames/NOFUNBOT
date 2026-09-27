@@ -12,17 +12,15 @@
 
 const { TOKEN, CLIENT_ID, GUILD_ID } = require('../config/env');
 const { REST, Routes } = require('discord.js');
-const wizardPrefs = require('./wizardPreferencesService');
 const wizardStateService = require('./wizardStateService');
 const activeLeagueService = require('./activeLeagueService');
 const state = require('../state');
 const { buildCommandsForState } = require('../commands');
 
 function getCommandDeploymentState(nextState = state) {
-  const prefs = wizardPrefs.getPrefs();
   const wizardState = wizardStateService.getState();
   return {
-    installationMode: !!wizardState.installationMode || !!prefs.installationMode,
+    installationMode: !!wizardState.installationMode,
     hasActiveLeague: activeLeagueService.listResetOptions(nextState).length > 0,
   };
 }
