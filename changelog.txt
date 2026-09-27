@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 V204.7 RC3 — package 21.11.0-rc.3
 - Release-closure hardening: provider authority now fails safe to local when league scope is ambiguous, and provider connection operations no longer mutate the legacy global provider as an authority.
 - Production provider connection durability now honors APP_ENV=production as well as NODE_ENV=production before permitting JSON compatibility fallback.
@@ -13,6 +14,8 @@ V204.7 RC1 — package 21.11.0-rc.1
 - Excluded the live @mention from ambient prompt context to prevent duplicate-request context and added explicit natural league scoping for assignment requests.
 - Full npm/tsc release certification remains required in a dependency-complete environment.
 
+=======
+>>>>>>> origin/main
 V204.6 wizard, reconciliation and scoped-command wiring — package 21.10.0-rc.7
 Structure strategy is now the wizard’s single build authority; initial template builds record exact ownership so later edits can safely remove obsolete bot-owned resources; team mutations parse league-qualified choices and require league scope; community selectors autocomplete persisted names; installation state reads the authoritative wizard state. See docs/V204_6_WIZARD_WIRING_RC7.md.
 

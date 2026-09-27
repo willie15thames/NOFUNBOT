@@ -572,7 +572,25 @@ async function createTemplateStructure(guild, state, templateKey = 'gaming', opt
     templateSummary = require('./templateMixService').buildSelectionSummary(templateSelections, subtemplateSelections);
   }
 
+<<<<<<< HEAD
   const templateReconciliation = require('./templateReconciliationService');
+=======
+  // Record exact bot-owned template assets after a successful initial build.
+  // Edit-mode reconciliation can only safely delete obsolete channels when provenance exists.
+  const templateReconciliation = require('./templateReconciliationService');
+  const desiredTemplateSpecs = isCustomMix
+    ? require('./customMixService').buildChannelSpecs(customSelections).map(x => ({ name: x.categoryName, channels: x.channels || [] }))
+    : (template.categories || [])
+      .map(x => ({ name: String(x.name || '').replace('{server}', serverName), channels: x.channels || [] }))
+      .filter(x => !/welcome to|discipline|staff & commissioner/i.test(x.name));
+
+  // V198 FIX: Run final build steps in parallel — they operate on independent targets.
+  // normalizeBaseChannelPolicies: edits channel permissions (already parallel internally)
+  // reorderBaseCategoryStack: moves category positions
+  // postBaseGuideMessages: posts/replaces guide embeds in core channels (parallel internally)
+  // publishPatchNotes: creates/updates patch notes category + channel
+  // These 4 are independent. _silentDedupSweep runs AFTER all channels are finalized.
+>>>>>>> origin/main
   const finalResults = await Promise.allSettled([
     normalizeBaseChannelPolicies(guild),
     reorderBaseCategoryStack(guild),
@@ -583,10 +601,23 @@ async function createTemplateStructure(guild, state, templateKey = 'gaming', opt
   if (finalFailure) throw finalFailure.reason;
   await _silentDedupSweep(guild);
   templateReconciliation.recordDesired(guild, desiredTemplateSpecs);
+<<<<<<< HEAD
   return { serverName, flushSummary, template: templateLabel, structureMode: mode, templateSummary,
     customSelections: mode === 'custom' ? (options.customSelections || []) : [],
     customTemplateSelections: mode === 'custom' ? (options.customTemplateSelections || snap.customTemplateSelections || []) : [],
     customSubtemplateSelections: mode === 'custom' ? (options.customSubtemplateSelections || snap.customSubtemplateSelections || []) : [] };
+=======
+  const { buildSelectionSummary } = require('./customMixService');
+  const mixSummary = isCustomMix ? buildSelectionSummary(customSelections) : null;
+  return {
+    serverName,
+    flushSummary,
+    template: isCustomMix ? 'Custom Mix' : template.name,
+    structureMode: isCustomMix ? 'custom-mix' : mode,
+    templateSummary: mixSummary || getTemplateSummary(template),
+    customSelections: isCustomMix ? customSelections : [],
+  };
+>>>>>>> origin/main
 }
 
 

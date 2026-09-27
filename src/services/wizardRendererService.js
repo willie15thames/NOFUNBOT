@@ -383,7 +383,11 @@ function _buildMainEmbed(guild, note, settings, prefs) {
     .setDescription(buildSummaryText(settings, prefs, note))
     .addFields(
       { name: fieldLabel, value: fieldValue },
+<<<<<<< HEAD
       ...(stage === 'mode' ? [{ name: 'Structure strategy', value: '**BASE**: core bot/server lanes only; no template or subtemplate.\n**TEMPLATE**: core lanes + one selected template/subtemplate.\n**CUSTOM**: core lanes + the templates/subtemplates you select.' }] : []),
+=======
+      ...(stage === 'mode' ? [{ name: 'Structure strategy', value: '**BASE**: core lanes + template.\n**CUSTOM**: core lanes + selected custom packs.\n**EMPTY**: template + staff controls only; no standard community stack.' }] : []),
+>>>>>>> origin/main
       { name: 'Template summary', value: profile?.summary || 'Choose a server template to unlock the right categories, channels, rules, and guide flow.' },
       { name: 'Theme preview', value: themePreviewText, inline: false },
     )
@@ -400,9 +404,15 @@ function buildFlowGuidePayload() {
       .setTitle('🧭 Setup Flow Guide')
       .setDescription(
         'Confirm this guide to open the main setup wizard. The setup will stay in one edited bot message instead of stacking a pile of prompts.\n\n' +
+<<<<<<< HEAD
         '**1. Choose structure strategy**\n**Base** = core bot/server lanes only, with no template or subtemplate. **Template** = choose one template and its relevant subtemplate. **Custom** = mix multiple templates and optional subtemplates.\n\n' +
         '**2. Template choices**\nTemplate Structure gives you one purpose-built layout. Custom Structure lets you combine multiple template families and subtemplates. General / Simple Server is available when you want a lightweight layout.\n\n' +
         '**3. Custom picks, only when Custom is selected**\nChoose the exact templates you want, then optionally layer relevant subtemplates. Duplicate categories/channels are deduplicated before build.\n\n' +
+=======
+        '**1. Choose structure strategy**\n**Base** = core server lanes + template. **Custom** = core lanes + only the custom packs you select. **Empty** = no standard community stack; build only the selected template plus staff controls.\n\n' +
+        '**2. Choose template + subtemplate**\nTemplate controls server purpose, channel pack, rules context, theme, and AI context. Subtemplate narrows that behavior when one is available.\n\n' +
+        '**3. Custom picks, only when Custom is selected**\nMix Gaming, Sports, Community, and Media packs. The bot arranges the selected packs into their own categories.\n\n' +
+>>>>>>> origin/main
         '**4. Audience + AI tone**\nAudience level is required before tone. Member and commissioner AI can share a tone profile or use separate profiles.\n\n' +
         '**5. Final review**\nReview identity, rules, GIFs, timezone gate, structure, and template before build/apply.'
       )
@@ -441,11 +451,20 @@ function buildWizardPayload(guild, note = '', opts = {}) {
     const rows = [];
 
     if (stage === 'mode') {
+<<<<<<< HEAD
       rows.push(_buildStructureModeRow(settings));
       if (settings.customStructureMode === 'template') {
         rows.push(_buildTemplateRow(settings), _buildSubtemplateRow(settings));
       }
       rows.push(_buildNavRow('mode', !canAdvance, isEdit));
+=======
+      rows.push(
+        _buildStructureModeRow(settings),
+        _buildTemplateRow(settings),
+        _buildSubtemplateRow(settings),
+        _buildNavRow('mode', !canAdvance, isEdit),
+      );
+>>>>>>> origin/main
     } else if (stage === 'custom_structure') {
       rows.push(_buildCustomTemplateSelectionRow(settings));
       rows.push(_buildCustomSubtemplateSelectionRow(settings));

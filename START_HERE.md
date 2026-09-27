@@ -1,6 +1,10 @@
 # NOFUNBOT v204.7 RC3 release candidate
 
+<<<<<<< HEAD
 Package version: 21.11.0-rc.3. Archive label: v204.7 Madden Connect + Conversation Intelligence + Structure Reset.
+=======
+Package version: 21.10.0-rc.7. Archive label: v204.6 wizard and wiring repairs.
+>>>>>>> origin/main
 
 Start with `docs/V204_6_WIZARD_WIRING_RC7.md` for the RC7 delta, then `docs/RC6_STABILITY_AND_DEPLOYMENT.md` for the underlying RC6 repair matrix and exact VS Code, GitHub, Railway, staging and rollback steps. RC6 repairs the thirteen RC5 fault cases. The current Word supplement is `docs/NOFUNBOT_RC6_Stability_Audit.docx`; older reports below are historical. Run `npm ci` followed by `npm run verify:local`.
 

@@ -587,6 +587,12 @@ function _wizardStatus(settings = serverSettings.getSettings(), prefs = wizardPr
   if (!settings.audienceRating) missing.push('audience level');
   if (!memberTone.length) missing.push('member AI tone');
   if (!settings.useSharedToneProfile && !commTone.length) missing.push('commissioner AI tone');
+<<<<<<< HEAD
+=======
+  if (settings.customStructureMode === 'custom') {
+    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) missing.push('custom categories/channels');
+  }
+>>>>>>> origin/main
   return { canInitialize: missing.length === 0, missing };
 }
 
@@ -1066,6 +1072,7 @@ if (cid === 'wizard_next') {
   const currentStep = wiz.currentStep || 'mode';
 
   if (currentStep === 'mode') {
+<<<<<<< HEAD
     if (!settings.customStructureMode) {
       return interaction.followUp({ content:'⚠️ Choose a structure strategy before continuing.', flags:64 }).catch(() => null);
     }
@@ -1073,6 +1080,10 @@ if (cid === 'wizard_next') {
       if (!settings.serverTemplate) return interaction.followUp({ content:'⚠️ Choose a server template before continuing.', flags:64 }).catch(() => null);
       const subOpts = getTemplateSubtemplateOptions(settings.serverTemplate);
       if (subOpts.length && !settings.serverSubtemplate) return interaction.followUp({ content:'⚠️ Choose a subtemplate before continuing.', flags:64 }).catch(() => null);
+=======
+    if (!settings.customStructureMode || !settings.serverTemplate) {
+      return interaction.followUp({ content:'⚠️ Choose a structure strategy and server template before continuing.', flags:64 }).catch(() => null);
+>>>>>>> origin/main
     }
     const nextStage = settings.customStructureMode === 'custom' ? 'custom_structure' : 'tone';
     wizardStateService.patch({ currentStep: nextStage, lastAdvancedAt: Date.now() });
@@ -1083,8 +1094,13 @@ if (cid === 'wizard_next') {
         : 'Now choose audience level and AI tones.'));
   }
   if (currentStep === 'custom_structure') {
+<<<<<<< HEAD
     if (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length) {
       return interaction.followUp({ content:'⚠️ Choose at least one template for Custom Structure before continuing.', flags:64 }).catch(() => null);
+=======
+    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) {
+      return interaction.followUp({ content:'⚠️ Choose at least one custom pack before continuing.', flags:64 }).catch(() => null);
+>>>>>>> origin/main
     }
     wizardStateService.patch({ currentStep: 'tone', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'tone' });
@@ -1191,6 +1207,7 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
   if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
   try { await interaction.deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
+<<<<<<< HEAD
   const mode = selected === '__clear__' ? '' : selected;
   const current = serverSettings.getSettings();
   const patch = { ...current, customStructureMode: mode };
@@ -1202,6 +1219,9 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
     patch.serverTemplate = ''; patch.serverSubtemplate = '';
   }
   serverSettings.saveSettings(patch);
+=======
+  serverSettings.saveSettings({ ...serverSettings.getSettings(), customStructureMode: selected === '__clear__' ? '' : selected });
+>>>>>>> origin/main
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, selected === '__clear__' ? 'Structure mode selection cleared.' : `Structure mode saved: **${String(selected).toUpperCase()}**.`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_arrangement_select') {
