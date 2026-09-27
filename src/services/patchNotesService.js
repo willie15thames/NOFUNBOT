@@ -15,36 +15,66 @@ const path = require('path');
 const { EmbedBuilder, ChannelType, MessageFlags } = require('discord.js');
 const { getStaffRoles: getConfiguredStaffRoles } = require('./accessPolicyService');
 
-const PATCH_FILE = path.join(__dirname, '..', '..', 'PATCH_NOTES_AND_CONTEXT.txt');
+const PATCH_FILE = path.join(__dirname, '..', '..', 'PUBLIC_PATCH_NOTES.md');
 const CATEGORY_NAME = '🛠️ Bot Setup & Patch Notes';
 const CHANNEL_NAME = 'patch-notes';
 
 function _patchDocFiles() {
-  try {
-    const root = path.join(__dirname, '..', '..');
-    return fs.readdirSync(root)
-      .filter(name => /^PATCH_V\d+.*\.(md|txt)$/i.test(name))
-      .sort((a, b) => {
-        const na = Number((a.match(/^PATCH_V(\d+)/i) || [0, 0])[1]) || 0;
-        const nb = Number((b.match(/^PATCH_V(\d+)/i) || [0, 0])[1]) || 0;
-        return na - nb;
-      })
-      .map(name => path.join(root, name));
-  } catch {
-    return [];
-  }
+  // Public Discord patch notes deliberately do not read internal PATCH_V*,
+  // PATCH_NOTES_AND_CONTEXT.txt, changelog.txt, RC notes, or test history.
+  return [];
 }
 
 function readPatchText() {
-  const parts = [];
-  try { parts.push(fs.readFileSync(PATCH_FILE, 'utf8')); } catch {}
-  for (const file of _patchDocFiles()) {
-    try {
-      const raw = fs.readFileSync(file, 'utf8');
-      if (raw && !parts.includes(raw)) parts.push(raw);
-    } catch {}
+  try { return fs.readFileSync(PATCH_FILE, 'utf8'); }
+  catch { return ''; }
+}
+
+function _publicPublishingEnabled() {
+  const { toBoolean } = require('../config/featureFlags');
+  return String(process.env.APP_ENV || '').toLowerCase() === 'production'
+    && toBoolean(process.env.PUBLIC_PATCH_NOTES_ENABLED, true);
+}
+
+function _publicVersion() {
+  return String(process.env.PUBLIC_RELEASE_VERSION || '1.0.0').trim() || '1.0.0';
+}
+
+async function _alreadyPublished(guildId, version) {
+  const { getPrisma } = require('../storage/prisma');
+  const prisma = getPrisma();
+  if (!prisma) return { known: false, published: false, reason: 'database-unavailable' };
+  try {
+    const key = `public-patch:${guildId}:${version}`;
+    const row = await prisma.botKv.findUnique({ where: { key } });
+    return { known: true, published: !!row, key, prisma };
+  } catch {
+    return { known: false, published: false, reason: 'publication-check-failed' };
   }
-  return parts.filter(Boolean).join('\n\n');
+}
+
+async function _markPublished(guildId, version) {
+  const { getPrisma } = require('../storage/prisma');
+  const prisma = getPrisma();
+  if (!prisma) return false;
+  const key = `public-patch:${guildId}:${version}`;
+  try {
+    await prisma.botKv.upsert({
+      where: { key },
+      create: {
+        key,
+        value: { guildId: String(guildId), version: String(version), publishedAt: new Date().toISOString() },
+        source: 'public-release',
+      },
+      update: {
+        value: { guildId: String(guildId), version: String(version), publishedAt: new Date().toISOString() },
+        source: 'public-release',
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parsePatchEntries(text) {
@@ -290,29 +320,41 @@ async function ensurePatchNotesChannel(guild) {
 }
 
 async function publishPatchNotes(guild, opts = {}) {
+  if (!_publicPublishingEnabled() && !opts.forcePublic) return null;
+
+  const version = _publicVersion();
+  const publication = await _alreadyPublished(guild.id, version);
+
+  // In production fail closed when durable publication state cannot be checked.
+  // This prevents deploy/restart loops from spamming the public patch lane.
+  if (!opts.forcePublic && !publication.known) return null;
+  if (!opts.forcePublic && publication.published) return null;
+
   const ensured = await ensurePatchNotesChannel(guild);
   let channel = ensured?.channel || null;
   if (!channel) return null;
+
   await new Promise(r => setTimeout(r, 300));
   channel = guild.channels.cache.get(channel.id) || channel;
+
   const entries = parsePatchEntries(readPatchText());
-  const recentEntries = entries.slice(-10);
-  const embeds = buildPatchEmbeds(recentEntries).slice(-10);
+  const embeds = buildPatchEmbeds(entries).slice(-10);
+  if (!embeds.length) return null;
+
   const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
   for (const msg of (recent ? [...recent.values()] : [])) {
     if (msg.author?.id === guild.members?.me?.id) await msg.delete().catch(() => null);
   }
-  // Chronological release feed: oldest retained entry first, newest patch posted last.
+
   for (const embed of embeds) {
     await channel.send({
       embeds: [embed],
       allowedMentions: { parse: [] },
       flags: MessageFlags.SuppressNotifications,
-    }).catch((err) => { throw err; });
+    });
   }
-  const after = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-  const botMsgs = after ? [...after.values()].filter(m => m.author?.id === guild.members?.me?.id).sort((a,b)=>b.createdTimestamp-a.createdTimestamp) : [];
-  for (const msg of botMsgs.slice(10)) await msg.delete().catch(() => null);
+
+  await _markPublished(guild.id, version);
   return channel;
 }
 

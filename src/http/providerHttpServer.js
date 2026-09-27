@@ -60,6 +60,13 @@ async function _handle(req, res) {
     } catch (e) {
       const status = e.status || 500;
       log.error(`provider request exception route=${route.routeName || 'unknown'} status=${status} error=${String(e?.message || e).slice(0, 180)}`);
+      require('../services/runtimeIncidentService').capture(e, {
+        source: 'provider-http',
+        eventType: 'provider-request-exception',
+        route: route.routeName || 'unknown',
+        status,
+        severity: status >= 500 ? 'error' : 'warn',
+      }).catch(() => null);
       return _send(res, status, { ok: false, reason: status === 413 ? 'payload-too-large' : 'internal-error' });
     }
   }

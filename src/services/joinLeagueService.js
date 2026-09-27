@@ -47,7 +47,7 @@ async function sendJoinLeaguePrompt(interaction, state) {
   const opts = leagueOptions(state);
   const totalOpen = Array.isArray(state.openTeamRegistry) ? state.openTeamRegistry.filter(t => t.isOpen).length : 0;
   if (!opts.length) {
-    return interaction.reply({ content: '❌ No active leagues exist yet. The commissioner must run `/setup-league` first.', flags: 64 });
+    return interaction.reply({ content: '🏗️ No active league exists yet. A commissioner can create the first league with `/setup-league`. A separate league-enabled community is not required.', flags: 64 });
   }
   const row = _buildLeagueRow(opts);
   return interaction.reply({
