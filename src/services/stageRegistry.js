@@ -29,20 +29,12 @@ const STAGE_REGISTRY = {
   },
   mode: {
     label: '🏗️ Structure + Template',
-<<<<<<< HEAD
     description: 'Choose one **Structure strategy**. BASE builds core bot/server lanes with no template. TEMPLATE adds one template and its relevant subtemplate. CUSTOM lets you combine multiple templates and optional subtemplates.',
-=======
-    description: 'Choose one **Structure strategy** and one **Server template**. BASE builds the core stack plus template; CUSTOM builds the core stack plus only your selected packs; EMPTY skips the standard community stack and builds the template plus staff controls. Choose a Subtemplate when offered.',
->>>>>>> origin/main
     nextLabel: '▶ Audience & AI Tone',
   },
   custom_structure: {
     label: '🧩 Custom Structure',
-<<<<<<< HEAD
     description: 'Choose one or more templates, then optionally add relevant subtemplates. The bot deduplicates overlapping categories/channels while preserving your selections.',
-=======
-    description: 'Choose the exact packs you want from **Gaming**, **Sports**, **Community**, and **Media**. The bot will arrange each selected pack into its defined category and preserve your selections until you change them.',
->>>>>>> origin/main
     nextLabel: '▶ Audience & AI Tone',
   },
   tone: {

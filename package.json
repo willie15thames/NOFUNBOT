@@ -1,10 +1,6 @@
 {
   "name": "nofunleague-bot",
-<<<<<<< HEAD
   "version": "21.11.0-rc.3",
-=======
-  "version": "21.10.0-rc.7",
->>>>>>> origin/main
   "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
   "main": "index.js",
   "scripts": {
