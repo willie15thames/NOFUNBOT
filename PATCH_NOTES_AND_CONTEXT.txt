@@ -1,3 +1,8 @@
+[2026-09-27 UTC] V204 audit update — package 21.10.0-rc.1
+Affected files and implementation details: docs/V204_RELEASE_NOTES.md and docs/V204_DEPENDENCY_MAP.md.
+Fixes: private space lifecycle, scoped team state, durable lifetime history, circular import, CI dependency lock and schema gate.
+Risk: cross-cutting state migration; staging gates required before production. Local verification recorded in docs/VERIFICATION.md.
+
 [2026-03-21 02:45:00 UTC] V193: Railway guarded boot pipeline and deploy context hardening
 - affected: package.json, health-server.js, scripts/railway-start.sh, scripts/predeploy-check.js, scripts/release-context.js, src/config/featureFlags.js, .env.railway.example, .env.stack.example, docs/RAILWAY_STAGING_PROD_PIPELINE_V193.md
 - fix: Added a centralized feature flag reader for Railway deploy context so health and startup scripts read one source of truth.

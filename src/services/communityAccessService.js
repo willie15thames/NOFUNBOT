@@ -123,6 +123,7 @@ async function syncCommunityChannelPermissions(guild, settings = serverSettings.
   const roleMap = new Map(communities.map(c => [c.key, roles.get(c.key)]).filter(([, role]) => role));
   const channels = [...guild.channels.cache.values()].filter(ch => ch?.permissionOverwrites?.edit && ch.type !== ChannelType.GuildCategory && ch.name !== CHANNEL_NAME);
   for (const ch of channels) {
+    if (require('./activeLeagueService').findLeagueForChannel(ch)) continue; // Space membership is exclusive; community roles must never grant access.
     const label = classifySpace(ch.name, settings);
     if (!label?.key) continue;
     const role = roleMap.get(label.key);

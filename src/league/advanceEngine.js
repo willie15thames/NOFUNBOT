@@ -37,7 +37,7 @@ const AWAITING_REMINDER_MS = 12 * 60 * 60 * 1000;
 const _inFlight = new Set(); // single-flight per league (process-local); cross-instance safety via _acquireLock
 
 function _providers() { return require('../providers/gameProvider'); }
-function _leagueId(state) { return String(state?.leagueConfig?.leagueName || 'default'); }
+function _leagueId(state) { return String(require('./spaceContext').current() || state?.leagueConfig?.leagueId || state?.leagueConfig?.leagueName || 'default'); }
 function _lockKey(state) { return `league-advance:${_leagueId(state).toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'default'}`; }
 
 async function _acquireLock(guild, state) {

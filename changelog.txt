@@ -1,3 +1,6 @@
+Package 21.10.0-rc.1 — V204 audit update
+Private leagues/events, lifetime career records, guarded cleanup and reproducible installs. See docs/V204_RELEASE_NOTES.md.
+
 [V203.1] Audit stabilization and production-safety patch | 2026-09-26 | package 21.9.1
 
 - FIX: Restored the missing documented v18 league naming contract used by both Standard and Fantasy Draft setup. `leagueChannelName()` and `leaguePrefixCode()` now live in `src/services/leagueNamingService.js` and preserve `<2-char-prefix>.<channel-key>` names (for example `no.rules`).

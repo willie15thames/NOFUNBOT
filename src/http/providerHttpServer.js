@@ -47,7 +47,11 @@ async function _handle(req, res) {
     if (!params) continue;
     try {
       const body = await _readBody(req, route.maxBytes);
-      const r = await route.handle(params, req, body, Object.fromEntries(url.searchParams));
+      const leagues=require('../services/activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');
+      const selected=process.env.PROVIDER_HTTP_SPACE_ID || (leagues.length===1?leagues[0].id:null);
+      if(leagues.length>1 && !selected)return _send(res,409,{ok:false,reason:'Configure PROVIDER_HTTP_SPACE_ID for this receiver'});
+      if(selected&&!leagues.some(x=>x.id===selected))return _send(res,409,{ok:false,reason:'Configured provider space is not active'});
+      const r = await require('../league/spaceContext').run(selected,()=>route.handle(params, req, body, Object.fromEntries(url.searchParams)));
       return _send(res, r.status, r.body);
     } catch (e) {
       return _send(res, e.status || 500, { ok: false, reason: e.status === 413 ? 'payload-too-large' : 'internal-error' });

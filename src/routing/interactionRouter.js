@@ -229,6 +229,24 @@ function _guardInstallationModeComponent(interaction) {
 }
 
 async function handleInteraction(interaction) {
+  const context=require('../league/spaceContext');
+  const registry=require('../services/activeLeagueService');
+  const league=registry.findLeagueForChannel(interaction.channel);
+  const all=registry.listActiveLeagues().filter(x=>x.kind!=='event');
+  const globalCommand=/^(setup-|delete-league|reset-league|initialize-server|trash-the-bot|member-record|join-league|select-team)/.test(interaction.commandName||'') || /^(setup_|join_)/.test(interaction.customId||'');
+  const id=globalCommand?null:(league?.id || (all.length===1?all[0].id:null));
+  return context.run(id,async()=>{
+    if(league && !isAdminMember(interaction.member,COMM_ROLE,_dynamicCommissioners())) {
+      const allowed=await require('../services/leagueVisibilityService').hasMembership(interaction.guild.id,interaction.user.id,league.id);
+      const legacyMember=_state.openTeamRegistry.some(t=>t.leagueId===league.id&&t.ownerId===interaction.user.id);
+      if(!allowed&&!legacyMember)return interaction.reply({content:'Join this league or event before using its controls.',flags:64});
+    }
+    try{return await _handleInteractionScoped(interaction);}
+    finally{_state.flushSpace?.();await require('../storage/jsonStore').flushSpaceWrites();}
+  });
+}
+
+async function _handleInteractionScoped(interaction) {
   try { require('../services/commandAliasService').resolveInteractionAlias(interaction); } catch {} // V203: idempotent
   protectInteraction(interaction);
   const _startMs = Date.now();
@@ -373,7 +391,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
         const leagueTag = t.leagueName ? ` [${t.leagueName}]` : (t.leagueId ? ` [${t.leagueId}]` : '');
         allTeams.set(norm(`${t.baseTeam}:${t.leagueId || ''}`), {
           name: `✅ ${t.displayTeam}${t.displayTeam !== t.baseTeam ? ` (${t.baseTeam})` : ''}${leagueTag}`.slice(0, 100),
-          value: t.baseTeam,
+          value: `${t.baseTeam}::${t.leagueId || ''}`,
         });
       }
     }
@@ -382,7 +400,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
       for (const t of _state.openTeamRegistry.filter(t => !t.isOpen)) {
         allTeams.set(norm(t.baseTeam), {
           name: `${t.displayTeam}${t.displayTeam !== t.baseTeam ? ` (${t.baseTeam})` : ''}`,
-          value: t.baseTeam,
+          value: `${t.baseTeam}::${t.leagueId || ''}`,
         });
       }
       for (const p of _state.players.values()) {
@@ -1905,6 +1923,9 @@ async function _handleCommand(interaction, commandMeta = null) {
     return interaction.reply({ content:'⚠️ No active league or managed sub-server exists yet. Finish server setup first, then create a league, event, or other managed space before using this action.', flags:64 });
   }
 
+  const scopedCommands = new Set(['create-game','report-result','retract-score','game-channels','schedule-import','schedule-load-week','advance-week','player-of-the-week','potw-confirm','yearly-award','superbowl-champion','attr-award','set-stat-leaders','set-team-identity','add-open-team','set-team-logo','open-teams','streams','stream-board']);
+  if (activeLeagueCount > 1 && scopedCommands.has(cmd) && !require('../league/spaceContext').current()) return interaction.reply({content:'Run this command inside the intended private league channel.',flags:64});
+
   switch (cmd) {
     // ── Admin management ──
     case 'add-admin': {
@@ -2075,25 +2096,31 @@ async function _handleCommand(interaction, commandMeta = null) {
     }
 
     case 'setup-event': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      const eventName = interaction.options.getString('name');
-      const communityName = interaction.options.getString('community');
-      const description = interaction.options.getString('description') || '';
-      const settings = serverSettings.getSettings();
-      if (!settings.serverTemplate) return interaction.reply({ content: '🏗️ Set up your server template first via /setup-server.', flags:64 });
-      const events = Array.isArray(settings.scheduledEvents) ? [...settings.scheduledEvents] : [];
-      events.push({ name: eventName, communityName, description, createdAt: Date.now() });
-      serverSettings.saveSettings({ ...settings, scheduledEvents: events });
-      return interaction.reply({ flags:64, embeds: [new EmbedBuilder()
-        .setColor(0xf59e0b)
-        .setTitle('📅 Event Created')
-        .addFields(
-          { name: 'Event', value: eventName, inline: true },
-          { name: 'Community', value: communityName || 'server-wide', inline: true },
-          { name: 'Description', value: description || 'No description', inline: false },
-        )
-        .setTimestamp()
-      ]});
+      if (!isComm()) return interaction.reply({content:'Commissioners only.',flags:64});
+      const name=interaction.options.getString('name');
+      const action=interaction.options.getString('action') || 'create';
+      await interaction.deferReply({flags:64});
+      if(action==='create') {
+        const event=await require('../services/eventSpaceService').create(guild,{name,description:interaction.options.getString('description')||'',commissionerRoleId:_state.leagueConfig.commissionerRoleId||null});
+        return interaction.editReply(`Private event **${event.leagueName}** created. Use setup-event action:add-member to add participants. ID: ${event.id}`);
+      }
+      const event=activeLeagueService.listActiveLeagues().find(x=>x.kind==='event'&&(x.id===name||x.leagueName===name));
+      if(!event)return interaction.editReply('Select the exact event name or ID.');
+      const user=interaction.options.getUser('user');
+      if(action==='add-member'||action==='remove-member') {
+        if(!user)return interaction.editReply('Select a member.');
+        if(action==='add-member')await leagueVisibility.grantMemberAccessToLeague(guild,await guild.members.fetch(user.id),_state,event.id);
+        else await leagueVisibility.revokeMemberAccess(guild,user.id,event.id);
+        return interaction.editReply(`Event membership ${action==='add-member'?'added':'removed'}.`);
+      }
+      if(action==='erase') {
+        if(interaction.options.getString('confirm')!==event.leagueName)return interaction.editReply('Enter the exact event name in confirm to erase it.');
+        await leagueSetupService.deleteLeagueStructure(guild,{leagueId:event.id,categoryIds:event.builtCategoryIds,channelIds:event.builtChannelIds});
+        activeLeagueService.removeLeague(event.id);
+        await require('../services/managedSpaceService').transition(guild.id,event.id,'ARCHIVED');
+        return interaction.editReply('Event erased. Lifetime member history retained.');
+      }
+      return interaction.editReply(`**${event.leagueName}** — private event, ${event.id}`);
     }
 
     case 'setup-team': {
@@ -3402,14 +3429,16 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const selectedLeagueId = interaction.options.getString('league');
       const confirm = interaction.options.getString('confirm');
 
-      if (confirm !== 'DELETE') return interaction.reply({content:'⚠️ Type `DELETE` in the confirm field to proceed.',flags:64});
+
       if (!selectedLeagueId || selectedLeagueId === '_none_') return interaction.reply({content:'⚠️ Please select an active league to delete.',flags:64});
 
-      const selectedLeague = activeLeagueService.getLeague(selectedLeagueId) || activeLeagueService.getCurrentLeagueFallback(_state);
+      const selectedLeague = activeLeagueService.getLeague(selectedLeagueId);
       if (!selectedLeague) {
         return interaction.reply({ content: '⚠️ No active league record found to delete.', flags:64 });
       }
 
+      if (confirm !== selectedLeague.leagueName) return interaction.reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
+      await require('../services/lifetimeHistoryService').importLegacy(guild.id,_state);
       await interaction.deferReply({flags:64});
       await interaction.editReply(`🗑 Deleting **${selectedLeague.leagueName}**...`);
 
@@ -3419,13 +3448,16 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
       try {
         const structureDeleted = await deleteLeagueStructure(guild, {
+          leagueId: selectedLeague.id,
           categoryIds: selectedLeague.builtCategoryIds || [],
           channelIds: selectedLeague.builtChannelIds || [],
           typeId: selectedLeague.leagueTypeId || null,
         });
 
-        const gameChannelsDeleted = await deleteAllGameChannels(guild, `League deleted: ${selectedLeague.leagueName}`);
+        const gameChannelsDeleted = await deleteAllGameChannels(guild, `League deleted: ${selectedLeague.leagueName}`, { leagueId: selectedLeague.id });
         const cleanup = purgeLeagueData(_state, selectedLeague);
+        const trackedSpace = (await require('../services/managedSpaceService').list(guild.id)).find(x=>x.id===selectedLeague.id);
+        if (trackedSpace) await require('../services/managedSpaceService').transition(guild.id, selectedLeague.id, 'ARCHIVED');
 
         if ((_state.leagueConfig?.leagueName || '') === (selectedLeague.leagueName || '')) {
           _state.leagueConfig.leagueTypeId = null;
@@ -3464,10 +3496,10 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const nextLeagueTypeId = interaction.options.getString('new-league-type');
       const customLeagueName = interaction.options.getString('league-name');
 
-      if (confirm !== 'RESET') return interaction.reply({content:'⚠️ Type `RESET` in the confirm field to proceed.',flags:64});
+
       if (!selectedLeagueId || selectedLeagueId === '_none_') return interaction.reply({content:'⚠️ Please select an active league to reset.',flags:64});
 
-      const selectedLeague = activeLeagueService.getLeague(selectedLeagueId) || activeLeagueService.getCurrentLeagueFallback(_state);
+      const selectedLeague = activeLeagueService.getLeague(selectedLeagueId);
       if (!selectedLeague) {
         return interaction.reply({ content: '⚠️ No active league record found to reset. Set up a league first.', flags:64 });
       }
@@ -3475,6 +3507,8 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const targetLeagueTypeId = nextLeagueTypeId || selectedLeague.leagueTypeId || _state.leagueConfig.leagueTypeId;
       const targetLeagueName = (customLeagueName || selectedLeague.leagueName || _state.leagueConfig.leagueName || '').trim();
 
+      if (confirm !== selectedLeague.leagueName) return interaction.reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
+      await require('../services/lifetimeHistoryService').importLegacy(guild.id,_state);
       await interaction.deferReply({flags:64});
       await interaction.editReply(`⚙️ Resetting **${selectedLeague.leagueName}**...`);
 
@@ -3488,22 +3522,18 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
       try {
         const structureDeleted = await deleteLeagueStructure(guild, {
+          leagueId: selectedLeague.id,
           categoryIds: selectedLeague.builtCategoryIds || _state.leagueConfig.builtCategoryIds || [],
           channelIds:  selectedLeague.builtChannelIds  || _state.leagueConfig.builtChannelIds  || [],
           typeId:      selectedLeague.leagueTypeId     || _state.leagueConfig.leagueTypeId     || null,
         });
 
-        const gameChannelsDeleted = await deleteAllGameChannels(guild, 'League reset by commissioner');
+        const gameChannelsDeleted = await deleteAllGameChannels(guild, 'League reset by commissioner', { leagueId: selectedLeague.id });
         const cleanup = purgeLeagueData(_state, selectedLeague);
+        const trackedSpace = (await require('../services/managedSpaceService').list(guild.id)).find(x=>x.id===selectedLeague.id);
+        if (trackedSpace) await require('../services/managedSpaceService').transition(guild.id, selectedLeague.id, 'ARCHIVED');
 
-        _state.ocrGameResults.length = 0;
-        _state.leagueMemory = {scores:[],statLines:[],potw:[],superbowls:[],weeklyStats:[],lastUpdated:null};
-        _state.potwHistory.length = 0;
-        _state.streamMilestones.length = 0;
-        _state.pendingTrades.clear();
-        _state.pendingAttrBoosts.clear();
-        _state.currentStatLeaders = null;
-
+        // Lifetime rewards and other leagues' state survive reset.
         const leagueDef = LEAGUE_TYPES[targetLeagueTypeId];
         const leagueName = targetLeagueName || leagueDef.label.split(' ')[0];
 
@@ -3525,7 +3555,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
         try { teamRegistry.syncFromState(_state); } catch {}
         const { resetHubWeek } = hubReleaseService;
-        resetHubWeek(1, _state);
+        if (activeLeagueService.listActiveLeagues().length === 1) resetHubWeek(1, _state);
 
         return interaction.editReply({
           embeds: [new EmbedBuilder()
@@ -3632,8 +3662,32 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
     // ── /member-record — unified member ledger tools ──
     case 'member-record': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
       const sub = interaction.options.getSubcommand();
+      if (sub === 'career' || sub === 'export-career') {
+        const target = interaction.options.getUser('user') || interaction.user;
+        if (target.id !== interaction.user.id && !isComm()) return interaction.reply({content:'Only you and commissioners can view your full career.',flags:64});
+        await interaction.deferReply({flags:64});
+        const history = require('../services/lifetimeHistoryService');
+        await history.importLegacy(guild.id,_state);
+        const career = await history.career(guild.id,target.id);
+        if (sub==='export-career') return interaction.editReply({content:'Your lifetime record export.',files:[{attachment:Buffer.from(JSON.stringify(career,null,2)),name:`career-${target.id}.json`}]});
+        const honors=career.awards.slice(-15).map(a=>`• ${a.title || a.awardLabel || a.type} (${a.season || 'season unrecorded'})`).join('\n');
+        return interaction.editReply({content:`**Lifetime career — ${target.username}**\nGames: ${career.gamesPlayed} | W–L–T: ${career.wins}–${career.losses}–${career.ties}\nWin rate: ${career.winPercentage == null ? 'N/A' : career.winPercentage+'%'} | Seasons played: ${career.seasons}\nAwards: ${career.awards.length}\n${Object.entries(career.metrics).map(([k,v])=>`${k}: ${v}`).join(' | ')}\n${honors || 'No attributed awards yet.'}`.slice(0,1900),allowedMentions:{parse:[]}});
+      }
+      if (!isComm()) return interaction.reply({content:'Commissioners only.',flags:64});
+      if (sub==='award') {
+        await interaction.deferReply({flags:64});
+        await _saveLifetimeAward(interaction,{userId:interaction.options.getUser('user').id,title:interaction.options.getString('title')});
+        return interaction.editReply('Lifetime accolade saved.');
+      }
+      if (sub==='record-stat') {
+        const league=activeLeagueService.findLeagueForChannel(interaction.channel);
+        if(!league)return interaction.reply({content:'Record stats inside the intended league or event channel.',flags:64});
+        await interaction.deferReply({flags:64});
+        const metric=interaction.options.getString('metric'),userId=interaction.options.getUser('user').id;
+        await require('../services/lifetimeHistoryService').recordStat(guild.id,{id:`${league.id}:${interaction.options.getString('source-id')}:${userId}:${metric}`,leagueId:league.id,userId,metric,value:interaction.options.getNumber('value'),game:interaction.options.getString('game'),seasonId:interaction.options.getString('season'),actor:interaction.user.id});
+        return interaction.editReply('Verified lifetime statistic saved. Reusing the same source ID corrects this record without double counting.');
+      }
       const ledger = memberLedgerService;
 
       if (sub === 'history') {
@@ -3666,7 +3720,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
             { name: '🥾 Kicks/Bans', value: String(kicks.length), inline: true },
             { name: '📤 Left', value: String(leaves.length), inline: true },
             { name: '⚠️ Total Warnings', value: `${totalWarns} (GP:${rec.warnings.gameplay} CA:${rec.warnings.closeApp} IN:${rec.warnings.inactivity})`, inline: true },
-            { name: '🏟 Past Teams', value: rec.teams.length ? rec.teams.join(', ') : 'None', inline: false },
+            { name: '🏟 Past Teams', value: rec.teamHistory.length ? rec.teamHistory.map(t=>t.team).join(', ') : 'None', inline: false },
           );
         if (historyLines.length) embed.addFields({ name: '📜 History (last 5)', value: historyLines.join('\n\n').slice(0, 1024) });
         if (rec.notes.length) embed.addFields({ name: '📝 Notes', value: rec.notes.slice(-5).join('\n').slice(0, 1024) });
@@ -4180,9 +4234,10 @@ If they rejoin, the bot will still flag them as a returning member with history.
         displayTeam: interaction.options.getString('team'),
         statLine: interaction.options.getString('stat-line') || '',
         reason: interaction.options.getString('reason') || '',
-        userId: interaction.options.getUser('user')?.id || null,
+        userId: interaction.options.getUser('user')?.id || null, sourceId:interaction.id,
         awardedAt: Date.now(),
       };
+      await _saveLifetimeAward(interaction, { ...entry, title: 'Player of the Week' });
       _state.potwHistory.push(entry);
       await rewardBoardService.refresh(guild).catch(() => null);
       return interaction.reply({ content:`✅ POTW saved for **${entry.player}** (${entry.displayTeam}).`, flags:64 });
@@ -4195,7 +4250,8 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const team = interaction.options.getString('team') || _state.hubWeeklyData?.potwCandidate?.team || 'Unknown';
       const statLine = interaction.options.getString('stat-line') || _state.hubWeeklyData?.potwCandidate?.statLine || '';
       const reason = interaction.options.getString('reason') || (action === 'confirm' ? 'Confirmed AI selection' : 'Commissioner override');
-      _state.potwHistory.push({ week: _state.hubWeeklyData.week || _state.scheduleState.week || 1, type: 'LEAGUE', player, displayTeam: team, statLine, reason, awardedAt: Date.now() });
+      await _saveLifetimeAward(interaction, { userId: interaction.options.getUser('user')?.id, title: 'League Player of the Week', player, displayTeam:team });
+      _state.potwHistory.push({ sourceId:interaction.id, userId:interaction.options.getUser('user')?.id, week: _state.hubWeeklyData.week || _state.scheduleState.week || 1, type: 'LEAGUE', player, displayTeam: team, statLine, reason, awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
       return interaction.reply({ content:`✅ Best-in-League POTW ${action === 'confirm' ? 'confirmed' : 'overridden'} for **${player}**.`, flags:64 });
     }
@@ -4206,6 +4262,7 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const attr1 = interaction.options.getString('attribute1') || interaction.options.getString('attr1-category');
       const attr2 = interaction.options.getString('attribute2') || interaction.options.getString('attr2-category') || '';
       const reason = interaction.options.getString('reason') || 'Commissioner award';
+      await _saveLifetimeAward(interaction, {userId:interaction.options.getUser('user')?.id,title:'Attribute award',player:players,details:reason});
       const ch = _getCh(guild, 'devUpgrades') || _getCh(guild, 'announcements');
       if (ch) await ch.send(`🎯 **Attribute Award**\n**Players:** ${players}\n**Boost 1:** ${attr1}${attr2 ? `\n**Boost 2:** ${attr2}` : ''}\n**Reason:** ${reason}`).catch(() => null);
       return interaction.reply({ content:'✅ Attribute award posted.', flags:64 });
@@ -4219,7 +4276,8 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const isXF = !!interaction.options.getBoolean('is-xfactor');
       const user = interaction.options.getUser('user');
       const season = (_state.superbowlHistory.slice(-1)[0]?.season || 0) + 1;
-      _state.yearlyAwardHistory.push({ season, awardLabel: award, player, displayTeam: team, isXF, userId: user?.id || null, details: interaction.options.getString('details') || '', awardedAt: Date.now() });
+      await _saveLifetimeAward(interaction, { userId:user?.id, title:award, player, displayTeam:team, season });
+      _state.yearlyAwardHistory.push({ sourceId:interaction.id, season, awardLabel: award, player, displayTeam: team, isXF, userId: user?.id || null, details: interaction.options.getString('details') || '', awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
       return interaction.reply({ content:`✅ Yearly award saved: **${award}** for **${player}**.`, flags:64 });
     }
@@ -4230,7 +4288,8 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const user = interaction.options.getUser('user');
       const score = interaction.options.getString('score') || '';
       const season = interaction.options.getInteger('season') || ((_state.superbowlHistory.slice(-1)[0]?.season || 0) + 1);
-      _state.superbowlHistory.push({ season, displayTeam: team, userId: user?.id || null, score, awardedAt: Date.now() });
+      await _saveLifetimeAward(interaction, { userId:user?.id, title:'Super Bowl Champion', displayTeam:team, season });
+      _state.superbowlHistory.push({ sourceId:interaction.id, season, displayTeam: team, userId: user?.id || null, score, awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
       return interaction.reply({ content:`🏆 Super Bowl champion recorded for Season **${season}**: **${team}**.`, flags:64 });
     }
@@ -4858,6 +4917,13 @@ async function _refreshRules(guild) {
   for (let i=0;i<chunks.length;i++) {
     await rulesCh.send({embeds:[new EmbedBuilder().setColor(0x00b4d8).setTitle(i===0?'📖 League Rules':`📖 League Rules (cont. ${i+1})`).setDescription(chunks[i])]}).catch(()=>null);
   }
+}
+
+async function _saveLifetimeAward(interaction, grant) {
+  const league = activeLeagueService.findLeagueForChannel(interaction.channel) || (activeLeagueService.listActiveLeagues().length === 1 ? activeLeagueService.listActiveLeagues()[0] : null);
+  if (!league) throw new Error('Run award commands inside the selected league channel.');
+  if (!grant.userId) throw new Error('Select the member receiving credit in the user option.');
+  return require('../services/lifetimeHistoryService').award(interaction.guild.id,{...grant,id:interaction.id,leagueId:league.id,grantedBy:interaction.user.id});
 }
 
 module.exports = { init, handleInteraction, ensureSetupWizardChannel: _ensureSetupWizardChannel, postSetupWizardMessage: _postSetupWizardMessage, ensureSetupWizardStarterMessage: _ensureSetupWizardStarterMessage };

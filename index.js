@@ -277,6 +277,16 @@ function wireEvents() {
     return spamService.handleSpam(message, { state, commRole: COMM_ROLE, getCommissioners: () => dynamicCommissioners(state), getCh });
   }
 
+  const withMessageSpace = fn => async (...args) => {
+    const message=args[args.length-1];
+    const registry=require('./src/services/activeLeagueService');
+    const league=registry.findLeagueForChannel(message?.channel);
+    return require('./src/league/spaceContext').run(league?.id,async()=>{
+      try { return await fn(...args); }
+      finally { state.flushSpace?.(); await require('./src/storage/jsonStore').flushSpaceWrites(); }
+    });
+  };
+
   // ── Stream credit (V185: extracted to src/services/streamCreditService.js) ──
   const streamCreditService = require('./src/services/streamCreditService');
   const STREAM_RX = streamCreditService.STREAM_RX;
@@ -308,7 +318,7 @@ function wireEvents() {
   const _messageCreateInFlight = new Map(); // msgId → timestamp
   const MC_INFLIGHT_TTL = 60000; // 60s
 
-  client.on('messageCreate', async message => {
+  client.on('messageCreate', withMessageSpace(async message => {
     if (!(await eventClaim.claim(eventClaim.messageCreateKey(message), 30000))) {
       console.log('[messageCreate] globally deduped', message.id);
       return;
@@ -496,11 +506,11 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
         return;
       }
     }
-  });
+  }));
 
   // ── messageUpdate ─────────────────────────────────────────
   // Handles: stream link edits AND edited messages that @mention the bot
-  client.on('messageUpdate', async (_old, msg) => {
+  client.on('messageUpdate', withMessageSpace(async (_old, msg) => {
     if (!(await eventClaim.claim(eventClaim.messageUpdateKey(msg), 30000))) {
       console.log('[messageUpdate] globally deduped', msg.id);
       return;
@@ -561,7 +571,7 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
         }
       }
     }
-  });
+  }));
 
   // ── interactionCreate ─────────────────────────────────────
   const router = require('./src/routing/interactionRouter');
@@ -716,6 +726,8 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
 
     // Record in permanent ledger
     ledger.recordLeave(member, departureType, departureReason, departureBy);
+    await require('./src/services/lifetimeHistoryService').presence(member.guild.id,member.id,'LEFT').catch(err=>log.error('Lifetime departure write failed:',err.message));
+    for (const space of require('./src/services/activeLeagueService').listActiveLeagues()) await require('./src/services/leagueVisibilityService').revokeMemberAccess(member.guild,member.id,space.id).catch(err=>log.error('Membership revocation failed:',err.message));
 
     const released = await releaseByUserId(member.guild, member.id).catch(()=>null);
     if (released) {
@@ -759,6 +771,7 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
 
     // Record join in permanent ledger
     ledger.recordJoin(member);
+    await require('./src/services/lifetimeHistoryService').presence(member.guild.id,member.id,'PRESENT').catch(err=>log.error('Lifetime rejoin write failed:',err.message));
 
     const serverSettings = require('./src/services/serverSettingsService');
     const settings = serverSettings.getSettings();
@@ -1104,11 +1117,16 @@ client.once('clientReady', async () => {
       }
     }, 3000); // 3 seconds after boot — bot is already responding by then
 
+    require('./src/services/readinessService').write(true);
   } catch (err) {
     const { makeLogger } = require('./src/utils/logger');
+    require('./src/services/readinessService').write(false);
     makeLogger('startup').error('Startup error:', err.message);
   }
 });
+
+client.on('shardDisconnect',()=>require('./src/services/readinessService').write(false));
+client.on('shardResume',()=>require('./src/services/readinessService').write(true));
 
 // ── 5. Railway keepalive ─────────────────────────────────────
 // Health server runs as a SEPARATE process (health-server.js) started by railway-start.sh

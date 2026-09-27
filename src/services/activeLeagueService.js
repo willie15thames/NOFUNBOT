@@ -11,7 +11,8 @@
 'use strict';
 
 const { loadJson, saveJsonDebounced } = require('../storage/jsonStore');
-const { LEAGUE_TYPES } = require('./leagueSetupService');
+// Lazy access avoids the setup -> registry -> setup CommonJS cycle.
+const types = () => require('./leagueSetupService').LEAGUE_TYPES;
 
 const FILE = 'activeLeagues.json';
 
@@ -43,7 +44,7 @@ function getCurrentLeagueFallback(state) {
     id: 'current',
     leagueTypeId: state.leagueConfig.leagueTypeId,
     leagueName: state.leagueConfig.leagueName || 'Current League',
-    game: state.leagueConfig.game || (LEAGUE_TYPES[state.leagueConfig.leagueTypeId]?.game || null),
+    game: state.leagueConfig.game || (types()[state.leagueConfig.leagueTypeId]?.game || null),
     builtCategoryIds: state.leagueConfig.builtCategoryIds || [],
     builtChannelIds: state.leagueConfig.builtChannelIds || [],
     isCustom: !!state.leagueConfig.isCustom,
@@ -59,7 +60,7 @@ function listResetOptions(state) {
 }
 
 function leagueTypeLabel(typeId) {
-  return LEAGUE_TYPES[typeId]?.label || typeId || 'Unknown';
+  return types()[typeId]?.label || typeId || 'Unknown';
 }
 
 function formatResetChoice(league) {
@@ -74,9 +75,10 @@ function formatResetChoice(league) {
 function upsertLeague(league) {
   const reg = getRegistry();
   reg[String(league.id)] = {
+    ...league,
     leagueTypeId: league.leagueTypeId,
     leagueName: league.leagueName,
-    game: league.game || (LEAGUE_TYPES[league.leagueTypeId]?.game || null),
+    game: league.game || (types()[league.leagueTypeId]?.game || null),
     builtCategoryIds: Array.isArray(league.builtCategoryIds) ? league.builtCategoryIds : [],
     builtChannelIds: Array.isArray(league.builtChannelIds) ? league.builtChannelIds : [],
     isCustom: !!league.isCustom,

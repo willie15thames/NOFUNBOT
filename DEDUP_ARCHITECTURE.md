@@ -74,3 +74,6 @@ mechanisms, not message dedup, and must not be used as such:
 - **AI confirmation** (`src/actions/confirmationService.js`): one-time, requester-bound tokens (TTL 10m, max 200).
 The silent category dedup sweep (baseInitService) is now scoped: destructive only for categories touched in the current
 build; everything else is report-only.
+
+## V204 persistence transactions
+criticalStore serializes space reservations, assignments, locks and lifetime source records with PostgreSQL transaction advisory locks. These are business-state concurrency controls; the existing message dedup hierarchy is unchanged. Lifetime correction keys supersede prior source values without deleting audit history.

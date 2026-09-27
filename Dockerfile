@@ -1,26 +1,13 @@
-FROM node:20-alpine
-
-# Security: run as non-root user
-RUN addgroup -g 1001 -S botgroup && adduser -u 1001 -S botuser -G botgroup
-
+FROM node:22-alpine
+RUN apk add --no-cache openssl && addgroup -g 1001 -S botgroup && adduser -u 1001 -S botuser -G botgroup
 WORKDIR /app
-
-# Copy package files first (layer cache optimization)
-COPY package*.json ./
-
-# Install production dependencies only
-# Note: npm ci requires package-lock.json; use npm install --omit=dev as the portable fallback
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi && npm cache clean --force
-
-# Copy source (node_modules excluded by .dockerignore)
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+# Migration CLI is intentionally installed in the runtime image.
+RUN npm ci && npm cache clean --force
 COPY . .
-
-# Prisma client generation
-RUN npx prisma generate || true
-
-# Switch to non-root user
+RUN mkdir -p /data && chown botuser:botgroup /data
+ENV BOT_DATA_DIR=/data
 USER botuser
-
 EXPOSE 3000
-
-CMD ["npm", "run", "start"]
+CMD ["sh", "scripts/railway-start.sh"]

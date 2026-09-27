@@ -30,7 +30,8 @@ else
   echo "[railway-start] ✅ BOT_DATA_DIR=$BOT_DATA_DIR (persistent)"
 fi
 
-mkdir -p "$BOT_DATA_DIR" 2>/dev/null || true
+mkdir -p "$BOT_DATA_DIR"
+rm -f "$BOT_DATA_DIR/runtime-readiness.json"
 echo "[railway-start] Using BOT_DATA_DIR=$BOT_DATA_DIR"
 
 # ── Dependency availability checks ───────────────────────────────────────────
@@ -103,6 +104,7 @@ fi
 # Keep health-server.js alive as a sidecar for the container lifetime.
 echo "[railway-start] Health server stays alive as sidecar on PORT=${PORT:-3000}"
 
+node scripts/schema-readiness.js
 echo "[railway-start] Starting bot..."
 if [ "$ENABLE_QUEUE_WORKER" = "true" ] && [ -n "$REDIS_URL" ] && [ -n "$DATABASE_URL" ]; then
   echo "[railway-start] Starting BullMQ worker..."

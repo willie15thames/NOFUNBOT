@@ -84,14 +84,14 @@ function _syncLegacyOcr(state, record, remove = false) {
   const idx = state.ocrGameResults.findIndex(r => {
     const rw = Number(r.week);
     const t1 = normalizeTeam(r.team1), t2 = normalizeTeam(r.team2);
-    return rw === w && ((t1 === h && t2 === a) || (t1 === a && t2 === h));
+    return String(r.leagueId || record.leagueId) === String(record.leagueId) && rw === w && ((t1 === h && t2 === a) || (t1 === a && t2 === h));
   });
   if (idx !== -1) state.ocrGameResults.splice(idx, 1);
   if (remove) return;
   const winner = record.homeScore > record.awayScore ? record.homeTeam : record.awayScore > record.homeScore ? record.awayTeam : null;
   const loser = winner ? (winner === record.homeTeam ? record.awayTeam : record.homeTeam) : null;
   state.ocrGameResults.push({
-    week: record.week,
+    week: record.week, leagueId: record.leagueId,
     team1: record.homeTeam, team2: record.awayTeam,
     score1: record.homeScore, score2: record.awayScore,
     winner, loser,
@@ -136,7 +136,7 @@ async function submitGameResult(input = {}, ctx = {}) {
   const provider = String(input.provider || 'local').toLowerCase();
   const seasonId = String(input.seasonId || 'current');
   const standingsTarget = resolveStandingsLeague(state, homeTeam, awayTeam, input.leagueId || null);
-  const identityLeague = input.leagueId || standingsTarget.leagueId || state?.leagueConfig?.leagueName || 'default';
+  const identityLeague = input.leagueId || require('./spaceContext').current() || standingsTarget.leagueId || state?.leagueConfig?.leagueName || 'default';
   const key = input.matchupKey || buildMatchupKey({ leagueId: identityLeague, provider, seasonId, week, teamA: homeTeam, teamB: awayTeam });
   if (!key) return { ok: false, code: 'invalid-identity', reason: 'Could not build a matchup identity.' };
 
@@ -159,7 +159,7 @@ async function submitGameResult(input = {}, ctx = {}) {
   const record = {
     matchupKey: key,
     leagueId: identityLeague,
-    provider, seasonId, week,
+    provider, seasonId, week, game:state.leagueConfig?.game || 'unknown',
     homeTeam, awayTeam, homeScore, awayScore,
     winner: homeScore > awayScore ? homeTeam : awayScore > homeScore ? awayTeam : null,
     source: String(input.source || 'unknown'),
@@ -171,6 +171,10 @@ async function submitGameResult(input = {}, ctx = {}) {
     standingsLeagueId: null,
     standingsApplied: false,
   };
+
+  const historyGuildId = ctx.guild?.id || process.env.GUILD_ID;
+  const lifetime = await require('../services/lifetimeHistoryService').recordResult(historyGuildId, record, state);
+  record.homeUserId = lifetime.homeUserId; record.awayUserId = lifetime.awayUserId;
 
   // ── Standings: reverse the superseded record first, then apply the new one (never double count) ──
   const standings = { updated: false, leagueId: standingsTarget.leagueId, reason: standingsTarget.reason || null };
@@ -224,8 +228,10 @@ async function submitGameResult(input = {}, ctx = {}) {
  * Retract (remove) a recorded result. Reverses standings if they were applied. Legacy ocr projection is cleared.
  * @returns {{ok:true, removed:number}|{ok:false, reason:string}}
  */
-async function retractGameResult({ week, team1, team2 }, ctx = {}) {
+async function retractGameResult({ week, team1, team2, leagueId = null }, ctx = {}) {
   const state = ctx.state || require('../state');
+  leagueId = leagueId || require('./spaceContext').current();
+  if (!leagueId && require('../services/activeLeagueService').listActiveLeagues().length > 1) return {ok:false,reason:'Select the league for score retraction'};
   const w = _int(week);
   const a = normalizeTeam(team1), b = normalizeTeam(team2);
   if (w == null || !a || !b) return { ok: false, reason: 'invalid-input' };
@@ -233,12 +239,14 @@ async function retractGameResult({ week, team1, team2 }, ctx = {}) {
   let removed = 0;
   for (const [key, rec] of Object.entries(store.results)) {
     const h = normalizeTeam(rec.homeTeam), aw = normalizeTeam(rec.awayTeam);
+    if (leagueId && String(rec.leagueId) !== String(leagueId)) continue;
     if (Number(rec.week) !== w) continue;
     if (!((h === a && aw === b) || (h === b && aw === a))) continue;
     if (rec.standingsApplied && rec.standingsLeagueId) {
       try { _applyStandings(state, rec.standingsLeagueId, state.leagueConfig?.proAm?.[rec.standingsLeagueId], rec, -1); }
       catch (e) { log.error(`standings reverse failed for ${key}: ${e.message}`); }
     }
+    await require('../services/lifetimeHistoryService').retract(ctx.guild?.id || process.env.GUILD_ID, key, ctx.actor);
     _syncLegacyOcr(state, rec, true);
     delete store.results[key];
     store.events.push({ type: 'retracted', matchupKey: key, at: Date.now() });
@@ -251,7 +259,7 @@ async function retractGameResult({ week, team1, team2 }, ctx = {}) {
 function getResult(key) { return _load().results[key] || null; }
 
 function listResults(week = null) {
-  return Object.values(_load().results).filter(r => week == null || Number(r.week) === Number(week));
+  return Object.values(_load().results).filter(r => (!require('./spaceContext').current() || r.leagueId === require('./spaceContext').current()) && (week == null || Number(r.week) === Number(week)));
 }
 
 function getStatusSummary() {

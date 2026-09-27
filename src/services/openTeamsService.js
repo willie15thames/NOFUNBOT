@@ -43,6 +43,7 @@ function init({ getCh, state }) {
   try { teamRegistry.syncFromState(_state); } catch {}
 }
 
+const playerKey = (entry) => `${entry.leagueId || 'legacy'}::${norm(entry.baseTeam)}`;
 const norm = s => String(s).toLowerCase().trim().replace(/\s+/g, ' ');
 
 // ── League helpers ──────────────────────────────────────────────
@@ -147,32 +148,17 @@ async function refreshOpenTeamsBoard(guild) {
   const hasActiveLeague = activeLeagueService.listActiveLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
   const hasConfiguredTeams = Array.isArray(_state.openTeamRegistry) && _state.openTeamRegistry.length > 0;
   if (!hasActiveLeague || !hasConfiguredTeams) return { skipped: true, reason: 'no-active-league' };
-  const ch = _getCh(guild, 'openTeams');
-  if (!ch) { log.warn('#open-teams not resolved — skipping board refresh.'); return; }
-
-  const payload = {
-    embeds: buildOpenTeamsEmbeds(guild),
-    allowedMentions: { parse: [], users: [], roles: [] },
-  };
-
-  const result = await upsertBoardMessage({
-    boardKey: `openTeams:${guild.id}`,
-    channel: ch,
-    payload,
-  }).catch(e => {
-    log.error('Board upsert failed:', e.message);
-    return null;
-  });
-
-  if (result?.messageId) {
-    _boardMsgId = result.messageId;
-    _boardChId = ch.id;
+  for (const league of activeLeagueService.listActiveLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
+    const ch = (league.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && /(^|\.)open-teams$/.test(c.name));
+    if (!ch) continue;
+    await upsertBoardMessage({boardKey:`openTeams:${guild.id}:${league.id}`,channel:ch,payload:{embeds:buildOpenTeamsEmbeds(guild,league.id),allowedMentions:{parse:[]}}});
   }
 }
 
 
 async function announceTeamOpen(guild, entry, reason) {
-  const ch = _getCh(guild, 'announcements');
+  const lg = activeLeagueService.getLeague(entry.leagueId);
+  const ch = (lg?.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && /(^|\.)announcements$/.test(c.name));
   if (!ch) return;
   await ch.send({
     content: '@everyone',
@@ -213,7 +199,9 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
     return { success: false, reason: 'No teams are currently configured or available in any league. Check back later or ask the commissioner.' };
   }
 
-  const entry = _findEntry(teamNameInput);
+  const explicitId = options.leagueId || require('../league/spaceContext').current() || (activeLeagues.length === 1 ? activeLeagues[0].id : undefined);
+  if (!explicitId && activeLeagues.length > 1) return { success:false, reason:'Select an exact league before claiming a team.' };
+  const entry = _findEntry(teamNameInput, explicitId);
   if (!entry) {
     // Team not found — provide helpful suggestions
     const suggestions = allOpen.slice(0, 5).map(t => t.displayTeam).join(', ');
@@ -232,11 +220,18 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
     return { success: false, reason: `You already own **${currentInLeague.displayTeam}** in this league. Use \`/release-team\` first.` };
   }
 
+  // Reserve in the live registry before awaiting Discord; rollback on access failure.
   entry.isOpen = false;
   entry.ownerId = member.id;
+  try {
+    await require('./teamAssignmentService').claim(guild.id,entry,member.id);
+    await require('./leagueVisibilityService').grantMemberAccessToLeague(guild, member, _state, entry.leagueId);
+  }
+  catch (err) { await require('./teamAssignmentService').release(guild.id,entry,member.id); entry.isOpen = true; entry.ownerId = null; return { success:false, reason:`Access could not be granted: ${err.message}` }; }
   entry.timezone = options.timezone || null;
-  const key      = norm(entry.baseTeam);
-  const existing = _state.players.get(key);
+  const key      = playerKey(entry);
+  const candidate = _state.players.get(key);
+  const existing = candidate?.userId === member.id ? candidate : null;
   _state.players.set(key, {
     userId: member.id, team: key, baseTeam: entry.baseTeam, displayTeam: entry.displayTeam,
     leagueId: leagueId,
@@ -249,31 +244,47 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
   await nicknamePolicy.syncMemberNickname(member, _state, { reason: 'Team claim timezone sync' }).catch(() => null);
   await refreshOpenTeamsBoard(guild).catch(() => null);
   saveJsonDebounced('openTeamRegistry.json', _state.openTeamRegistry);
+  require('../storage/jsonStore').saveJson('players.json', [..._state.players].map(([key,p])=>({key,...p})));
   try { teamRegistry.syncFromState(_state); } catch {}
   return { success: true, entry };
 }
 
-async function releaseByUserId(guild, userId) {
-  const entry = _state.openTeamRegistry.find(t => t.ownerId === userId);
+async function releaseByUserId(guild, userId, leagueId = null) {
+  const entries = _state.openTeamRegistry.filter(t => t.ownerId === userId && (!leagueId || t.leagueId === leagueId));
+  if (entries.length > 1) { for (const item of entries) await releaseByUserId(guild,userId,item.leagueId); return entries[0]; }
+  const entry = entries[0];
   if (!entry) return null;
+  if (entry.ownerId) {
+    await require('./leagueVisibilityService').revokeMemberAccess(guild,entry.ownerId,entry.leagueId);
+    await require('./teamAssignmentService').release(guild.id,entry,entry.ownerId);
+  }
   entry.isOpen = true; entry.ownerId = null; entry.timezone = null;
-  const p = _state.players.get(norm(entry.baseTeam));
+  const p = _state.players.get(playerKey(entry));
   if (p) { p.userId = null; p.timezone = null; }
   await refreshOpenTeamsBoard(guild).catch(() => null);
   saveJsonDebounced('openTeamRegistry.json', _state.openTeamRegistry);
+  require('../storage/jsonStore').saveJson('players.json', [..._state.players].map(([key,p])=>({key,...p})));
   try { teamRegistry.syncFromState(_state); } catch {}
   return entry;
 }
 
 async function releaseByName(guild, teamNameInput, options = {}) {
-  const entry = _findEntry(teamNameInput, Object.prototype.hasOwnProperty.call(options,'leagueId') ? options.leagueId : undefined);
+  const [name, encodedLeague] = String(teamNameInput || '').split('::');
+  const selected = encodedLeague || options.leagueId || require('../league/spaceContext').current();
+  if (!selected && activeLeagueService.listActiveLeagues().length > 1) throw new Error('Select the league for team release');
+  const entry = _findEntry(name, selected || undefined);
   if (!entry) return null;
   const prevOwner = entry.ownerId;
+  if (entry.ownerId) {
+    await require('./leagueVisibilityService').revokeMemberAccess(guild,entry.ownerId,entry.leagueId);
+    await require('./teamAssignmentService').release(guild.id,entry,entry.ownerId);
+  }
   entry.isOpen = true; entry.ownerId = null; entry.timezone = null;
-  const p = _state.players.get(norm(entry.baseTeam));
+  const p = _state.players.get(playerKey(entry));
   if (p) { p.userId = null; p.timezone = null; }
   await refreshOpenTeamsBoard(guild).catch(() => null);
   saveJsonDebounced('openTeamRegistry.json', _state.openTeamRegistry);
+  require('../storage/jsonStore').saveJson('players.json', [..._state.players].map(([key,p])=>({key,...p})));
   try { teamRegistry.syncFromState(_state); } catch {}
   return { entry, prevOwner };
 }
@@ -285,8 +296,10 @@ async function createOrClaimCustomTeam(guild, member, { leagueId=null, teamName,
   if (!activeLeagues.length) {
     return { success: false, reason: 'No active league exists yet. Commissioner must run `/setup-league` first.' };
   }
+  if (!leagueId && activeLeagues.length > 1) return {success:false,reason:'Select a league first.'};
   const league = leagueId ? activeLeagues.find(l => String(l.id)===String(leagueId)) : activeLeagues[0];
   if (!league) return { success:false, reason:'Selected league was not found.' };
+  if (_state.openTeamRegistry.some(t => t.ownerId === member.id && t.leagueId === league.id)) return {success:false,reason:'You already own a team in this league.'};
   const cleanName = String(teamName||'').trim();
   if (!cleanName) return { success:false, reason:'Team name is required.' };
   const replaceNeedle = String(replacementFor||'').trim();
@@ -317,11 +330,18 @@ async function createOrClaimCustomTeam(guild, member, { leagueId=null, teamName,
     entry.isCustomTeam = true;
   }
 
+  // Reserve in the live registry before awaiting Discord; rollback on access failure.
   entry.isOpen = false;
   entry.ownerId = member.id;
+  try {
+    await require('./teamAssignmentService').claim(guild.id,entry,member.id);
+    await require('./leagueVisibilityService').grantMemberAccessToLeague(guild, member, _state, entry.leagueId);
+  }
+  catch (err) { await require('./teamAssignmentService').release(guild.id,entry,member.id); entry.isOpen = true; entry.ownerId = null; return { success:false, reason:`Access could not be granted: ${err.message}` }; }
   entry.timezone = timezone || null;
-  const key = norm(entry.baseTeam || cleanName);
-  const existing = _state.players.get(key);
+  const key = playerKey(entry);
+  const candidate = _state.players.get(key);
+  const existing = candidate?.userId === member.id ? candidate : null;
   _state.players.set(key, {
     userId: member.id,
     team: key,
@@ -343,6 +363,7 @@ async function createOrClaimCustomTeam(guild, member, { leagueId=null, teamName,
   await nicknamePolicy.syncMemberNickname(member, _state, { reason: 'Custom team timezone sync' }).catch(() => null);
   await refreshOpenTeamsBoard(guild).catch(() => null);
   saveJsonDebounced('openTeamRegistry.json', _state.openTeamRegistry);
+  require('../storage/jsonStore').saveJson('players.json', [..._state.players].map(([key,p])=>({key,...p})));
   try { teamRegistry.syncFromState(_state); } catch {}
   return { success:true, entry, createdCustom: true, league };
 }

@@ -35,7 +35,9 @@ function _computeDelay() {
 }
 
 function stop(guildId) {
-  const e = _entry(String(guildId || 'global'));
+  const id = require('../league/spaceContext').current();
+  const timerKey = id ? `${guildId}:${id}` : String(guildId || 'global');
+  const e = _entry(timerKey);
   e.generation += 1;
   if (e.handle) clearTimeout(e.handle);
   e.handle = null; e.nextWakeAt = null; e.started = false;
@@ -43,15 +45,20 @@ function stop(guildId) {
 }
 
 function _arm(guild, state, generation) {
-  const e = _entry(guild.id);
+  const id = require('../league/spaceContext').current();
+  const e = _entry(id ? `${guild.id}:${id}` : guild.id);
   if (e.generation !== generation) return;
   const delay = _computeDelay();
   e.nextWakeAt = Date.now() + delay;
   e.handle = setTimeout(async () => {
     if (e.generation !== generation) return;
     try {
+      const spaceId = require('../league/spaceContext').current();
+      if (spaceId && (!require('./activeLeagueService').getLeague(spaceId) || require('./activeLeagueService').getLeague(spaceId).status === 'ARCHIVING')) { stop(guild.id); return; }
       const live = guild.client?.guilds?.cache?.get(guild.id) || guild;
       await require('../league/advanceEngine').tick({ guild: live, state, reason: 'scheduler' });
+      state.flushSpace?.();
+      await require('../storage/jsonStore').flushSpaceWrites();
     } catch (err) { log.warn(`tick error: ${err.message}`); }
     _arm(guild, state, generation);
   }, delay);
@@ -60,10 +67,16 @@ function _arm(guild, state, generation) {
 
 /** Start (or restart) the scheduler for a guild. Safe to call repeatedly — previous timer is cancelled. */
 function start({ guild, state } = {}) {
+  const scope = require('../league/spaceContext');
+  if (guild?.id && !scope.current()) {
+    const leagues = require('./activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');
+    if (leagues.length) return {started:true,spaces:leagues.map(l=>scope.run(l.id,()=>start({guild,state})))};
+  }
   if (!guild?.id) return { started: false, reason: 'no-guild' };
   state = state || require('../state');
   const generation = stop(guild.id);
-  const e = _entry(guild.id);
+  const id = require('../league/spaceContext').current();
+  const e = _entry(id ? `${guild.id}:${id}` : guild.id);
   e.started = true;
   require('../league/advanceEngine').recoverOnBoot(state);
   _arm(guild, state, generation);
@@ -74,13 +87,15 @@ function start({ guild, state } = {}) {
 /** Re-arm immediately after a manual action so the next wake reflects new deadlines. */
 function rearm({ guild, state } = {}) {
   if (!guild?.id) return null;
-  const e = _entry(guild.id);
+  const id = require('../league/spaceContext').current();
+  const e = _entry(id ? `${guild.id}:${id}` : guild.id);
   if (!e.started) return null;
   return start({ guild, state });
 }
 
 function status(guildId) {
-  const e = _timers.get(String(guildId || ''));
+  const id = require('../league/spaceContext').current();
+  const e = _timers.get(id ? `${guildId}:${id}` : String(guildId || ''));
   return e ? { started: e.started, generation: e.generation, nextWakeAt: e.nextWakeAt } : { started: false, generation: 0, nextWakeAt: null };
 }
 

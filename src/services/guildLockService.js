@@ -60,15 +60,14 @@ async function acquire(guildId, lockType, lockedBy, ttlMs = TTL_MS) {
   }
 
   const expiresAt = Date.now() + ttlMs;
-  _locks.set(key, { lockedBy: lockedBy || 'system', expiresAt, acquiredAt: Date.now() });
+  const token = require('crypto').randomUUID();
+  const acquired = await require('../storage/criticalStore').transact(`v204:lock:${key}`, {}, record => {
+    if (record.expiresAt > Date.now()) return false;
+    Object.assign(record,{token,lockedBy:lockedBy||'system',expiresAt}); return true;
+  });
+  if (!acquired) return false;
+  _locks.set(key, { lockedBy: lockedBy || 'system', expiresAt, acquiredAt: Date.now(), token });
   _ensurePurgeTimer();
-
-  // Persist to DB (non-blocking, best-effort)
-  prismaSafe(prisma => prisma.guildLock.upsert({
-    where: { guildId_lockType: { guildId: String(guildId), lockType: String(lockType) } },
-    create: { guildId: String(guildId), lockType: String(lockType), lockedBy: lockedBy || null, expiresAt: new Date(expiresAt) },
-    update: { lockedBy: lockedBy || null, lockedAt: new Date(), expiresAt: new Date(expiresAt) },
-  }), null).catch(() => null);
 
   log.info(`lock acquired: ${lockType} by ${lockedBy || 'system'} in guild ${guildId} (expires in ${Math.round(ttlMs/1000)}s)`);
   return true;
@@ -79,11 +78,11 @@ async function acquire(guildId, lockType, lockedBy, ttlMs = TTL_MS) {
  */
 async function release(guildId, lockType) {
   const key = _key(guildId, lockType);
+  const entry = _locks.get(key);
+  if (entry) await require('../storage/criticalStore').transact(`v204:lock:${key}`, {}, record => {
+    if (record.token === entry.token) { record.expiresAt=0;record.token=null; }
+  });
   _locks.delete(key);
-
-  prismaSafe(prisma => prisma.guildLock.deleteMany({
-    where: { guildId: String(guildId), lockType: String(lockType) },
-  }), null).catch(() => null);
 
   log.info(`lock released: ${lockType} in guild ${guildId}`);
 }

@@ -43,6 +43,26 @@ let dbPool = null;
 let dbEnabled = false;
 let bootstrapped = false;
 
+const SPACE_FILES = new Set(['leagueRuntime.json','automationPolicy.json','scheduleRegistry.json','weeklyAutomation.json','liveSync.json','hubWeeklyData.json','leagueConfig.json','rewardHistory.json','scheduleStateRuntime.json','spaceState.json','importedLeagueData.json','streamOps.json','leagueMemory.json','importRuns.json','importArtifacts.json','leagueConfigDefaults.json']);
+function scopedFilename(filename) {
+  const id = require('../league/spaceContext').current();
+  return id && SPACE_FILES.has(filename) ? `space_${encodeURIComponent(id)}__${filename}` : filename;
+}
+async function flushSpaceWrites() {
+  const id = require('../league/spaceContext').current(); if (!id) return;
+  const prefix = `space_${encodeURIComponent(id)}__`;
+  for (const [name,value] of cache) {
+    if (!name.startsWith(prefix)) continue;
+    if (_timers[name]) { clearTimeout(_timers[name]); delete _timers[name]; }
+    if (process.env.DATABASE_URL) {
+      await ensureDb();
+      if (!(await writeThroughToDb(name,value,'space-commit'))) throw new Error(`Space state could not be saved: ${name}`);
+    }
+    const target=getFilePath(name),tmp=`${target}.tmp`;
+    fs.writeFileSync(tmp,JSON.stringify(value));fs.renameSync(tmp,target);
+  }
+}
+
 function getFilePath(filename) {
   return path.join(DATA_DIR, filename);
 }
@@ -138,6 +158,7 @@ async function writeThroughToDb(filename, data, source = 'runtime') {
 }
 
 function loadJson(filename, fallback) {
+  filename = scopedFilename(filename);
   if (cache.has(filename)) {
     const cached = cache.get(filename);
     return cached == null ? fallback : cached;
@@ -147,7 +168,32 @@ function loadJson(filename, fallback) {
   return data;
 }
 
+function mergeSharedSpaceData(filename, data) {
+  const id=require('../league/spaceContext').current();
+  if (!id) return data;
+  const matches=v=>String(v?.leagueId || '')===id;
+  if (filename==='players.json') {
+    const old=loadJson(filename,[])||[];
+    return [...old.filter(x=>!matches(x)),...data.filter(matches)];
+  }
+  if (filename==='openTeamRegistry.json') {
+    const old=loadJson(filename,[])||[];
+    return [...old.filter(x=>!matches(x)),...data.filter(matches)];
+  }
+  if (filename==='teamRegistry.json') {
+    const old=loadJson(filename,{teams:[]})||{};
+    return {...data,teams:[...(old.teams||[]).filter(x=>!matches(x)),...(data.teams||[]).filter(matches)]};
+  }
+  if (['pendingTrades.json','pendingAttrBoosts.json'].includes(filename)) {
+    const old=loadJson(filename,{})||{};
+    return {...Object.fromEntries(Object.entries(old).filter(([,v])=>!matches(v))),...data};
+  }
+  return data;
+}
+
 function saveJson(filename, data) {
+  data = mergeSharedSpaceData(filename,data);
+  filename = scopedFilename(filename);
   cache.set(filename, data);
   mirrorToDisk(filename, data);
   writeThroughToDb(filename, data).catch(() => null);
@@ -155,6 +201,8 @@ function saveJson(filename, data) {
 
 const _timers = {};
 function saveJsonDebounced(filename, data, delayMs = 2000) {
+  data = mergeSharedSpaceData(filename,data);
+  filename = scopedFilename(filename);
   cache.set(filename, data);
   if (_timers[filename]) clearTimeout(_timers[filename]);
   _timers[filename] = setTimeout(async () => {
@@ -177,4 +225,4 @@ function saveJsonDebounced(filename, data, delayMs = 2000) {
 function getDataDir() { return DATA_DIR; }
 function getDataFilePath(filename) { return getFilePath(filename); }
 
-module.exports = { loadJson, saveJson, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };
+module.exports = { flushSpaceWrites, loadJson, saveJson, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };

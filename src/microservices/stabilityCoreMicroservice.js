@@ -61,6 +61,7 @@ const service = {
     }
 
     const persisted = loadPersistedState();
+    await require('../services/spaceMigrationService').migrate(guild.id,state);
     const services = initCoreServices({ guild, client });
 
     // V202 (BUG-007/BUG-003): durable game sessions → state.games + reminder/deadline re-arm (needs gameChannels.init above).

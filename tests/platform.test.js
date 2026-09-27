@@ -11,13 +11,6 @@ test('command registry: ≤100 registered, identical top-level set, /game-channe
   assert(subs.length <= 25, 'subcommand cap');
   for (const must of ['advance-week', 'report-result', 'retract-score', 'create-game', 'respond', 'schedule-import', 'schedule-load-week']) assert(slash.some(c => c.name === must), `still registered: ${must}`);
 });
-test('league category permissions: only adminOnly categories deny @everyone (BUG-005)', () => {
-  const src = require('fs').readFileSync(require.resolve('../src/services/leagueSetupService'), 'utf8');
-  assert(!/adminOnly\s*\|\|\s*true/.test(src), 'no forced || true');
-  assert(!/buildStaffOverwrites\(guild, commRoleId, true\)/.test(src), 'no literal true in category builders');
-  assert(src.includes('adminOnly: !!cat.adminOnly'), 'shared plan preserves category adminOnly');
-  assert(src.includes('buildStaffOverwrites(guild, commRoleId, cat.adminOnly)'), 'shared builder uses category policy');
-});
 test('schedule timer: double start leaves exactly one pending timer; stale generation is a no-op (BUG-002)', () => {
   resetFiles(['weeklyAutomation.json']);
   require('../src/services/weeklyAutomationService').saveWeeklySettings({ mode: 'automatic' });

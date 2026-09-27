@@ -1,6 +1,6 @@
 {
   "name": "nofunleague-bot",
-  "version": "21.9.2",
+  "version": "21.10.0-rc.1",
   "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
   "main": "index.js",
   "scripts": {
@@ -20,8 +20,8 @@
     "db:export-json": "node scripts/export-postgres-to-json.js",
     "stack:init": "npm run prisma:generate && npm run db:bootstrap && npm run db:migrate-json",
     "queue:worker": "node src/queue/worker.js",
-    "postinstall": "prisma generate || echo prisma generate skipped",
-    "repair:deps": "rm -rf node_modules package-lock.json && npm install && npm install discord.js",
+    "postinstall": "prisma generate",
+    "repair:deps": "npm ci",
     "start:railway": "sh scripts/railway-start.sh",
     "start:health": "node health-server.js",
     "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && npm test",
@@ -33,15 +33,17 @@
     "process:audit": "node scripts/pre-commit-check.js",
     "test": "node tests/run-all.js",
     "static:undefined": "node scripts/check-undefined-identifiers.js",
-    "command:contract": "node scripts/command-contract-check.js"
+    "command:contract": "node scripts/command-contract-check.js",
+    "schema:check": "node scripts/schema-readiness.js",
+    "test:postgres": "node tests/postgres.integration.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
-    "@prisma/client": "^6.0.1",
-    "adm-zip": "^0.5.16",
+    "@prisma/client": "6.19.3",
+    "adm-zip": "0.6.1",
     "bullmq": "^5.16.0",
     "discord.js": "^14.15.0",
     "dotenv": "^16.4.5",
@@ -50,7 +52,10 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "prisma": "^6.0.1",
+    "prisma": "6.19.3",
     "typescript": "^5.6.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0"
   }
 }

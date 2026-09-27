@@ -104,7 +104,7 @@ function findByChannelId(channelId) {
 }
 
 function listActive(week = null) {
-  return Object.values(_load().sessions).filter(s => s.status === SESSION_STATUS.ACTIVE && (week == null || Number(s.week) === Number(week)));
+  return Object.values(_load().sessions).filter(s => s.status === SESSION_STATUS.ACTIVE && (!require('./spaceContext').current() || s.leagueId === require('./spaceContext').current()) && (week == null || Number(s.week) === Number(week)));
 }
 
 function _patch(key, patch) {
@@ -189,6 +189,7 @@ function rehydrate(guild, state, armReminders) {
   let restored = 0, missing = 0, finished = 0, changed = false;
   for (const s of Object.values(store.sessions)) {
     if (s.status !== SESSION_STATUS.ACTIVE) continue;
+    if (require('./spaceContext').current() && s.leagueId !== require('./spaceContext').current()) continue;
     if (s.guildId && String(s.guildId) !== String(guild.id)) continue;
     const channel = guild.channels.cache.get(s.channelId);
     if (!channel) {

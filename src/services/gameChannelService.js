@@ -89,10 +89,11 @@ function _gameChannelName(leagueTag, week, team1, team2) {
 }
 
 /** Find a live in-memory game for the same week + teams (order-independent). */
-function _findLiveGame(state, week, team1, team2) {
+function _findLiveGame(state, week, team1, team2, leagueId) {
   const a = normalizeTeam(team1), b = normalizeTeam(team2);
   for (const [channelId, g] of state.games.entries()) {
     if (g.finished) continue;
+    if (String(g.leagueId || 'default') !== String(leagueId || 'default')) continue;
     if (Number(g.week) !== Number(week)) continue;
     const ga = normalizeTeam(g.team1), gb = normalizeTeam(g.team2);
     if ((ga === a && gb === b) || (ga === b && gb === a)) return { channelId, game: g };
@@ -127,14 +128,14 @@ async function ensureGameChannel(guild, gameData = {}) {
   const gameKey = gameData.game || state?.leagueConfig?.game || 'madden';
   const leagueTag = _cleanChannelPart(gameData.leagueTag || state?.leagueConfig?.leagueName || '');
   const identity = {
-    leagueId: gameData.leagueId || state?.leagueConfig?.leagueName || 'default',
+    leagueId: gameData.leagueId || require('../league/spaceContext').current() || state?.leagueConfig?.leagueName || 'default',
     provider: gameData.provider || 'local',
     seasonId: gameData.seasonId || 'current',
   };
   const key = buildMatchupKey({ ...identity, week, teamA: team1, teamB: team2 });
 
   // ── Find-or-create step 1: live in-memory session ──
-  const live = _findLiveGame(state, week, team1, team2);
+  const live = _findLiveGame(state, week, team1, team2, identity.leagueId);
   if (live) {
     const ch = guild.channels.cache.get(live.channelId);
     if (ch) return { ok: true, created: false, channel: ch, matchupKey: live.game.matchupKey || key };
@@ -149,7 +150,7 @@ async function ensureGameChannel(guild, gameData = {}) {
     }
   }
   // ── Step 3: an unmanaged channel with the deterministic name under the weekly games category ──
-  const chName = _gameChannelName(leagueTag, week, team1, team2);
+  const chName = _gameChannelName(require('../league/spaceContext').current()?.slice(0,8) || leagueTag, week, team1, team2);
   const catName = _weeklyGamesCategoryName(gameKey);
   const existingNamed = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.name === chName && c.parent && /WEEK(LY)? GAMES/.test(String(c.parent.name || '')));
   // Owner policy is evaluated AFTER reuse checks so an existing channel is never duplicated because of a missing owner.
@@ -190,7 +191,7 @@ async function ensureGameChannel(guild, gameData = {}) {
   }
 
   // Race-safe double check: a parallel call may have created the same matchup while we awaited Discord.
-  const raceLive = _findLiveGame(state, week, team1, team2);
+  const raceLive = _findLiveGame(state, week, team1, team2, identity.leagueId);
   if (raceLive && raceLive.channelId !== channel.id) {
     await channel.delete('V202 race-safe: duplicate game channel removed').catch(() => null);
     const winner = guild.channels.cache.get(raceLive.channelId);
@@ -391,7 +392,7 @@ async function deleteGameChannel(channel, game, reason) {
     }
     gameSessions.markDeleted(channel.id);
     if (channel.guild) await loggerConfigService.logToConfiguredChannel(channel.guild, `🗑️ Game channel deleted: #${channel.name} | ${reason}`);
-  } catch (e) { console.error('[deleteGameChannel]',e.message); }
+  } catch (e) { console.error('[deleteGameChannel]',e.message); throw e; }
 }
 
 /**
@@ -409,6 +410,10 @@ async function deleteAllGameChannels(guild, reason, opts = {}) {
   for (const [,cat] of cats) {
     for (const [,ch] of guild.channels.cache.filter(c=>c.parentId===cat.id&&c.type===ChannelType.GuildText)) {
       const game = state.games.get(ch.id) || null;
+      const owner = game || gameSessions.findByChannelId(ch.id);
+      const targetLeague = opts.leagueId || require('../league/spaceContext').current();
+      if (targetLeague && String(owner?.leagueId) !== String(targetLeague)) continue;
+      if (!targetLeague && require('./activeLeagueService').listActiveLeagues().length > 1) throw new Error('Select a league before deleting game channels');
       if (keepWeek != null) {
         const week = game ? Number(game.week) : Number(gameSessions.findByChannelId(ch.id)?.week ?? NaN);
         if (week === keepWeek) continue;

@@ -52,6 +52,7 @@ async function addStreamCredit(message, ctx) {
     return false;
   }
 
+  await require('./lifetimeHistoryService').recordStat(message.guild.id,{id:`stream:${message.id}`,leagueId:entry.leagueId,userId:message.author.id,metric:'stream_credits',value:1,game:state.leagueConfig?.game||'community',seasonId:state.leagueConfig?.seasonId||'current'});
   entry.streamLog.push({ url: match[0], timestamp: Date.now(), msgId: message.id });
   entry.streamCount = entry.streamLog.length;
 
@@ -74,6 +75,7 @@ async function addStreamCredit(message, ctx) {
   }), null);
 
   const reward = REWARDS.find(t => t.count === entry.streamCount);
+  if(reward)await require('./lifetimeHistoryService').award(message.guild.id,{id:`stream-award:${message.id}`,leagueId:entry.leagueId,userId:message.author.id,title:reward.label});
   const embed = new EmbedBuilder()
     .setColor(reward ? 0xf1c40f : 0x9b59b6)
     .setTitle(reward ? '🏆 Stream Logged — Reward Unlocked!' : '📺 Stream Logged')

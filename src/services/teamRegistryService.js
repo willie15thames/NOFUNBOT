@@ -43,16 +43,16 @@ function syncFromState(state) {
   const playersByBase = new Map();
   try {
     for (const p of state.players.values()) {
-      playersByBase.set(String(p.baseTeam || p.team || '').toLowerCase(), p);
+      playersByBase.set(`${p.leagueId || 'legacy'}::${String(p.baseTeam || p.team || '').toLowerCase()}`, p);
     }
   } catch {}
 
   const teams = (state?.openTeamRegistry || []).map(t => {
-    const player = playersByBase.get(String(t.baseTeam || '').toLowerCase()) || null;
+    const player = playersByBase.get(`${t.leagueId || 'legacy'}::${String(t.baseTeam || '').toLowerCase()}`) || null;
     return {
       leagueId: t.leagueId || leagueTypeId || null,
-      leagueName,
-      leagueTypeId,
+      leagueName: t.leagueName || leagueName,
+      leagueTypeId: require('./activeLeagueService').getLeague(t.leagueId)?.leagueTypeId || leagueTypeId,
       baseTeam: t.baseTeam,
       displayTeam: t.displayTeam,
       logoUrl: t.logoUrl || null,

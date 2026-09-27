@@ -39,6 +39,12 @@ async function resolveAllChannels(guild) {
 }
 
 function getCh(guild, key) {
+  const spaceId = require('../../league/spaceContext').current();
+  if (spaceId) {
+    const league = require('../activeLeagueService').getLeague(spaceId);
+    const ids = new Set(league?.builtChannelIds || []);
+    return guild.channels.cache.find(ch => ids.has(ch.id) && (matchesConfiguredChannel(ch,key,{includes:false}) || ch.name.split('.').slice(1).join('.') === CHANNEL_KEYS[key])) || null;
+  }
   const id = _reg[key];
   if (!id) return null;
   return guild.channels.cache.get(id) || null;

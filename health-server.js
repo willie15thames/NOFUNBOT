@@ -18,7 +18,8 @@ const PORT = process.env.PORT || 3000;
 function buildHealthPayload() {
   const flags = getFeatureFlags(process.env);
   return {
-    status: 'ok',
+    status: 'alive',
+    readiness: require('./src/services/readinessService').read(),
     service: 'nofunleague-bot',
     timestamp: new Date().toISOString(),
     environment: flags.appEnv,
@@ -39,6 +40,7 @@ function buildHealthPayload() {
 }
 
 const server = http.createServer((req, res) => {
+  if(req.url==='/ready'){const ready=require('./src/services/readinessService').read();res.writeHead(ready.ready?200:503,{'Content-Type':'application/json'});res.end(JSON.stringify(ready));return;}
   if (req.url === '/' || req.url === '/health') {
     const payload = buildHealthPayload();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });

@@ -9,7 +9,7 @@
     "restartPolicyMaxRetries": 10,
     "sleepApplication": false,
     "startCommand": "sh scripts/railway-start.sh",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/ready",
     "healthcheckTimeout": 300
   }
 }

@@ -131,11 +131,12 @@ function sharedCategoryNameFor(game, cat) {
   return map[key] || '📂 ─── LEAGUE SPACE ───';
 }
 
-function buildStaffOverwrites(guild, commRoleId, adminOnly = false) {
+function buildStaffOverwrites(guild, commRoleId, adminOnly = false, memberRoleId = null) {
   const overwrites = [];
 
-  if (adminOnly) overwrites.push({ id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] });
+  overwrites.push({ id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] });
 
+  if (!adminOnly && memberRoleId) overwrites.push({ id: memberRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
   const allow = [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageMessages, PermissionsBitField.Flags.ManageChannels];
   if (commRoleId) overwrites.push({ id: commRoleId, allow });
   const staffRoles = getConfiguredStaffRoles(guild, { commRoleId, includeAdministrator: true, includeManageGuild: false, includeRoleNameFallback: false });
@@ -146,10 +147,12 @@ function buildStaffOverwrites(guild, commRoleId, adminOnly = false) {
 
 
 const READ_ONLY_CHANNEL_KEYS = new Set(['rules','announcements','server-guide','open-teams']);
-function channelPermsForKey(guild, commRoleId, chKey, adminOnly = false) {
-  const overwrites = buildStaffOverwrites(guild, commRoleId, adminOnly);
+function channelPermsForKey(guild, commRoleId, chKey, adminOnly = false, memberRoleId = null) {
+  const overwrites = buildStaffOverwrites(guild, commRoleId, adminOnly, memberRoleId);
   if (READ_ONLY_CHANNEL_KEYS.has(chKey)) {
-    overwrites.push({ id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.SendMessages] });
+    overwrites[0].deny.push(PermissionsBitField.Flags.SendMessages);
+    const role = overwrites.find(x => x.id === memberRoleId);
+    if (role) { role.allow = role.allow.filter(x => x !== PermissionsBitField.Flags.SendMessages); role.deny = [PermissionsBitField.Flags.SendMessages]; }
   }
   return overwrites;
 }
@@ -617,35 +620,57 @@ async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, 
   if (active.some(l => l.id !== 'current' && leaguePrefixCode(l.leagueName, LEAGUE_TYPES[l.leagueTypeId]?.label) === code && l.leagueName !== leagueName)) {
     throw new Error(`League code ${code} is already in use. Choose a name with a different two-character prefix.`);
   }
+  if (sameLeague) throw new Error('This league already exists. Select it explicitly for reset.');
+  const spaces = require('./managedSpaceService');
+  const reserved = await spaces.reserve(guild.id, { name: leagueName, code, kind: 'league', leagueTypeId });
+  let memberRole;
+  try { memberRole = await guild.roles.create({ name: `League ${code} ${reserved.id.slice(0,8)}`, reason: 'Private league membership' }); }
+  catch (err) { await spaces.transition(guild.id, reserved.id, 'ARCHIVED', { error: err.message }); throw err; }
   const plan = {
     leagueTypeId,
     categories: categories.map(cat => ({
-      name: sharedCategoryNameFor(def.game, cat), adminOnly: !!cat.adminOnly,
+      name: `${code.toUpperCase()} ${reserved.id.slice(0,8)} ${sharedCategoryNameFor(def.game, cat)}`, adminOnly: !!cat.adminOnly,
       channels: cat.channels.map(key => ({ key, name: leagueChannelName(leagueName, key, def.label) })),
     })),
   };
-  const result = await executeLeagueBuild({
+  let result;
+  try { result = await executeLeagueBuild({
     guild, plan,
-    createCategory: cat => require('./baseInitService').findOrCreateCategory(guild, cat.name, buildStaffOverwrites(guild, commRoleId, cat.adminOnly)),
+    createCategory: cat => guild.channels.create({ name: cat.name, type: ChannelType.GuildCategory, permissionOverwrites: buildStaffOverwrites(guild, commRoleId, cat.adminOnly, memberRole.id) }),
     createChannel: (channel, category, cat) => {
       const topic = CHANNEL_TOPICS[channel.key] || '';
       return guild.channels.create({
         name: channel.name, type: ChannelType.GuildText, parent: category.id,
         topic: topic ? `[${leagueName || def.label}] ${topic}` : `[${leagueName || def.label}]`,
-        permissionOverwrites: channelPermsForKey(guild, commRoleId, channel.key, cat.adminOnly),
+        permissionOverwrites: channelPermsForKey(guild, commRoleId, channel.key, cat.adminOnly, memberRole.id),
       });
     },
     commit: async ({ builtCategoryIds, builtChannelIds }) => {
-      const activeLeague = activeLeagueService.upsertLeague({
-        id: sameLeague?.id || `${code}-${Date.now()}`, leagueTypeId, leagueName, game: def.game,
-        builtCategoryIds, builtChannelIds, isCustom: !!def.isCustom, createdAt: Date.now(),
-      });
-      const seeded = seedLeagueTeams(stateRef, def, activeLeague);
+      const leagueRecord = {
+        id: reserved.id, guildId: guild.id, memberRoleId: memberRole.id, kind: 'league', status: 'ACTIVE', leagueTypeId, leagueName, game: def.game,
+        builtCategoryIds, builtChannelIds, seasonType:'full',seasonWeeks:def.fullWeeks,isCustom: !!def.isCustom, createdAt: Date.now(),
+      };
+      const seeded = seedLeagueTeams(stateRef, def, leagueRecord);
+      await spaces.transition(guild.id, reserved.id, 'ACTIVE', leagueRecord);
+      const activeLeague = activeLeagueService.upsertLeague(leagueRecord);
       try { require('./openTeamsService').refreshOpenTeamsBoard(guild).catch(e => log.warn(`Open team refresh failed: ${e.message}`)); }
       catch (e) { log.warn(`Open team refresh unavailable: ${e.message}`); }
       return { def, activeLeague, seeded };
     },
   });
+  } catch (err) {
+    const session = err.buildId && require('../league/build/leagueBuildService').get(err.buildId);
+    const clean = session?.state === 'ROLLED_BACK';
+    if (activeLeagueService.getLeague(reserved.id)) activeLeagueService.removeLeague(reserved.id);
+    if (clean) {
+      stateRef.openTeamRegistry.splice(0,stateRef.openTeamRegistry.length,...stateRef.openTeamRegistry.filter(t=>t.leagueId!==reserved.id));
+      saveJsonDebounced('openTeamRegistry.json',stateRef.openTeamRegistry);
+    }
+    let roleClean = false;
+    if (clean) { try { await memberRole.delete('Failed league build'); roleClean = true; } catch (roleError) { log.error(roleError.message); } }
+    await spaces.transition(guild.id, reserved.id, clean && roleClean ? 'ARCHIVED' : 'REPAIR_REQUIRED', { buildId: err.buildId, memberRoleId: memberRole.id, error: err.message });
+    throw err;
+  }
   log.info(`Built ${def.label} (${leagueName || def.label}) — ${result.createdCount} channels. Seeded ${result.seeded?.seeded || 0} team slots.`);
   return result;
 }
@@ -679,61 +704,38 @@ async function buildSimplifiedLeagueStructure(guild, leagueTypeId, commRoleId, l
 // ── Delete every channel and category that was built for a league ──────────────
 // Pass the arrays saved from buildLeagueStructure: categoryIds + channelIds.
 // Falls back to fuzzy name matching from LEAGUE_TYPES if no IDs stored (legacy).
-async function deleteLeagueStructure(guild, { categoryIds = [], channelIds = [], typeId = null } = {}) {
-  let deleted = 0;
-
-  // Delete by stored IDs (accurate, fast)
-  const toDelete = new Set([...channelIds, ...categoryIds]);
-
-  // If we have stored IDs, delete those
-  if (toDelete.size > 0) {
-    for (const id of toDelete) {
-      const ch = guild.channels.cache.get(id);
-      if (!ch) continue;
-      await ch.delete('League structure erased by commissioner').catch(e =>
-        log.warn(`Could not delete channel/category ${id}:`, e.message)
-      );
-      deleted++;
-      await new Promise(r => setTimeout(r, 300)); // rate limit buffer
-    }
-    log.info(`Deleted ${deleted} channels/categories by stored IDs.`);
-    return deleted;
+async function deleteLeagueStructure(guild, { categoryIds = [], channelIds = [], leagueId = null } = {}) {
+  if (!leagueId) throw new Error('Exact league ID is required for deletion; legacy resources must be mapped first.');
+  const league = activeLeagueService.getLeague(leagueId);
+  if (!league || (league.guildId && league.guildId !== guild.id)) throw new Error('Selected league does not belong to this server');
+  const others = activeLeagueService.listActiveLeagues().filter(l => l.id !== leagueId);
+  const protectedIds = new Set(others.flatMap(l => [...(l.builtCategoryIds || []), ...(l.builtChannelIds || [])]));
+  let deletedChannels = 0, deletedCategories = 0;
+  const failures = [], preserved = [];
+  await require('./lifetimeHistoryService').archiveCompetition(guild.id, league);
+  const tracked = (await require('./managedSpaceService').list(guild.id)).find(s=>s.id===leagueId);
+  if (tracked) await require('./managedSpaceService').transition(guild.id,leagueId,'ARCHIVING');
+  activeLeagueService.upsertLeague({...league,status:'ARCHIVING'});
+  for (const id of channelIds) {
+    if (!(league.builtChannelIds || []).includes(id)) throw new Error('Resource not owned by selected league');
+    if (protectedIds.has(id)) { preserved.push(id); continue; }
+    const ch = guild.channels.cache.get(id); if (!ch) continue;
+    try { await ch.delete(`Erase league ${leagueId}`); deletedChannels++; } catch (err) { failures.push(`${id}: ${err.message}`); }
   }
-
-  // Fallback: fuzzy-match by category names from the league type definition
-  if (typeId && LEAGUE_TYPES[typeId]) {
-    const def = LEAGUE_TYPES[typeId];
-    const catNames = new Set(def.categories.map(c => c.name.toLowerCase()));
-    const channelKeys = new Set(def.categories.flatMap(c => c.channels));
-
-    // Delete text channels first (can't delete category with children)
-    for (const [, ch] of guild.channels.cache) {
-      if (!ch.isTextBased?.()) continue;
-      // Match by parent category name or by channel key name
-      const parentCat = ch.parent;
-      const parentMatch = parentCat && catNames.has(parentCat.name.toLowerCase());
-      const keyMatch = [...channelKeys].some(k => ch.name.includes(k));
-      if (parentMatch || keyMatch) {
-        await ch.delete('League structure erased').catch(() => null);
-        deleted++;
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }
-
-    // Now delete categories
-    for (const [, ch] of guild.channels.cache) {
-      if (ch.type !== ChannelType.GuildCategory) continue;
-      if (catNames.has(ch.name.toLowerCase())) {
-        await ch.delete('League structure erased').catch(() => null);
-        deleted++;
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }
-
-    log.info(`Deleted ${deleted} channels/categories by name matching.`);
+  for (const id of categoryIds) {
+    if (!(league.builtCategoryIds || []).includes(id)) throw new Error('Category not owned by selected league');
+    if (protectedIds.has(id)) { preserved.push(id); continue; }
+    const ch = guild.channels.cache.get(id); if (!ch) continue;
+    // Categories containing unowned/manual channels must survive.
+    if (guild.channels.cache.some(c => c.parentId === id)) { preserved.push(id); continue; }
+    try { await ch.delete(`Erase league ${leagueId}`); deletedCategories++; } catch (err) { failures.push(`${id}: ${err.message}`); }
   }
-
-  return deleted;
+  if (failures.length) throw new Error(`Partial deletion; retry selected league. ${failures.join('; ')}`);
+  if (league.memberRoleId) {
+    const role = guild.roles.cache.get(league.memberRoleId);
+    if (role) await role.delete(`Erase league ${leagueId}`);
+  }
+  return { deletedChannels, deletedCategories, preserved };
 }
 
 // ── Pro-Am team entry wizard ──────────────────────────────────
@@ -1136,7 +1138,7 @@ async function handleSetupInteraction(interaction, state) {
 ` +
             `**League:** ${setupLeagueName}
 ` +
-            `**${createdCount} channels** created inside shared categories.
+            `**${createdCount} channels** created inside private league categories.
 ` +
             `**Teams seeded:** ${seeded?.seeded || 0}
 ` +

@@ -246,3 +246,5 @@ module.exports = {
   boardMessages, rewardsBoardIds, leagueConfig,
   trashTalkMemory,
 };
+
+module.exports = require('./league/scopedState').wrap(module.exports);

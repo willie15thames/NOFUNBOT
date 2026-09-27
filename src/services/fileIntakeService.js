@@ -112,8 +112,22 @@ function _xmlText(str = '') {
     .trim();
 }
 
-function extractDocxText(buffer) {
+function checkedArchive(buffer) {
+  if (buffer.length > 12 * 1024 * 1024) throw new Error('Office file exceeds 12 MiB');
   const zip = new AdmZip(buffer);
+  const entries = zip.getEntries();
+  if (entries.length > 2048) throw new Error('Office archive has too many entries');
+  let total = 0;
+  for (const e of entries) {
+    total += e.header.size;
+    if (e.header.size > 16 * 1024 * 1024 || total > 48 * 1024 * 1024) throw new Error('Office archive expands beyond allowed size');
+    if (/(^|[\/])\.\.([\/]|$)/.test(e.entryName)) throw new Error('Unsafe archive entry name');
+  }
+  return zip;
+}
+
+function extractDocxText(buffer) {
+  const zip = checkedArchive(buffer);
   const entry = zip.getEntry('word/document.xml');
   if (!entry) throw new Error('DOCX document.xml missing');
   const xml = entry.getData().toString('utf8');
@@ -122,7 +136,7 @@ function extractDocxText(buffer) {
 }
 
 function extractXlsxText(buffer) {
-  const zip = new AdmZip(buffer);
+  const zip = checkedArchive(buffer);
   const sharedEntry = zip.getEntry('xl/sharedStrings.xml');
   let shared = [];
   if (sharedEntry) {

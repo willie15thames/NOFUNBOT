@@ -75,6 +75,8 @@ function purgeLeagueData(state, league) {
   } catch {}
   try { teamRegistry.syncFromState(state); } catch {}
 
+  state.openTeamRegistry.splice(0, state.openTeamRegistry.length, ...state.openTeamRegistry.filter(t=>String(t.leagueId || '')!==leagueId));
+  saveJsonDebounced('openTeamRegistry.json', state.openTeamRegistry);
   activeLeagueService.removeLeague(leagueId);
 
   return {

@@ -35,3 +35,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime league builder is source, not a generated build directory.
+!src/league/build/
+!src/league/build/**

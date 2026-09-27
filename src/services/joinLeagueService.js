@@ -74,7 +74,7 @@ async function handleJoinInteraction(interaction, state) {
   const cid = interaction.customId;
   if (interaction.isStringSelectMenu?.() && cid === 'join_league_select') {
     const leagueId = interaction.values[0];
-    const league = activeLeagueService.getLeague(leagueId) || activeLeagueService.getCurrentLeagueFallback(state);
+    const league = activeLeagueService.getLeague(leagueId);
     if (!league) return interaction.update({ content:'❌ League not found anymore.', components:[], embeds:[] });
     const def = leagueDefById(league.leagueTypeId) || {};
     const openTeams = getOpenTeamsForLeague(league.id);
@@ -134,13 +134,13 @@ async function handleJoinInteraction(interaction, state) {
 async function handleJoinModal(interaction, state, guild, grantMemberAccess) {
   const cid = interaction.customId;
   if (cid.startsWith('join_team_timezone::')) {
-    const [, , leagueId, encTeam] = cid.split('::');
+    const [, leagueId, encTeam] = cid.split('::');
     const team = decodeURIComponent(encTeam || '');
     const timezone = normalizeTimezone(interaction.fields.getTextInputValue('timezone'));
     if (!timezone) return interaction.reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
     const result = await claimTeam(guild, interaction.member, team, { timezone, leagueId });
     if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
-    try { await grantMemberAccess(guild, interaction.member, state, result.entry.leagueId || null); } catch {}
+
     return interaction.reply({ content:`✅ You joined **${result.entry.leagueName || 'the league'}** as **${result.entry.displayTeam}**. Timezone saved as **${timezone}**.`, flags:64 });
   }
 
@@ -153,7 +153,7 @@ async function handleJoinModal(interaction, state, guild, grantMemberAccess) {
     if (!timezone) return interaction.reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
     const result = await createOrClaimCustomTeam(guild, interaction.member, { leagueId, teamName, replacementFor, logoUrl, timezone });
     if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
-    try { await grantMemberAccess(guild, interaction.member, state, result.entry.leagueId || null); } catch {}
+
     const replaceText = result.entry.replacementFor ? ` replacing **${result.entry.replacementFor}**` : '';
     return interaction.reply({ content:`✅ Custom team **${result.entry.displayTeam}** joined **${result.entry.leagueName || 'the league'}**${replaceText}. Timezone saved as **${timezone}**.`, flags:64 });
   }
