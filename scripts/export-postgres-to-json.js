@@ -29,7 +29,7 @@ function sanitizeExportKey(rawKey) {
 }
 
 (async () => {
-  const res = await pool.query('SELECT "key", "value" FROM "BotKv" ORDER BY "key" ASC');
+  const res = await pool.query('SELECT "key", "value" FROM "bot_kv" ORDER BY "key" ASC');
   let count = 0, skipped = 0;
   for (const row of res.rows) {
     const safeKey = sanitizeExportKey(row.key);

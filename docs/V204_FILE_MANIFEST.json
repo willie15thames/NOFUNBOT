@@ -1,1338 +1,1109 @@
 {
-  "version": "21.10.0-rc.1",
-  "source_zip_sha256": "3c9c9c99c26c0458f150db071fa74fef3e4f70e31f8acf4da1aade5c6742d5d3",
+  "version": "21.10.0-rc.3",
+  "base_git_commit": "6178d125469612630f749b15971993ac2623c021",
+  "hotfix_files": [
+    "PATCH_NOTES_AND_CONTEXT.txt",
+    "START_HERE.md",
+    "changelog.txt",
+    "docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx",
+    "docs/V204_DATABASE_HOTFIX.md",
+    "docs/V204_RELEASE_NOTES.md",
+    "docs/VERIFICATION.md",
+    "package-lock.json",
+    "package.json",
+    "prisma/migrations/20260927030000_v204_kv_table_alignment/migration.sql",
+    "prisma/migrations/migration_lock.toml",
+    "scripts/db-bootstrap.js",
+    "scripts/export-postgres-to-json.js",
+    "scripts/migrate-json-to-postgres.js",
+    "scripts/schema-readiness.js",
+    "src/queue/worker.js",
+    "src/storage/criticalStore.js",
+    "src/storage/jsonStore.js",
+    "tests/postgres.integration.js",
+    "tests/storageDataDir.test.js"
+  ],
   "files": [
     {
       "path": ".ai/FLOW_REMEDIATION_MATRIX_V182.md",
-      "status": "unchanged",
       "sha256": "e534d32072b299a248ef8bc0e046c8c8e212305d2b70ee1ac93a74fc79d140d1"
     },
     {
       "path": ".ai/PRE_COMMIT_ENFORCEMENT.md",
-      "status": "unchanged",
       "sha256": "a1bd24b804a211fedfc5b61c07d5735682d0c37027e66491962e141987c317d5"
     },
     {
       "path": ".ai/PROCESS_BUILDER_STANDARD.md",
-      "status": "unchanged",
       "sha256": "cebabdc3e378080c411b1ea32bae73761d7508c8cec24acd8e5c9e42b023b27b"
     },
     {
       "path": ".dockerignore",
-      "status": "modified",
       "sha256": "09451e5b9426f409ba8a046a99ea5b95d47ec86f6e5ea2ae8b568659a4502673"
     },
     {
       "path": ".env.example",
-      "status": "unchanged",
       "sha256": "8068b63c5c3960153da4608f487cefcd887064efadb71988e754af8a9b35a200"
     },
     {
       "path": ".env.railway.example",
-      "status": "unchanged",
       "sha256": "106bbb8388a296c6b597e8b9ae9a827ddc0a9426d9f47a39641197158b4eed90"
     },
     {
       "path": ".env.stack.example",
-      "status": "unchanged",
       "sha256": "3f9f62789947ae32b59b8a00fa8c8a0a09308b175291e5539c029a0bb109085d"
     },
     {
       "path": ".githooks/pre-commit",
-      "status": "unchanged",
       "sha256": "09b01824443d9523a78550e8a7a30491156d904e1c699af0756e9c57c03ca459"
     },
     {
       "path": ".github/workflows/ci.yml",
-      "status": "modified",
       "sha256": "4d10fb835203aa5561a3b1cf9d54608ee50cdd77b11d28f0638f7de7a4408758"
     },
     {
       "path": ".gitignore",
-      "status": "added",
       "sha256": "115403f33f47471444c3b1898aa2c83091406d91252f850841e9a42ab1209b8f"
     },
     {
       "path": ".npmrc",
-      "status": "unchanged",
       "sha256": "24ff33031f4229d9a4ab9e5c7cf264026f5aedb9142d03d16110dad0b8a1776d"
     },
     {
       "path": ".nvmrc",
-      "status": "added",
       "sha256": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56"
     },
     {
       "path": "AI_READ_FIRST.txt",
-      "status": "unchanged",
       "sha256": "3d279212ad9e22b4717e5a47a17b013363da132750f1be13ae3d4fd22f1f1886"
     },
     {
       "path": "ARCHITECTURE_INTENT_V84.md",
-      "status": "unchanged",
       "sha256": "700e0fc19b577b6801df0f15bc959f3811ca3949b2c44f43f3ad61f8319f9a3d"
     },
     {
       "path": "CODEBASE_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "034762d15feae435f345e0724aa1b21aa3790cbc6de97daaee082a505cfbe77f"
     },
     {
       "path": "DEDUP_ARCHITECTURE.md",
-      "status": "modified",
       "sha256": "afc03fc27998fb0acd4688deed3985bc3a50085aa9081b71a214566184ad158e"
     },
     {
       "path": "Dockerfile",
-      "status": "modified",
       "sha256": "251290c01ad6b489467c2e84a91affd5c0fd48c2b2c84f5e54026be701842a70"
     },
     {
       "path": "INSTALL_AND_RECOVERY.md",
-      "status": "unchanged",
       "sha256": "295f6b9cc29af60a4235accc7f381e46200102081ff57bdbc6bcdc5bb47baf3f"
     },
     {
       "path": "PATCH_NOTES_AND_CONTEXT.txt",
-      "status": "modified",
-      "sha256": "232e7db52c0ffb38a9696ba019f198083f53ff2a42d7fef65bf0d8e06b9b4ea0"
+      "sha256": "62290cad484f7864e3ddb81934bbd3ad1ec6e7f5513e68d7fba0cabc3e75b6f3"
     },
     {
       "path": "PATCH_V184_RELIABILITY_HARDENING.md",
-      "status": "unchanged",
       "sha256": "26b3e432543af05b46a89f03e045a1f45957ab89991c06e7ca6c44d62b71a68c"
     },
     {
       "path": "START_HERE.md",
-      "status": "added",
-      "sha256": "f859a82acdeeac7beb1e0cf499bf41cbe15c98aa3b42c5963219f7af34d23db9"
+      "sha256": "f0531f77385b9bd6162c18f45a2b587178ba064785169f45d34b509659604e53"
     },
     {
       "path": "changelog.txt",
-      "status": "modified",
-      "sha256": "360b4f989924933f47b433b86b059b6971fdc0af86b7014dc3efc618f63f9f6e"
+      "sha256": "5b49b6192e9176f8938ed6b5cb8c18c39147cf548a5557db5134aa6ddff855b8"
     },
     {
       "path": "data/JSON_OWNERSHIP_MAP.md",
-      "status": "added",
       "sha256": "4b2eef90c084c7f3648c998a8fbe06b7a1958e77bb64b05d21a4c90611addc7e"
     },
     {
       "path": "deployment/FREE_STACK_BOOTSTRAP.md",
-      "status": "unchanged",
       "sha256": "d9cf37d7b361bce9b22382e84688e511733caca5d22e155083e2c60b3b6f1492"
     },
     {
       "path": "docker-compose.yml",
-      "status": "unchanged",
       "sha256": "04a2b256063daa057869b212e1266f9163563762ddcedd84771004f518c3aa1d"
     },
     {
       "path": "docs/COMMAND_ARCHITECTURE.md",
-      "status": "unchanged",
       "sha256": "10ac751015969006eca62715a41aba5a9163eaaec22adfe9dde71cec71c4e9c4"
     },
     {
       "path": "docs/COMMAND_HANDLER_MANIFEST.md",
-      "status": "unchanged",
       "sha256": "02139e519f345b898cc7a0f9e99117085de7ed748ffa1cd6eaa83c20283e5fe5"
     },
     {
       "path": "docs/FREE_STACK_BOOTSTRAP.md",
-      "status": "unchanged",
       "sha256": "a2f3a2da203deece20f4ed1df0747af448ce2fa382963851c67d90945274dd47"
     },
     {
       "path": "docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx",
-      "status": "added",
-      "sha256": "50d9db462d93c68f9478bcad2ba4cb896214be505c98a72279304f7d0452104a"
+      "sha256": "0bc0c2f676782b707c59ea2ac12aa47c71f245ebdabcb5588335962612458649"
     },
     {
       "path": "docs/NOFUNLEAGUE_v203_Full_Codebase_Audit_New.docx",
-      "status": "unchanged",
       "sha256": "c6f7edfdb8833926b765ac6a70b184aeb152a7eff2c675d5ec7f9a03630d99a5"
     },
     {
       "path": "docs/RAILWAY_REDIS_POSTGRES_SETUP_V155.md",
-      "status": "unchanged",
       "sha256": "265fbef8bb946f16dfa5cc1685fb65911008dd9f3d215d3c4af71e25bcbfaa59"
     },
     {
       "path": "docs/RAILWAY_REMOTE_DEPLOYMENT_V158.md",
-      "status": "unchanged",
       "sha256": "81420ac995e417637adbed3ed65f18ae0745f9e59fe57f3d2290dc331143e60e"
     },
     {
       "path": "docs/RAILWAY_STAGING_PROD_PIPELINE_V193.md",
-      "status": "unchanged",
       "sha256": "758f8793f20e96d34b1563a6c1baea63a029b81a15f2c53ed338b050bc5ce9a1"
     },
     {
       "path": "docs/V203_1_AUDIT_STABILIZATION.md",
-      "status": "unchanged",
       "sha256": "79dfa65e11b14d5c40d77cc2e456eab816634b2667a8fa332c9f4cbcbb6245a9"
     },
     {
       "path": "docs/V203_1_PATCH_MANIFEST.md",
-      "status": "unchanged",
       "sha256": "02d58aebbf6b49b7c507403a2b729fe482a0c2c5853713c45e20bec8bda67987"
     },
     {
+      "path": "docs/V204_DATABASE_HOTFIX.md",
+      "sha256": "1e0a20c501dc652cef5da191d023b8c8b3d9facfc35f6fbc7e6f0186b6de3b0e"
+    },
+    {
       "path": "docs/V204_DEPENDENCY_MAP.md",
-      "status": "added",
       "sha256": "b7e3a6cfe8ad34d2adf4e70121311f2ac103a03fcc1f9345ae494cbb60113b25"
     },
     {
       "path": "docs/V204_RELEASE_NOTES.md",
-      "status": "added",
-      "sha256": "2f55c2a22f52f933377a8967e27a2dc461866c61367452128e54521ad420da89"
+      "sha256": "e3e794e111e323b1fabf9fa014207e297febba9447bcac3311d99e8b12f550a2"
     },
     {
       "path": "docs/VERIFICATION.md",
-      "status": "added",
-      "sha256": "4cedc60fec6fa94926cd08f0a302b44af327041505331707144ce34ffd2add5e"
+      "sha256": "9dfcb2545f8320837334a33efb62949d048b8db19d6fecf6e954cd5af4dc3a7e"
     },
     {
       "path": "docs/ai/NOFUNLEAGUE_COMMISSIONER_AI_RUNTIME_v2.txt",
-      "status": "unchanged",
       "sha256": "7dfe2ff9c9eb77b7a0e8504586ba6acfd78a9cb6f6c160970c7e684ab25b08ff"
     },
     {
       "path": "health-server.js",
-      "status": "modified",
       "sha256": "00acc68aab2dd5177e1f60254a68947d1fb2ea1db8eebcc7a272c80eba5b4d81"
     },
     {
       "path": "index.js",
-      "status": "modified",
       "sha256": "36f98c4da017a45a11470c2f04c6d06e628a610f8dc50f3ca431c373f45563ae"
     },
     {
       "path": "package-lock.json",
-      "status": "modified",
-      "sha256": "675246a06788150594d7738cf4c3f73ecc21bf5e7ffca5aca28560a987be5bf0"
+      "sha256": "08e1133f07b1311f918a5f60db368b4b14d6e4050d99862a3f40c42459325646"
     },
     {
       "path": "package.json",
-      "status": "modified",
-      "sha256": "2df83ec52ade6578918c842244c1beba5c21c8ea0aad7df04903572a558222a5"
+      "sha256": "b6df5a78d779e4c92d8d4018965c6ee77209135971df74601e4ab566c890dbdc"
     },
     {
       "path": "prisma/migrations/0001_init/migration.sql",
-      "status": "unchanged",
       "sha256": "0e69f4b2684435770e7cd80d4ebb7a9476d000ec2b28befbb0e8b1b3c4fc188b"
     },
     {
       "path": "prisma/migrations/20260318_v109_full_schema/migration.sql",
-      "status": "unchanged",
       "sha256": "f30f74a10016c8495cec0c64bdc89f84e60948ab069341c0d078f8d56382aef5"
     },
     {
       "path": "prisma/migrations/20260319_v110_guide_audit_jobs/migration.sql",
-      "status": "unchanged",
       "sha256": "db43fb0cc19c3355fd2690e0d7481e46c7c298d6ab7d52a17812e5aebde598b6"
     },
     {
       "path": "prisma/migrations/20260319_v111_audit_log_security/migration.sql",
-      "status": "unchanged",
       "sha256": "ee469014de2778460ded14c05e641f29aa73f171dcec6f601d26ad785bfa10d6"
     },
     {
       "path": "prisma/migrations/20260319_v112_db_migration_prep/migration.sql",
-      "status": "unchanged",
       "sha256": "c6dc7169b03bac5113a6bfc0144b937ca44d93ab4ea3d4dd78bb59cb5e71ecdf"
     },
     {
+      "path": "prisma/migrations/20260927030000_v204_kv_table_alignment/migration.sql",
+      "sha256": "39345d343ec51d5fc5fe24ef18d82bf21bd59008ec667fcc70af41fc72b2c530"
+    },
+    {
+      "path": "prisma/migrations/migration_lock.toml",
+      "sha256": "1db17a8d051aa136110736752c5e1f8b7ed92b6ea8e803112fbbe2497047c210"
+    },
+    {
       "path": "prisma/schema.prisma",
-      "status": "unchanged",
       "sha256": "5109bdd90e40ad08fd0cb4571783b13d0804d2f16facfbf9f3b67f93d7ea90a0"
     },
     {
       "path": "prisma/seed.js",
-      "status": "unchanged",
       "sha256": "0b1ebbf644f6044377b25a48498da56d71849ebd36d009c8d8c6259db92ab033"
     },
     {
       "path": "railway.json",
-      "status": "modified",
       "sha256": "f1de0d1634d2aeeb9f527c56c9e9226de609a1b797eadec572ec8c501f65998d"
     },
     {
       "path": "scripts/README_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "04a4e256897b591099211513d04a2c9944ca77f39b1f9fe8df7200485b7b49ea"
     },
     {
       "path": "scripts/boot-preflight.js",
-      "status": "unchanged",
       "sha256": "f2de7e11a2319ccc7b638583025c3cf5133984f7464758ebaba47e24510d5f45"
     },
     {
       "path": "scripts/changelog-guard.js",
-      "status": "unchanged",
       "sha256": "e823afc3ea94e6e6b836b33c88f9112cfc94d499e63670c5efc4ccf08d261e47"
     },
     {
       "path": "scripts/check-infra.js",
-      "status": "unchanged",
       "sha256": "21b064fe8c99a872cd36762866dba4b748b2968314e595e4706fdf6489632faa"
     },
     {
       "path": "scripts/check-undefined-identifiers.js",
-      "status": "unchanged",
       "sha256": "2c2ab778cb09415f5fc056a1d47cd482a02a06d64965bebbdaf0bb336e224afb"
     },
     {
       "path": "scripts/command-contract-check.js",
-      "status": "unchanged",
       "sha256": "50d35a151bac989b7f8134bca2e845a3fc9572fc57beb501f420af52a2b130b7"
     },
     {
       "path": "scripts/db-bootstrap.js",
-      "status": "unchanged",
-      "sha256": "0974aac0ac0e7a28b5b0cc6e0505e625b6c576d5456cabded49ddc8599dd2b2d"
+      "sha256": "3f6cb63f40d445e4d931a1b04e1c9df040e0acf2741b8e0311e5c2e9c3375b5b"
     },
     {
       "path": "scripts/doctor.js",
-      "status": "unchanged",
       "sha256": "f3d13b0813b59820af7d52fc85ef0bd7a63797ba8f4626898d4b2cf9be73fbe7"
     },
     {
       "path": "scripts/export-postgres-to-json.js",
-      "status": "unchanged",
-      "sha256": "b13f078100014109e37b45c4e9994582a226ffa35d6236685294329d219ab240"
+      "sha256": "ba5d54dfda1183ba628dadf5186ca8b74c2cfc0fb5f4fdc05c90a2e416a85342"
     },
     {
       "path": "scripts/install-git-hooks.js",
-      "status": "unchanged",
       "sha256": "b989fc09b8daf118421d8d7132012da336e1e13f7ec83d01511db02b7d76811e"
     },
     {
       "path": "scripts/migrate-json-to-postgres.js",
-      "status": "unchanged",
-      "sha256": "5e7fcd01a5fa2dd83c75dbd07fe77ca0d10f276d5782c4fcd5204e5a62f622b2"
+      "sha256": "20f858f5b1ed44daaebb84219388c6fbbd6170d187c77b4aab2833ed1992c7db"
     },
     {
       "path": "scripts/pre-commit-check.js",
-      "status": "unchanged",
       "sha256": "9fd72a4086a054898f25906fe7b8aba23c72d2628f99f0061eac9edd43911bb0"
     },
     {
       "path": "scripts/predeploy-check.js",
-      "status": "unchanged",
       "sha256": "47daffdda01160a07f6866edb4e740b25bfebcb67a74a23e9b165756519a3be9"
     },
     {
       "path": "scripts/railway-start.sh",
-      "status": "modified",
       "sha256": "143b1c7f8e3b81adf9f4a0e97ea20bb41d2fb41575c6163388878cf080d1c68e"
     },
     {
       "path": "scripts/release-context.js",
-      "status": "unchanged",
       "sha256": "4793286715cd6cff7fcb7c33160114a26f2ec52df95c2b18d29b28ddd5539ad3"
     },
     {
       "path": "scripts/schema-readiness.js",
-      "status": "added",
-      "sha256": "d7a716312def7d2c4af925c5ac9dd7a30c20eb9cf3f5eb7494181ecdcc746fe0"
+      "sha256": "f105245c4f0932a2aebc3be11c294f2061ce2556da34f2b54fec10bdccfcb06b"
     },
     {
       "path": "src/README_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "3151853f25381e6add9e590af0ee8e2e2fd92c18a571233b1b491949b50a8747"
     },
     {
       "path": "src/actions/actionCatalog.js",
-      "status": "unchanged",
       "sha256": "57347fa7a5c89887fe37e5229259679cb8e756b766e5f4220ea6ba7c7b375ae4"
     },
     {
       "path": "src/actions/actionExecutor.js",
-      "status": "unchanged",
       "sha256": "e75baf2db69656ae15dd1a1ad2b53c1109741b52c0a07b6ecfb65693ed1b384f"
     },
     {
       "path": "src/actions/actionValidator.js",
-      "status": "unchanged",
       "sha256": "aeca046855acca89d707b27443177163d92e361e03e80ef6932a61d39dece9c8"
     },
     {
       "path": "src/actions/confirmationService.js",
-      "status": "unchanged",
       "sha256": "06478084c650578b05321e4cc976df85e5f21c70b4b770fd22d62d9854c194a2"
     },
     {
       "path": "src/ai/commissionerPrompt.js",
-      "status": "unchanged",
       "sha256": "b30d9072d2a88d63b2386994d419cac3b00f4d6863fd12e526014fc752a59df6"
     },
     {
       "path": "src/commands.js",
-      "status": "modified",
       "sha256": "152b20fb5de5c977d69fbecf05a126e3948d2d9d4c4375dea8de6fb120e0b6dd"
     },
     {
       "path": "src/config/channels.js",
-      "status": "unchanged",
       "sha256": "a19ba96c2905c064f8c96a0595cb6cb2f1ce038e20b967faa78115213eb6f4fd"
     },
     {
       "path": "src/config/constants.js",
-      "status": "unchanged",
       "sha256": "774e61d317af6e5e9d0b5b13e4dcf3ac2e26b51f33dc1406592fdec946d484e9"
     },
     {
       "path": "src/config/emojiBank.js",
-      "status": "unchanged",
       "sha256": "b130ae709d4eafc976bcbdc538a7174ed1423c63d96462f5c99dbf3e7ac67f70"
     },
     {
       "path": "src/config/env.js",
-      "status": "unchanged",
       "sha256": "87b64c8e63aa6b2b38bb8271405299f265ed4255893db695578f61cd2f02e350"
     },
     {
       "path": "src/config/featureFlags.js",
-      "status": "unchanged",
       "sha256": "8d913c7b98d47900efb941c19144278bd2a5529422d4405b81d2b85cc196c342"
     },
     {
       "path": "src/config/personas.js",
-      "status": "unchanged",
       "sha256": "39ea8b0db077ba4450d1204e91bdfd2d1ddffe94b52b22f824033214bd65cc06"
     },
     {
       "path": "src/config/rules.js",
-      "status": "unchanged",
       "sha256": "41654a6089ac3790b828f5dae303a88768aefd147df4b719e4c9e3b4e89a7639"
     },
     {
       "path": "src/config/runtimeValidation.js",
-      "status": "unchanged",
       "sha256": "11515993447dfb6fa1bb7e83106b623e16a65beb7e92198330c3839170e73694"
     },
     {
       "path": "src/config/teams.js",
-      "status": "unchanged",
       "sha256": "fd7c9e90cde4b8f02a91e9ae3f8df9c9eef9ee636fc02a89dd59c91986563a2a"
     },
     {
       "path": "src/handlers/README_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "dc8cf401d8fd8581b2ce528f3f350c9b0ee6bd4b722fb0b01f52c1a329e4ac98"
     },
     {
       "path": "src/handlers/commissionerHandler.js",
-      "status": "unchanged",
       "sha256": "0d8ac93ede6a6bbe882592a6759737efdccdcfd79c104e110b8c189d0378c75b"
     },
     {
       "path": "src/handlers/itHandler.js",
-      "status": "unchanged",
       "sha256": "69555355141113e95f6db2ab780eb70791c4b43f56fb287508cc507e07bc255f"
     },
     {
       "path": "src/handlers/memberMentionHandler.js",
-      "status": "unchanged",
       "sha256": "a548fbbecdd7bc92cf1d787fe157642f95c40d2099f2d5c98702b2171d0eb2e4"
     },
     {
       "path": "src/http/providerHttpServer.js",
-      "status": "modified",
       "sha256": "c02cc13254963f35afab9fc652fed6028a66ea5694a5a70d3bf3408e935f44fd"
     },
     {
       "path": "src/http/routes/maddenCompanion.js",
-      "status": "unchanged",
       "sha256": "6c56581f33742a0fbaff80de7fd399a551cd51d4d3b7e0eb1afb7bf3722ce832"
     },
     {
       "path": "src/http/routes/neonsportzWebhook.js",
-      "status": "unchanged",
       "sha256": "bc7724ef77936ce8ceed69f163306dd4836111d7b38b8f453dbe743d4943f6f3"
     },
     {
       "path": "src/infra/STACK_UPGRADE_NOTES.md",
-      "status": "unchanged",
       "sha256": "fb27671e2d56f1c0e52c8262c070a76175b7cac1a856ccda8f79e418599d12e0"
     },
     {
       "path": "src/league/advanceEngine.js",
-      "status": "modified",
       "sha256": "a8284018c6ac2b0f4c36fc16a4c6098839c79e3a67a8eaca15f0bf5d4a5aa353"
     },
     {
       "path": "src/league/automationPolicyService.js",
-      "status": "unchanged",
       "sha256": "44fd1f760d812c4d9bb2cf3df1dfd5414fcc0ca486d91251d98963c8fbaea86a"
     },
     {
       "path": "src/league/build/leagueBuildService.js",
-      "status": "modified",
       "sha256": "6ab137b235e8bed886faa5162a06bc8bf9bb4240164d172a139187c4c1315f62"
     },
     {
       "path": "src/league/canonicalModel.js",
-      "status": "unchanged",
       "sha256": "92aa1d9549719786e3135fb97f80514b41723873fd34e167070815d823bc0c4e"
     },
     {
       "path": "src/league/gameResultService.js",
-      "status": "modified",
       "sha256": "19a064b59836c7cc8aaff9d75705d50c679f3b8cdfa657e0e020830e03a0a7db"
     },
     {
       "path": "src/league/gameSessionService.js",
-      "status": "modified",
       "sha256": "6ea3b1beff08692d5306051979e7203774a574eaed203f0b836cc954050e58b0"
     },
     {
       "path": "src/league/importRunService.js",
-      "status": "unchanged",
       "sha256": "0dbe62a52771c8d968686f608f23da9c6fcfa8ec64ab37735c806bfbbac95899"
     },
     {
       "path": "src/league/runtimeService.js",
-      "status": "unchanged",
       "sha256": "a478718aed139bc9dc465dbbbec1c321584a3f93979c4da4ed523c908a6093f4"
     },
     {
       "path": "src/league/scopedState.js",
-      "status": "added",
       "sha256": "8eaa0e21e12677ccf0a3e8ccb148da5cb92411293bf9ebda4dc4cba63743bc06"
     },
     {
       "path": "src/league/spaceContext.js",
-      "status": "added",
       "sha256": "4af02732c6e1899c6f4fc08bcffc8a089891064d5c1422cc2402d9559132184d"
     },
     {
       "path": "src/league/validationService.js",
-      "status": "unchanged",
       "sha256": "597370cc539093d937f456885e5475d46add032fa4d671b2a2da3a6890109679"
     },
     {
       "path": "src/microservices/automationAccessMicroservice.js",
-      "status": "unchanged",
       "sha256": "99ed99026ddff2a9654e7392e19aef073df87d240da2e2c24770296d7760397c"
     },
     {
       "path": "src/microservices/serverOperatingSystemMicroservice.js",
-      "status": "unchanged",
       "sha256": "4a1799dd602800e9c2edb45355b32bd23aecd38075d059bf0a784f78d398d187"
     },
     {
       "path": "src/microservices/stabilityCoreMicroservice.js",
-      "status": "modified",
       "sha256": "975292e952af929c3c1bb90affc326bab2d2d271571ed0e9d91f9b17f71150f9"
     },
     {
       "path": "src/microservices/valueUnlockMicroservice.js",
-      "status": "unchanged",
       "sha256": "64b978c9122f3b0187cbdc440f8f5c6f9e880974a379fe5cbfc0adb7656d4232"
     },
     {
       "path": "src/parsers/gameResultParser.js",
-      "status": "unchanged",
       "sha256": "629f1736c1fc15827a9760a8f2258950dec452778f47cc929866ccc5f03cc2ef"
     },
     {
       "path": "src/parsers/hubScreenshotParser.js",
-      "status": "unchanged",
       "sha256": "9a93081d73256bbc68ebb90aea8cb230289358952923a77b4a4f7563276dc3c5"
     },
     {
       "path": "src/providers/customEndpoint.js",
-      "status": "unchanged",
       "sha256": "f996a846e710eb1f9de0fdf04e841db48fd0508c9d554b1b24f10dec8cac8134"
     },
     {
       "path": "src/providers/gameProvider.js",
-      "status": "unchanged",
       "sha256": "19fb5fd21ffb3dd22ffd8534075ee7ff33f206e22acdc05d073b576c04bd27e3"
     },
     {
       "path": "src/providers/local/index.js",
-      "status": "unchanged",
       "sha256": "99bfe440a69800819d621323524f06eca2c0743e51b2936f9a7e7583152a9658"
     },
     {
       "path": "src/providers/madden/companion/exportGateway.js",
-      "status": "unchanged",
       "sha256": "2d5d0a06e4edfea66c49a0a5659882257eb93208f26531547375f34e33d0e520"
     },
     {
       "path": "src/providers/madden/companion/normalizer.js",
-      "status": "unchanged",
       "sha256": "1f84bbb571b5b3dde136ba5784f21215f06df6803d3623e42a04084e6a6347d5"
     },
     {
       "path": "src/providers/madden/companion/parser.js",
-      "status": "unchanged",
       "sha256": "c3e7432e342da94637155861112bc6cca4a9214e3572a1b8e511cb90fb4ec0de"
     },
     {
       "path": "src/providers/madden/companion/validator.js",
-      "status": "unchanged",
       "sha256": "7662d8072f5ea4426432df7dcec94be89107a3cb1f5dd79a417e22d5f459006c"
     },
     {
       "path": "src/providers/madden/ea/controlProvider.js",
-      "status": "unchanged",
       "sha256": "e4f2c2546e842cf55fc7badd49fbe0683ec366baae90c4c0e7595535cd5af924"
     },
     {
       "path": "src/providers/madden/index.js",
-      "status": "unchanged",
       "sha256": "85f19f59815ac5671b423adc9797eaacbc8f39264ce96a4defac965c88555c98"
     },
     {
       "path": "src/providers/madden/neonsportz/client.js",
-      "status": "unchanged",
       "sha256": "081288119ed20136319bef18eed450d86d6ebad28f0eb617426095e924715a5c"
     },
     {
       "path": "src/providers/madden/neonsportz/mapper.js",
-      "status": "unchanged",
       "sha256": "200a4ffc2288a6743420920040e360053b4ecc6f69caddcb5347b70b80055d84"
     },
     {
       "path": "src/providers/madden/neonsportz/webhook.js",
-      "status": "unchanged",
       "sha256": "0b68fd92bbe573f08c60a16bff8aa5dcb2befdaab496db12b67e618847426633"
     },
     {
       "path": "src/providers/nba2k/index.js",
-      "status": "unchanged",
       "sha256": "7d86feb59c7646077acaf3eccbbfb199dfb2afe30b95b827d79925bfb58573f6"
     },
     {
       "path": "src/queue/queues.js",
-      "status": "unchanged",
       "sha256": "3beceb4562658ca0c60a4abcac380d8bdd870b6aaa9c350a71378038a544769a"
     },
     {
       "path": "src/queue/worker.js",
-      "status": "unchanged",
-      "sha256": "97e5524c993478081bf3b74cb207c0700058601a9a91bf15d22cae86c3752aaa"
+      "sha256": "cc538fc1b7c7177cf126e79a0cf71acf3536aa6b9a023e6274974b684a5649de"
     },
     {
       "path": "src/routing/README_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "28a80fc106882e7248ea6468d9e16daa36aefe67b4c079547bbc2075446d0cc5"
     },
     {
       "path": "src/routing/interactionRouter.js",
-      "status": "modified",
       "sha256": "b4eb56f35ecef532d3bb60b3b68c4fba27e1b7c583a13830bfe56f5e9dc1c051"
     },
     {
       "path": "src/services/README_NAVIGATION.md",
-      "status": "unchanged",
       "sha256": "564eb38c711c496e35db5ab8c5816cd2a3ebc6e6c8a9c96b865f0eb14d097fe2"
     },
     {
       "path": "src/services/accessPolicyService.js",
-      "status": "unchanged",
       "sha256": "02823d9464a4a6659fe0bc8b1b64cbbb9cfe97cb3056ca917ffb7180929d429e"
     },
     {
       "path": "src/services/activeLeagueService.js",
-      "status": "modified",
       "sha256": "3333bf6ce534d1353406b07132e3f1940f6cef9bc152d220dce8fe9fe7a227fb"
     },
     {
       "path": "src/services/ai/anthropicService.js",
-      "status": "unchanged",
       "sha256": "b6aa6e4cfe909bf155ee2b87bc7009d826ac696605dcf374e56aa4aa7a6c07e0"
     },
     {
       "path": "src/services/architectureSemanticsService.js",
-      "status": "unchanged",
       "sha256": "b3716ee5d8e49d540cf410dd1b7d1b376ad4ac2f1516704c29a3a06556c9e001"
     },
     {
       "path": "src/services/backgroundJobService.js",
-      "status": "unchanged",
       "sha256": "dbe19d28af97f8dd4a735cf9e1012479a2ce884dea1c75d2aa3e979a0c43c1e5"
     },
     {
       "path": "src/services/baseInitService.js",
-      "status": "modified",
       "sha256": "bb2dc907384a45ddf244d3e92387818698008d7f10296a3e8420aba6009ec86f"
     },
     {
       "path": "src/services/boardManagerService.js",
-      "status": "unchanged",
       "sha256": "496da08beb6a65cb6872cb118547a50cbc680c466c3f77a4ed2f1e6732b18c97"
     },
     {
       "path": "src/services/botAccessService.js",
-      "status": "unchanged",
       "sha256": "1c9606d60d026d8a7a9292c3073f600a8f92be335e7e688855386346b30303ea"
     },
     {
       "path": "src/services/botIdentityService.js",
-      "status": "unchanged",
       "sha256": "e8f9eac038c17d7813befbe4107223130d3eaa438aaea21d51d3595bbf6610f8"
     },
     {
       "path": "src/services/broadcastsService.js",
-      "status": "unchanged",
       "sha256": "c57e9c35153365d7c7d378b3c782cab2cffc76771a6d6e5cf7c85c0066f65e30"
     },
     {
       "path": "src/services/channelGuideService.js",
-      "status": "unchanged",
       "sha256": "a709f47372103d228558877238e1180454874dab3aa4de03cd5347ba5315ed48"
     },
     {
       "path": "src/services/channelNamingPolicyService.js",
-      "status": "unchanged",
       "sha256": "2e3a4a3705f59876ad6a86855b9806d121d655d4debdba1bb536140dbc8aae20"
     },
     {
       "path": "src/services/channelTopologyService.js",
-      "status": "unchanged",
       "sha256": "64a1c0dcd403f7249918ef52304bfe805c55f607293a391f9bae5d5c9946f762"
     },
     {
       "path": "src/services/channels/channelResolver.js",
-      "status": "modified",
       "sha256": "98a3aa765aeb0f65f01f3def60e4aa248f79ebdc8dafce19c114c23b2fbd78c1"
     },
     {
       "path": "src/services/commandAliasService.js",
-      "status": "unchanged",
       "sha256": "d66e1bec703779d572a1fbad748bcc8cfb3d3a033c0242a29351510d0fba7035"
     },
     {
       "path": "src/services/commandRegistryService.js",
-      "status": "unchanged",
       "sha256": "454f64d9d0c89a0c9b8ba5c14bfb423a55f2bd94b756a3894eee1f33a14cacaa"
     },
     {
       "path": "src/services/communityAccessService.js",
-      "status": "modified",
       "sha256": "1c0a09236e714dc7192aaddf18ea8e15d17dd5b2ee3b679a181be626ed87381a"
     },
     {
       "path": "src/services/communityPackService.js",
-      "status": "unchanged",
       "sha256": "6198a3fddfc7842e7f8a6bb117ac53aa0a4b4133e59d8e55413e67ad84f96963"
     },
     {
       "path": "src/services/componentRegistryService.js",
-      "status": "unchanged",
       "sha256": "7e5d26679e992caeb164f342d1c85d2ba441154ccfc52b8d756a7c7b27b0f932"
     },
     {
       "path": "src/services/contentSafetyService.js",
-      "status": "unchanged",
       "sha256": "1f729929ce8f5ab437bca1db786bc8376432facde9a7c55a5bce6b0d96f19f57"
     },
     {
       "path": "src/services/contentScanService.js",
-      "status": "unchanged",
       "sha256": "c6ea8b20ee31b243eb19eaddbd1250bc491b4bb34b218c7413e520ea28542591"
     },
     {
       "path": "src/services/conversationContextService.js",
-      "status": "unchanged",
       "sha256": "889e060bf415186cfd2d9ebea1e56fafca3b4335249cacc43a543b35c14fc608"
     },
     {
       "path": "src/services/customMixService.js",
-      "status": "unchanged",
       "sha256": "72db2d2ceb3637b459eb8ba7798a3106070a9b37bda345e73ebc576028a2111c"
     },
     {
       "path": "src/services/dataCleanupService.js",
-      "status": "modified",
       "sha256": "a91934cfe05f82b2f06476d48bf290e3fb812d1af74169dfe1a524a1d354e929"
     },
     {
       "path": "src/services/diagnosticService.js",
-      "status": "modified",
       "sha256": "57bc00a0fb0b64363ca8ce536b47ebb86b39e3727bc39e9c0294a54f17fccde9"
     },
     {
       "path": "src/services/escalationService.js",
-      "status": "unchanged",
       "sha256": "284ec0e68c2521811c489b57473e7d81da4afece24496a50749d7b18daf0b8b3"
     },
     {
       "path": "src/services/eventClaimService.js",
-      "status": "unchanged",
       "sha256": "b5554e7586aa49f1cda439f80e43f6463c27b0585e9812df58b8f85236846cad"
     },
     {
       "path": "src/services/eventSpaceService.js",
-      "status": "added",
       "sha256": "9093e368a65771fd9a3a93cac8e937889aa7e82a9f03e46152187cbe2cfe7c36"
     },
     {
       "path": "src/services/fileIntakeService.js",
-      "status": "modified",
       "sha256": "f6b90f902078acb41235b8d4e99b79a26b83d8218cffc8eb4ae14acfce023eed"
     },
     {
       "path": "src/services/flowDefinitions.js",
-      "status": "unchanged",
       "sha256": "cef710ed44dc0e0afdfe17be13c9ff36fff4e0db1affd5dc1e7ce8f52de3b825"
     },
     {
       "path": "src/services/gameChannelCompatService.js",
-      "status": "unchanged",
       "sha256": "507ec729d049ae1252f52252cc0435b6a56cf1932ecf1928f8de920a36e05c81"
     },
     {
       "path": "src/services/gameChannelService.js",
-      "status": "modified",
       "sha256": "87af2cfa8f5ed50bb40b1a3a6efede2ef33a09ef7dd13a5d3d3c0bb6069b541e"
     },
     {
       "path": "src/services/gifReplyService.js",
-      "status": "unchanged",
       "sha256": "b86f4fc65a8e2e2a3c0c6e6841f5ee54511d4d3225db9df0ef8fa83a2ea9ad66"
     },
     {
       "path": "src/services/guideLifecycleService.js",
-      "status": "unchanged",
       "sha256": "24f04901eebd9a6af05abbee6a3986beff3022b2be0d2a8fb8360d04012ea1ed"
     },
     {
       "path": "src/services/guildLockService.js",
-      "status": "modified",
       "sha256": "27c8e68c49cc82e61b99856d8b688fa6d52c97b83ba71b4604b2f4a0593e4faf"
     },
     {
       "path": "src/services/hierarchyEnforcementService.js",
-      "status": "unchanged",
       "sha256": "dce2f273a71c5a41556841c5795047fa45885f87f22faf38ddbf1158cd08312f"
     },
     {
       "path": "src/services/hubReleaseService.js",
-      "status": "unchanged",
       "sha256": "e1eb8423231d45d680200a1d4bb77b403e9e62869d708d79c92bb1f5128d5983"
     },
     {
       "path": "src/services/interactionRouterService.js",
-      "status": "unchanged",
       "sha256": "f9e0b4af378dd2a53ab9ff2c778e1a0c4061ae3cc652508614d105d5c1ad1ba0"
     },
     {
       "path": "src/services/joinLeagueService.js",
-      "status": "modified",
       "sha256": "ade2217c132452516b8ecd929550122bad689c465823dfe441b6e24468c8a8cf"
     },
     {
       "path": "src/services/leagueAutomationService.js",
-      "status": "modified",
       "sha256": "1d1e27d4006bc922ca102534d47983c44c8ed2cad5c87c5771ab68bf53a1141c"
     },
     {
       "path": "src/services/leagueFeatureService.js",
-      "status": "unchanged",
       "sha256": "fee4d46b31fcb28d18f52afd29c207201ea6d2ab701f9f2d7275ffff366b989a"
     },
     {
       "path": "src/services/leagueNamingService.js",
-      "status": "unchanged",
       "sha256": "d067667e3394f4f432906945e4680e56e4aff5e9b4f3d34c08052c8f87f6fa04"
     },
     {
       "path": "src/services/leagueSetupService.js",
-      "status": "modified",
       "sha256": "98b146f25bbb38032a331d1d610813f9df78ce48baa31bddeca63a27cb3f68ac"
     },
     {
       "path": "src/services/leagueSyncService.js",
-      "status": "unchanged",
       "sha256": "837d68c9b33683349917904d44dd363cbd99ec921fc6fafa45fbdc540316285c"
     },
     {
       "path": "src/services/leagueVisibilityService.js",
-      "status": "modified",
       "sha256": "1725ef8492219e30fef01a98be1c3ae693fe30882c0eb501f5c705aba8393eda"
     },
     {
       "path": "src/services/lifetimeHistoryService.js",
-      "status": "added",
       "sha256": "fea346f77d4ade9c3ff739a49bbc09e61b2325886956371d1ef4e25f0fb5edc9"
     },
     {
       "path": "src/services/liveSyncService.js",
-      "status": "unchanged",
       "sha256": "21da629fd123488810edcf614715c381dd7cec08bd7e5931e7bad653708582ed"
     },
     {
       "path": "src/services/loggerConfigService.js",
-      "status": "unchanged",
       "sha256": "e7111a29602015164c7d65032357be679089f0d59fff845fb389f957dde8d860"
     },
     {
       "path": "src/services/managedSpaceService.js",
-      "status": "added",
       "sha256": "62f01ed6e7a857b64d1b35a0a9f2dfb99506a7e84a8df1b9f097c66348e888dc"
     },
     {
       "path": "src/services/manualService.js",
-      "status": "unchanged",
       "sha256": "e45fb215c9f44970a78ee155ff5467ba98dbf72bd8a93edc334cf5458b8799b7"
     },
     {
       "path": "src/services/memberLedgerService.js",
-      "status": "modified",
       "sha256": "f380e34dfb92097b44d6ca1f092d7669b897d43b92708cc65f61614990c8ad6e"
     },
     {
       "path": "src/services/memberProfileService.js",
-      "status": "unchanged",
       "sha256": "4d18bdac74ccc7887d895e7965f08880b3dc4d956e4a28b2d19c5c7ad7e9f2a4"
     },
     {
       "path": "src/services/microserviceRuntimeService.js",
-      "status": "unchanged",
       "sha256": "c936c652395bb9e7606b9cd2b6ebd02caf27576041916aef0c93930b23158aa5"
     },
     {
       "path": "src/services/nicknamePolicyService.js",
-      "status": "unchanged",
       "sha256": "59bd5d233fc41a9891a72ffdc6455e62db7f369f4d873ae6583957947aa78b0e"
     },
     {
       "path": "src/services/observabilityService.js",
-      "status": "unchanged",
       "sha256": "e648a1d0d09af6b87739856a3753ae0f5b04611f5d42d7b6551f525f6e711a46"
     },
     {
       "path": "src/services/offenseDetectionService.js",
-      "status": "unchanged",
       "sha256": "1dacc2b3fd4c16b7be5ba5a49e9eb01f91fe83be6c3d27290c9edf331f4207ed"
     },
     {
       "path": "src/services/onboardingAutomationService.js",
-      "status": "unchanged",
       "sha256": "14add0562965c8a361c18b38716cf1188e2a56b2d50cbdfcaae18522fbd0a3e1"
     },
     {
       "path": "src/services/openTeamsService.js",
-      "status": "modified",
       "sha256": "9e88152893b8f04551aaff96287c6004f05d22147f09b3faee47714e8bfdcffc"
     },
     {
       "path": "src/services/patchNotesService.js",
-      "status": "unchanged",
       "sha256": "678899ebac743b3ed25f68113ecb03c5ef0352c104c04abe2d26247e6a85d4d7"
     },
     {
       "path": "src/services/personaArbiterService.js",
-      "status": "unchanged",
       "sha256": "69a84d1efbcc172b0dc15764ebe32d5bb11bacf0c4ed410a6b637ef45365b304"
     },
     {
       "path": "src/services/pollService.js",
-      "status": "unchanged",
       "sha256": "f2cc5335624e16c8498490ae0cac7e302f58899da017dd5a24d120412843aa88"
     },
     {
       "path": "src/services/postRebootFinalizationService.js",
-      "status": "unchanged",
       "sha256": "2fde2fc005b72f42b5139542f229dcf0f07183eb0ac57965f434d44608a1bf1e"
     },
     {
       "path": "src/services/processBuilderService.js",
-      "status": "unchanged",
       "sha256": "7aac114dcfa232e43826ee3f9b9841acf961c542e94e417d08687e0488a67e15"
     },
     {
       "path": "src/services/processManagementService.js",
-      "status": "unchanged",
       "sha256": "c2112ae62d0c926d0ba48757e8d2c612a449efed53ddc6e45d18a7e52ebceace"
     },
     {
       "path": "src/services/providerService.js",
-      "status": "unchanged",
       "sha256": "c434dce9ba7f09c308bfe09c2ca45bc6b8c60bd873010c457b86383197e0ea11"
     },
     {
       "path": "src/services/readinessService.js",
-      "status": "added",
       "sha256": "f171e11742959d1f362ed5649b7082ed38e22aa8601475bf0ce26f22965e8eea"
     },
     {
       "path": "src/services/recoverySelfHealService.js",
-      "status": "unchanged",
       "sha256": "b05312988959af28fe4c27534c6cc12e679fb317292af3239fdfed042dbe801b"
     },
     {
       "path": "src/services/releaseOrchestrationService.js",
-      "status": "unchanged",
       "sha256": "ff86bd2c81017401ecbb0a84abf3bfa9848ded18aeaa99b7a8693b5505212119"
     },
     {
       "path": "src/services/responseGuardService.js",
-      "status": "unchanged",
       "sha256": "07fef14c348b1b125ce8a3b007dbc441837cfc180e8ae597e4d2b3eb06eb2d9b"
     },
     {
       "path": "src/services/responseLifecycleService.js",
-      "status": "unchanged",
       "sha256": "97f8ba22a93be3260cdd8417a9cf91af822b26a19fa80cc3d8adc7381a6c9b77"
     },
     {
       "path": "src/services/rewardBoardService.js",
-      "status": "unchanged",
       "sha256": "5f9cfc946a51140129b8589b5c841f70a2d6e36d8f6ad702982a409d3cf09553"
     },
     {
       "path": "src/services/roleHierarchySyncService.js",
-      "status": "unchanged",
       "sha256": "287ba7b210f13d65eaf4bfeda8fafee77b66151e9d3feb7767b4c04406b725a9"
     },
     {
       "path": "src/services/rulesGuideService.js",
-      "status": "unchanged",
       "sha256": "c9e1ffd0d05ecc683fbd3606dc27797df0ca86442a5569e773cbc38719632330"
     },
     {
       "path": "src/services/scheduleRegistryService.js",
-      "status": "unchanged",
       "sha256": "67f46168c9de57200458d70dc2be211792439097a7768ee69de357c42b816fa3"
     },
     {
       "path": "src/services/securityMiddlewareService.js",
-      "status": "unchanged",
       "sha256": "54fa95024d85b82871e6d82417d1fa7a8ec980c4b9ab37e85e6d6def1becb90c"
     },
     {
       "path": "src/services/sendMessageService.js",
-      "status": "unchanged",
       "sha256": "f19913dfa37bd416267c72d3d295e522425f04c8c8b984968282e3f8551cf9fd"
     },
     {
       "path": "src/services/serverBrandService.js",
-      "status": "unchanged",
       "sha256": "cd55c1715c62fc5b0c92796cd89c7335bcab9485f8ffdeeb67ec3441ae575766"
     },
     {
       "path": "src/services/serverConfigBootstrap.js",
-      "status": "unchanged",
       "sha256": "ea3f75ce21e87343886fcbda68ae541f60c3c83a0668e07a381783e4f237bba5"
     },
     {
       "path": "src/services/serverRulesService.js",
-      "status": "unchanged",
       "sha256": "aa1fbc21a5db5c02cf95f70f3e0977a7848aec518a9e5185b79419f788ab8e86"
     },
     {
       "path": "src/services/serverSettingsService.js",
-      "status": "unchanged",
       "sha256": "da2f3115751d5a982cc774268d88a44fd75e874d0bb63c112116a56368486dbc"
     },
     {
       "path": "src/services/serverTemplateLogicService.js",
-      "status": "unchanged",
       "sha256": "543f4931881a3c407c385a7c2520a4ed9c07fe03a7caac4367a34f3857449fcc"
     },
     {
       "path": "src/services/singleMessageWizardService.js",
-      "status": "unchanged",
       "sha256": "9b40ac9c5241ac2cb3d647ad07e4e04960c0a29657728a559972c9c06eddd58e"
     },
     {
       "path": "src/services/spaceAutoGenService.js",
-      "status": "unchanged",
       "sha256": "bdb5137508e91b6d263c925ce6255ee3933fe5fa4c17aabd6d3679a1008b7b2a"
     },
     {
       "path": "src/services/spaceMigrationService.js",
-      "status": "added",
       "sha256": "302d75acfb569cd0c38c9d242c6b8ec5764ae681ae727959c14470e2592f0208"
     },
     {
       "path": "src/services/spamService.js",
-      "status": "unchanged",
       "sha256": "467519460e47f31295f69860110ffa16033a63823017661aa129ab1412374a3b"
     },
     {
       "path": "src/services/stageRegistry.js",
-      "status": "unchanged",
       "sha256": "b5927f4797c109fde1b079f1d3fccd187dfdbe16715ce82e1643ab2fe11da8c6"
     },
     {
       "path": "src/services/startupBuildOrderService.js",
-      "status": "unchanged",
       "sha256": "0514feee85bccd2e8960858d0a84865ae15bf7e9a37885b38fec15f8757baa6d"
     },
     {
       "path": "src/services/startupHealthCheckService.js",
-      "status": "unchanged",
       "sha256": "b2909c934228c7cca9afd00b5454a6f71ee1fc209ababf2fb1abea7c7d024f2a"
     },
     {
       "path": "src/services/statLeaderService.js",
-      "status": "unchanged",
       "sha256": "2a936d08121e785b48324e926f316e4e6b34c1c3efe6abc92fcdf8b75c1d447e"
     },
     {
       "path": "src/services/stateEngineService.js",
-      "status": "unchanged",
       "sha256": "e020980fdf8a3ab7cc63992403cf3767e213dd1ff6b6d8661434e390d360486d"
     },
     {
       "path": "src/services/stateOwnershipMapService.js",
-      "status": "unchanged",
       "sha256": "cac71ac8a6716d792ee9224397503bd00f08e3e03604af3f349f688efde5206b"
     },
     {
       "path": "src/services/stateService.js",
-      "status": "unchanged",
       "sha256": "4de13bc8a43c630ac1ab3c74a9f13be42204d5b32c0b0b12c07e2542e180b2fb"
     },
     {
       "path": "src/services/statusCardService.js",
-      "status": "unchanged",
       "sha256": "3aca875577be3149228a56c3008847740fcae8de6023c293beea5b38ecf92713"
     },
     {
       "path": "src/services/streamCreditService.js",
-      "status": "modified",
       "sha256": "d9e4ac618bfc41af3d5b09ccd42bf7a9ed63e19b0176161103a8dfcc9b3de398"
     },
     {
       "path": "src/services/streamOpsService.js",
-      "status": "unchanged",
       "sha256": "ec3e502378862fdca8c959c0a6b4f93f29e507583d6dd3ec59e6348995cb1cc6"
     },
     {
       "path": "src/services/suggestionsService.js",
-      "status": "unchanged",
       "sha256": "4f7e396b1f2a2ac394b6652c946af16f068331de3142db2a3c59a259d037b9bc"
     },
     {
       "path": "src/services/teamAssignmentService.js",
-      "status": "added",
       "sha256": "273e1141642cac77bcad530e6d96b18a502feac7270ca6eb8a87774e99bc2073"
     },
     {
       "path": "src/services/teamRegistryService.js",
-      "status": "modified",
       "sha256": "183af56471bc89bc42814015777304c6261c1632c4b85614b5ce830f41e3192e"
     },
     {
       "path": "src/services/teamSeedService.js",
-      "status": "unchanged",
       "sha256": "a1a6e79dcfcc5768ac10a96c9ad0f1b67953ebaa3d53cd9099b056f65234208d"
     },
     {
       "path": "src/services/teamsSpaceService.js",
-      "status": "unchanged",
       "sha256": "fb66880159df324af78346ee2652e793f23dfb94dfff1287805a01f7039948b1"
     },
     {
       "path": "src/services/templateRegistryService.js",
-      "status": "unchanged",
       "sha256": "54a9d7c6a8d5c24247b57440d4ec0f2bde2f6c513e9e07da8307e3246ef40c48"
     },
     {
       "path": "src/services/templateThemeService.js",
-      "status": "unchanged",
       "sha256": "54c6be5d843309ab95f60d8426aabb753edea0616135cedccdca14b6d285fefe"
     },
     {
       "path": "src/services/timezoneGateService.js",
-      "status": "unchanged",
       "sha256": "ffdaa87e3dc718b2421d8469e004acc49d3b500899d300e628da05676ee5da9e"
     },
     {
       "path": "src/services/timezoneService.js",
-      "status": "unchanged",
       "sha256": "7bc6e7404ff5aec6fa3f1dafd67f29f3573ea24c957105347392d2cf0412db3a"
     },
     {
       "path": "src/services/trashTalkBank.js",
-      "status": "unchanged",
       "sha256": "423431272b47303d3a7188af7975b44e18a0cd7ecf8f37b49a611daee922cfda"
     },
     {
       "path": "src/services/validationGateService.js",
-      "status": "unchanged",
       "sha256": "92ea8fede6b28138ef7d65cb7c4f8422ebfeedc5385c5f3ab32b6621f099dd7d"
     },
     {
       "path": "src/services/validationPipelineService.js",
-      "status": "unchanged",
       "sha256": "079b94fc43a68f06873d21b2e1e9b137bc1decb6792adeb51039d58c2ae164d2"
     },
     {
       "path": "src/services/waitlistService.js",
-      "status": "unchanged",
       "sha256": "c367dd9abeed3e996e7fb98c114b349003cad0c8d973a7b700ae500c1545f886"
     },
     {
       "path": "src/services/weeklyAutomationService.js",
-      "status": "unchanged",
       "sha256": "bba580beb1682817bfb1ab7f19d944a4e888aef1047a2baa30a056055734be2c"
     },
     {
       "path": "src/services/wizardPreferencesService.js",
-      "status": "unchanged",
       "sha256": "b240d5e9911fedd735e357973e4092be3678ca12b4900efda561405b85962ea7"
     },
     {
       "path": "src/services/wizardRendererService.js",
-      "status": "unchanged",
       "sha256": "4f113f496691aaf7858b566659365635d778d56284728e0ab42bb73cf0dd71c1"
     },
     {
       "path": "src/services/wizardStateService.js",
-      "status": "unchanged",
       "sha256": "ff58e3c531a7819f886a32168d9e35d99c5686238c83e7efc3ecede1ab5e6f12"
     },
     {
       "path": "src/services/workflowEngineService.js",
-      "status": "unchanged",
       "sha256": "7e4b1e53cb79f49d94812d9c5e787e17c0bf8e325bd4856102a2bb1da0a398be"
     },
     {
       "path": "src/services/workflowRegistryService.js",
-      "status": "unchanged",
       "sha256": "42af0f397fd52aebc3ade7ba9daa0f774834617b8e664a7082e9bc21a4e7c66b"
     },
     {
       "path": "src/state.js",
-      "status": "modified",
       "sha256": "bc9dc452805755b31362957183d8c6e0ea837f51d1069f79f7e62216f71a8ad1"
     },
     {
       "path": "src/storage/criticalStore.js",
-      "status": "added",
-      "sha256": "ee8250ff9099e971aae370f1d38b874eaf3cc525b68b21d1153cee754f83b73a"
+      "sha256": "eb5e2c8bb8e8be3462cd3a92e8174531197cd2616c970dd5ad2e0446c9db1c2b"
     },
     {
       "path": "src/storage/jsonStore.js",
-      "status": "modified",
-      "sha256": "ec3713c2f05bc564384813e8a72b989d79c7b0f6883dc3772eee40a466c325e1"
+      "sha256": "9f3b18c4b75c0dcdb81ad84ddd66083e952e5f5bd79f3ada9e761bcf13e97d47"
     },
     {
       "path": "src/storage/prisma.js",
-      "status": "unchanged",
       "sha256": "a30452a03e44305b0bcdf8f91796f693abdae92866067680cf1190c0736be6e7"
     },
     {
       "path": "src/utils/csv.js",
-      "status": "unchanged",
       "sha256": "b3808e3cfa9936fccce2d1f02276f6c190b25fe6aed3674947afcb2461bbaba0"
     },
     {
       "path": "src/utils/helpers.js",
-      "status": "unchanged",
       "sha256": "cc476031990e4edec7518d58d3f004961a359fa96e6fad9892b73d63ad3aff0d"
     },
     {
       "path": "src/utils/httpIntake.js",
-      "status": "unchanged",
       "sha256": "206f397da4dbba5a8dfb57d2f21968c9c584134ab53956f2536960523bef1291"
     },
     {
       "path": "src/utils/logger.js",
-      "status": "unchanged",
       "sha256": "d3399a64ecc4df4e50d7d7574c807b395751abe0bd2843651640aedf76b7afed"
     },
     {
       "path": "src/utils/safeUrl.js",
-      "status": "unchanged",
       "sha256": "c878d0c5ed34121f69f8a1a6baf12389149631a01c67c6ebafe6b08bdfc7e6a1"
     },
     {
       "path": "src/utils/teamUtils.js",
-      "status": "unchanged",
       "sha256": "db6b654da7bcc560e53c16a9dea1030c8a55b5056c4dbf2bf184e012fa1e056b"
     },
     {
       "path": "tests/_harness.js",
-      "status": "unchanged",
       "sha256": "7814370c68b7b99a541dc227efad87bc5944bc6ca33bf53cb5a87dfdac58583b"
     },
     {
       "path": "tests/advanceEngine.test.js",
-      "status": "unchanged",
       "sha256": "48bd842cc4360b65884a38657e36e70f8b8162ea0d20a0c8c0d6bbcfbb6fdfb6"
     },
     {
       "path": "tests/aiActions.test.js",
-      "status": "unchanged",
       "sha256": "ba824cae2ca279e418dcccdadf2e07e851eb8c637adcc7cb5777a15cbdc9ed5e"
     },
     {
       "path": "tests/auditV204.test.js",
-      "status": "added",
       "sha256": "a485cee8c2c78dbebc38dd81bb5dc7873e3918e31b5f3a8d4e17ecac2a11c5dc"
     },
     {
       "path": "tests/commandRegistry.test.js",
-      "status": "unchanged",
       "sha256": "326ef7e72ba56bac7efeca28c58cb63b017877f3442808ae9aa75dcbe2554e1e"
     },
     {
       "path": "tests/gameChannels.test.js",
-      "status": "unchanged",
       "sha256": "5a8ea69c47670f3fbee4fb16296f8d05cd6587017f580d3cdb8723b7cbe2ef45"
     },
     {
       "path": "tests/leagueBuild.test.js",
-      "status": "unchanged",
       "sha256": "1bb2d4708113a1d0e2ffa768f9b42556f566f5da3be1f4b11f7282c3ec06d4e4"
     },
     {
       "path": "tests/leagueNaming.test.js",
-      "status": "unchanged",
       "sha256": "4043ff53120e8b0e85fc9fbe8cd80e90dad40eef46f9338f3e050e5c3d0d030e"
     },
     {
       "path": "tests/platform.test.js",
-      "status": "modified",
       "sha256": "605f2525b0e30a8d1ff7c60c85faa675ebcb82f493d9648b57980adad1a8196e"
     },
     {
       "path": "tests/postgres.integration.js",
-      "status": "added",
-      "sha256": "bbfab6bc0e1743f2b915268f659441538154ff03531097fbfa5b0277b2106e94"
+      "sha256": "0f5201e15dfaf61d023ec842bbe159ea23241b1385ee365eab904f7628c52ef1"
     },
     {
       "path": "tests/providersIngestion.test.js",
-      "status": "unchanged",
       "sha256": "ea8fb15c525ba62864573cc80465b7e6482bccd6449525e77c9aa3f0d25041b2"
     },
     {
       "path": "tests/results.test.js",
-      "status": "unchanged",
       "sha256": "e7d445996c3917634eb4df49a572b41b15c53a5d9a7fdb89d399fca0a3e581f9"
     },
     {
       "path": "tests/run-all.js",
-      "status": "unchanged",
       "sha256": "b592f9fcf7533cefa584356a7666815b4891e43406dcaca6f78b6e7e053bf1f3"
     },
     {
       "path": "tests/runtimeValidation.test.js",
-      "status": "unchanged",
       "sha256": "533882e97447b2ac6d57168dbac76e923e92860c132cd02ed2e26adc041322df"
     },
     {
+      "path": "tests/storageDataDir.test.js",
+      "sha256": "9347bbfc36286d3f62434ae93366f1843e97f36bfa7a9b5412b6493e544ac825"
+    },
+    {
       "path": "tests/utils.test.js",
-      "status": "unchanged",
       "sha256": "5e327f6da98313732b45a982431772fe49c1bb98bb24173ae06b800a0499b052"
     },
     {
       "path": "tsconfig.json",
-      "status": "unchanged",
       "sha256": "e6f85e88fb6f9e52cb2cc322ada67e3da929e77b3ed499e32e8e3bb57b392c3e"
     }
   ],
-  "omitted_original_files": [],
-  "note": "Manifest excludes its own checksum. No live state or dependencies bundled."
+  "note": "Full RC1 source, RC2 database correction and RC3 configured-storage guard. Includes the data ownership document; excludes tracked sample JSON, live state, installed dependencies and its own manifest checksum. RC3 has not been remotely pushed or deployed."
 }

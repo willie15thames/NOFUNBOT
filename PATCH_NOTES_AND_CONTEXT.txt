@@ -1,3 +1,9 @@
+RC3 storage guard: an explicitly configured BOT_DATA_DIR now fails startup if inaccessible instead of falling back to another path. Test before merging the existing RC2 branch.
+
+[2026-09-27 UTC] V204 database alignment hotfix for package 21.10.0-rc.2
+Fix: align raw SQL and readiness with Prisma bot_kv/queue_audit; migration-only bootstrap; preserve legacy records and block conflicting values.
+Affected paths, risks and recovery: docs/V204_DATABASE_HOTFIX.md. No live database or Discord resources changed. Verification appended after checks.
+
 [2026-09-27 UTC] V204 audit update — package 21.10.0-rc.1
 Affected files and implementation details: docs/V204_RELEASE_NOTES.md and docs/V204_DEPENDENCY_MAP.md.
 Fixes: private space lifecycle, scoped team state, durable lifetime history, circular import, CI dependency lock and schema gate.

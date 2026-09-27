@@ -25,7 +25,7 @@ function localWrite(key, value) {
 }
 async function read(key, fallback = {}) {
   if (!process.env.DATABASE_URL) return localRead(key, fallback);
-  const res = await db().query('SELECT value FROM "BotKv" WHERE key=$1', [key]);
+  const res = await db().query('SELECT value FROM "bot_kv" WHERE key=$1', [key]);
   return res.rows.length ? res.rows[0].value : clone(fallback);
 }
 async function transact(key, fallback, mutate) {
@@ -45,10 +45,10 @@ async function transact(key, fallback, mutate) {
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
-    const rows = await client.query('SELECT value FROM "BotKv" WHERE key=$1 FOR UPDATE', [key]);
+    const rows = await client.query('SELECT value FROM "bot_kv" WHERE key=$1 FOR UPDATE', [key]);
     const value = rows.rows.length ? rows.rows[0].value : clone(fallback);
     const result = await mutate(value);
-    await client.query('INSERT INTO "BotKv" (key,value,source,"updatedAt") VALUES ($1,$2::jsonb,$3,NOW()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,source=EXCLUDED.source,"updatedAt"=NOW()', [key, JSON.stringify(value), 'v204-critical']);
+    await client.query('INSERT INTO "bot_kv" (key,value,source,"updatedAt") VALUES ($1,$2::jsonb,$3,NOW()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,source=EXCLUDED.source,"updatedAt"=NOW()', [key, JSON.stringify(value), 'v204-critical']);
     await client.query('COMMIT');
     return result;
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); throw err; }
