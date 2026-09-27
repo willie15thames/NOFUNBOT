@@ -252,10 +252,9 @@ function wireEvents() {
   client.on('guildCreate', async guild => {
     try {
       if (String(guild.id) !== String(GUILD_ID)) return;
-      const wizardPrefs = require('./src/services/wizardPreferencesService');
+      const wizardState = require('./src/services/wizardStateService');
       const router = require('./src/routing/interactionRouter');
-      const prefs = wizardPrefs.getPrefs();
-      if (prefs.installationMode) {
+      if (wizardState.isInstallationMode()) {
         await deployCommandsForCurrentState(state).catch(() => null);
         await require('./src/services/patchNotesService').publishPatchNotes(guild).catch(() => null);
         const ch = await router.ensureSetupWizardChannel(guild, { reveal: true }).catch(() => null);

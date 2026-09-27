@@ -29,12 +29,12 @@ const STAGE_REGISTRY = {
   },
   mode: {
     label: '🏗️ Structure + Template',
-    description: 'Pick **Structure mode** (BASE, CUSTOM, or EMPTY), **Server template**, and a **Subtemplate** if offered. Structure controls what channels are built. Template controls the logic, channels, and AI behavior.',
+    description: 'Choose one **Structure strategy** and one **Server template**. BASE builds the core stack plus template; CUSTOM builds the core stack plus only your selected packs; EMPTY skips the standard community stack and builds the template plus staff controls. Choose a Subtemplate when offered.',
     nextLabel: '▶ Audience & AI Tone',
   },
   custom_structure: {
     label: '🧩 Custom Structure',
-    description: 'Mix and match spaces from any group below. Pick from **Gaming**, **Sports**, **Community**, and **Media** options in any combination — selections from each group stay separate until you advance.',
+    description: 'Choose the exact packs you want from **Gaming**, **Sports**, **Community**, and **Media**. The bot will arrange each selected pack into its defined category and preserve your selections until you change them.',
     nextLabel: '▶ Audience & AI Tone',
   },
   tone: {

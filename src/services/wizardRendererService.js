@@ -136,14 +136,6 @@ function _buildSubtemplateRow(settings) {
   return new ActionRowBuilder().addComponents(menu);
 }
 
-function _buildSetupModeRow(prefs) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('bot_setup_custom')
-      .setLabel(prefs.selectedSetupMode === 'custom' ? 'Custom Bot Setup Selected' : 'Use Custom Options')
-      .setStyle(prefs.selectedSetupMode === 'custom' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-  );
-}
-
 function _buildAudienceRow(settings) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -353,6 +345,7 @@ function _buildMainEmbed(guild, note, settings, prefs) {
     .setDescription(buildSummaryText(settings, prefs, note))
     .addFields(
       { name: fieldLabel, value: fieldValue },
+      ...(stage === 'mode' ? [{ name: 'Structure strategy', value: '**BASE**: core lanes + template.\n**CUSTOM**: core lanes + selected custom packs.\n**EMPTY**: template + staff controls only; no standard community stack.' }] : []),
       { name: 'Template summary', value: profile?.summary || 'Choose a server template to unlock the right categories, channels, rules, and guide flow.' },
       { name: 'Theme preview', value: themePreviewText, inline: false },
     )
@@ -369,11 +362,11 @@ function buildFlowGuidePayload() {
       .setTitle('🧭 Setup Flow Guide')
       .setDescription(
         'Confirm this guide to open the main setup wizard. The setup will stay in one edited bot message instead of stacking a pile of prompts.\n\n' +
-        '**1. Choose setup mode**\nPick Standard or Custom.\n\n' +
-        '**2. Choose structure + template**\nStructure decides how the server is built. Template decides what kind of server logic, channels, and rules the bot should use.\n\n' +
-        '**3. Choose audience level**\nAudience level is mandatory before tone and unlocks more character/tone options.\n\n' +
-        '**4. Tune member AI and commissioner AI**\nChoose whether both lanes share the same tone or have separate tone builds.\n\n' +
-        '**5. Configure identity + rules + finalize**\nReview the full breakdown, then build the server.'
+        '**1. Choose structure strategy**\n**Base** = core server lanes + template. **Custom** = core lanes + only the custom packs you select. **Empty** = no standard community stack; build only the selected template plus staff controls.\n\n' +
+        '**2. Choose template + subtemplate**\nTemplate controls server purpose, channel pack, rules context, theme, and AI context. Subtemplate narrows that behavior when one is available.\n\n' +
+        '**3. Custom picks, only when Custom is selected**\nMix Gaming, Sports, Community, and Media packs. The bot arranges the selected packs into their own categories.\n\n' +
+        '**4. Audience + AI tone**\nAudience level is required before tone. Member and commissioner AI can share a tone profile or use separate profiles.\n\n' +
+        '**5. Final review**\nReview identity, rules, GIFs, timezone gate, structure, and template before build/apply.'
       )
       .setFooter({ text: 'Click Start Setup to move into the main setup message.' })
       .setTimestamp()],
@@ -411,7 +404,6 @@ function buildWizardPayload(guild, note = '', opts = {}) {
 
     if (stage === 'mode') {
       rows.push(
-        _buildSetupModeRow(prefs),
         _buildStructureModeRow(settings),
         _buildTemplateRow(settings),
         _buildSubtemplateRow(settings),

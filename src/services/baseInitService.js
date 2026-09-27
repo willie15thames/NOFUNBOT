@@ -606,6 +606,15 @@ async function createTemplateStructure(guild, state, templateKey = 'gaming', opt
     ]);
   }
 
+  // Record exact bot-owned template assets after a successful initial build.
+  // Edit-mode reconciliation can only safely delete obsolete channels when provenance exists.
+  const templateReconciliation = require('./templateReconciliationService');
+  const desiredTemplateSpecs = isCustomMix
+    ? require('./customMixService').buildChannelSpecs(customSelections).map(x => ({ name: x.categoryName, channels: x.channels || [] }))
+    : (template.categories || [])
+      .map(x => ({ name: String(x.name || '').replace('{server}', serverName), channels: x.channels || [] }))
+      .filter(x => !/welcome to|discipline|staff & commissioner/i.test(x.name));
+
   // V198 FIX: Run final build steps in parallel — they operate on independent targets.
   // normalizeBaseChannelPolicies: edits channel permissions (already parallel internally)
   // reorderBaseCategoryStack: moves category positions
@@ -622,6 +631,7 @@ async function createTemplateStructure(guild, state, templateKey = 'gaming', opt
   if (finalFailure) throw finalFailure.reason;
   // Dedup sweep runs last — needs to see the final state of all channels
   await _silentDedupSweep(guild);
+  templateReconciliation.recordDesired(guild, desiredTemplateSpecs);
   const { buildSelectionSummary } = require('./customMixService');
   const mixSummary = isCustomMix ? buildSelectionSummary(customSelections) : null;
   return {
