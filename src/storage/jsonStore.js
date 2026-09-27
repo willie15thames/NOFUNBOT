@@ -111,7 +111,7 @@ async function ensureDb() {
     ssl: getPgSslConfig(),
   });
   // MED-01 FIX: DDL removed from runtime — Prisma migration owns the BotKv schema.
-  // The table is created by prisma/migrations/0001_init/migration.sql.
+  // The full migration chain renames the initial table to bot_kv (Prisma @@map).
   dbEnabled = true;
   return dbPool;
 }
@@ -128,7 +128,7 @@ async function initStore() {
   if (!process.env.DATABASE_URL) return;
   try {
     const pool = await ensureDb();
-    const res = await pool.query('SELECT "key", "value" FROM "BotKv"');
+    const res = await pool.query('SELECT "key", "value" FROM "bot_kv"');
     for (const row of res.rows) {
       cache.set(row.key, row.value);
       mirrorToDisk(row.key, row.value);
@@ -145,7 +145,7 @@ async function writeThroughToDb(filename, data, source = 'runtime') {
   try {
     const pool = await ensureDb();
     await pool.query(
-      `INSERT INTO "BotKv" ("key","value","source","checksum","updatedAt")
+      `INSERT INTO "bot_kv" ("key","value","source","checksum","updatedAt")
        VALUES ($1,$2::jsonb,$3,$4,NOW())
        ON CONFLICT ("key") DO UPDATE SET "value"=EXCLUDED."value", "source"=EXCLUDED."source", "checksum"=EXCLUDED."checksum", "updatedAt"=NOW()`,
       [filename, JSON.stringify(data), source, checksum(data)]

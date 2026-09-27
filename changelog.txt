@@ -1,3 +1,6 @@
+V204 database hotfix — package 21.10.0-rc.2
+Canonical bot_kv/queue_audit queries, safe legacy reconciliation and full-schema bootstrap. See docs/V204_DATABASE_HOTFIX.md.
+
 Package 21.10.0-rc.1 — V204 audit update
 Private leagues/events, lifetime career records, guarded cleanup and reproducible installs. See docs/V204_RELEASE_NOTES.md.
 

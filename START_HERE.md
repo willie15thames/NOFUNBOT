@@ -1,8 +1,10 @@
 # NOFUNBOT audit update release candidate
 
-Package version: 21.10.0-rc.1. Archive label: v204 audit update RC1.
+Package version: 21.10.0-rc.2. Archive label: v204.1 database hotfix.
 
-The updated 29-page Word report is `docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx`. It contains the original baseline findings plus the implemented changes, lifetime history behavior and outstanding stability work. Older audit documents remain as historical references.
+Read `docs/V204_DATABASE_HOTFIX.md` first. RC1 referenced mixed-case PostgreSQL tables after migrations renamed them. RC2 aligns those paths and preserves legacy records through an additive migration.
+
+The updated 30-page Word report is `docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx`. It contains the original baseline findings plus the implemented changes, lifetime history behavior and outstanding stability work. Older audit documents remain as historical references.
 
 Read `docs/V204_RELEASE_NOTES.md` for implemented capabilities, deployment steps, remaining work, staging acceptance and recovery boundaries. Read `docs/VERIFICATION.md` for exact checks and limitations. `docs/V204_FILE_MANIFEST.json` records the source-file changes against the supplied v203.2 ZIP.
 

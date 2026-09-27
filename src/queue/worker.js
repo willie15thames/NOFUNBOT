@@ -43,7 +43,7 @@ async function startWorker(redisUrl, databaseUrl) {
   async function audit(status, jobName, payload, result, error) {
     try {
       await pool.query(
-        'INSERT INTO "QueueAudit" ("queueName","jobName","status","payload","result","error") VALUES ($1,$2,$3,$4,$5,$6)',
+        'INSERT INTO "queue_audit" ("queueName","jobName","status","payload","result","error") VALUES ($1,$2,$3,$4,$5,$6)',
         ['storage-sync', jobName, status, payload || null, result || null, error || null]
       );
     } catch (err) {
@@ -58,7 +58,7 @@ async function startWorker(redisUrl, databaseUrl) {
     if (!filename) throw new Error('storage-sync job missing filename');
     const sum = checksum(data);
     await pool.query(
-      `INSERT INTO "BotKv" ("key","value","source","checksum","updatedAt")
+      `INSERT INTO "bot_kv" ("key","value","source","checksum","updatedAt")
        VALUES ($1,$2::jsonb,$3,$4,NOW())
        ON CONFLICT ("key") DO UPDATE SET "value"=EXCLUDED."value", "source"=EXCLUDED."source", "checksum"=EXCLUDED."checksum", "updatedAt"=NOW()`,
       [filename, JSON.stringify(data), 'bullmq', sum]

@@ -1,3 +1,7 @@
+# RC2 correction
+
+Package 21.10.0-rc.2 supersedes RC1 database paths. Read V204_DATABASE_HOTFIX.md before deployment: canonical tables are bot_kv and queue_audit, and the updated audit is 30 pages. The notes below preserve the original RC1 implementation record.
+
 # V204 audit update release candidate
 
 Package 21.10.0-rc.1. Based on the exact v203.2 ZIP supplied with the 26-page audit.

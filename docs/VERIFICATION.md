@@ -1,3 +1,7 @@
+# RC2 database hotfix verification
+
+Package 21.10.0-rc.2 corrects mixed-case SQL references left in RC1. See V204_DATABASE_HOTFIX.md. All 86 local checks, changed-file syntax and TypeScript configuration checks passed. All six migrations and preservation/conflict/rollback SQL checks passed in the PGlite embedded PostgreSQL engine. The networked PostgreSQL integration test, GitHub CI and live Railway/Discord checks were not run; GitHub write permission was denied. The record below is the earlier RC1 baseline.
+
 # Verification record
 
 Package: 21.10.0-rc.1. Checked 27 September 2026. Local runtime: Node 24.19.0 and npm 11.9.0. Docker, .nvmrc and CI target Node 22; that runtime and the Docker image were not executed locally.
