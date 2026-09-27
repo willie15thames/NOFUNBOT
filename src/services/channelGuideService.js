@@ -393,7 +393,7 @@ const CHANNEL_COMMANDS = {
   'off-topic':            { commands: ['Post freely — anything that doesn\'t fit elsewhere'] },
 
   // ── Discipline ──────────────────────────────────────────────
-  'active-check':         { commands: ['`/active-check-status` — View miss counts (Comm)'], actions: ['Reply in channel when tagged to confirm you are active', '5 consecutive misses = automatic removal from the server'] },
+  'active-check':         { commands: ['`/active-check-status` — View miss counts (Comm)'], actions: ['Reply in channel when tagged to confirm you are active', '5 consecutive misses = removal from this league only'] },
   'warnings-log':         { commands: ['`/warn-player` — Issue a warning (Comm)', '`/member-record history` — View member history (Comm)'], actions: ['Read-only — warnings posted automatically'] },
   'boot-log':             { commands: ['`/ban add` — Ban a member (Comm)', '`/ban remove` — Unban (Comm)', '`/ban list` — View ban list (Comm)'], actions: ['Read-only — kicks, bans, and departures logged automatically'] },
 

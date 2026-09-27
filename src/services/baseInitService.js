@@ -20,7 +20,7 @@ const { resolveTemplateProfile, getServerTemplatesMap } = require('./templateReg
 const SERVER_TEMPLATES = getServerTemplatesMap();
 const patchNotesService = require('./patchNotesService');
 const { getStaffRoles: getConfiguredStaffRoles } = require('./accessPolicyService');
-const { getReadOnlyBaseChannelNames, isStaffRepairChannel, getConfiguredChannelName, findConfiguredChannel } = require('./channelTopologyService');
+const { getReadOnlyBaseChannelNames, isStaffRepairChannel, findConfiguredChannel } = require('./channelTopologyService');
 
 
 function isDeletableGuildChannel(ch, opts = {}) {
@@ -255,32 +255,15 @@ async function findOrCreateCategory(guild, name, permissionOverwrites) {
 
 async function findOrCreateText(guild, category, name, topic = '', opts = {}) {
   const lowerName = String(name || '').toLowerCase();
-  const regKey = _normalizeKey(guild.id, name);
+  // Names repeat across categories. The parent ID is part of channel identity.
+  const regKey = `${guild.id}:${category.id}:${lowerName}`;
 
   // V196: Check text registry first
   const cached = _buildTextRegistry.get(regKey);
-  if (cached) {
-    // Move to correct parent if misplaced
-    if (cached.parentId !== category.id) {
-      await cached.setParent(category.id, { lockPermissions: false, reason: 'V196: text registry parent correction' }).catch(() => null);
-    }
-    return cached;
-  }
+  if (cached) return cached;
 
-  // V187 FIX: Search by name GLOBALLY first (not just under this category).
   const exactParent = guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === lowerName && c.parentId === category.id);
   if (exactParent) { _buildTextRegistry.set(regKey, exactParent); return exactParent; }
-
-  // V202 (BUG-009): never adopt (move) a same-named channel out of a scoped category — weekly game channels,
-  // team spaces and league-built categories own their channels. Other adoption behavior is unchanged (V187).
-  const anyParent = guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === lowerName && !_isProtectedScopeCategory(guild, c.parent));
-  if (anyParent) {
-    if (anyParent.parentId !== category.id) {
-      await anyParent.setParent(category.id, { lockPermissions: false, reason: 'V187: channel existed under wrong parent' }).catch(() => null);
-    }
-    _buildTextRegistry.set(regKey, anyParent);
-    return anyParent;
-  }
 
   const created = await createText(guild, category, name, topic, opts);
 
@@ -411,28 +394,28 @@ async function postBaseGuideMessages(guild) {
   const rules = findConfiguredChannel(guild, 'rules', { textOnly: true });
   const settings_pbgm = serverSettings.getSettings();
   const guideChName = templateLogic.getGuideChannelName(settings_pbgm);
-  const guide = guild.channels.cache.find(c => c.isTextBased?.() && (String(c.name || '').toLowerCase() === String(guideChName || '').toLowerCase() || String(c.name || '').toLowerCase() === 'server-guide' || String(c.name || '').toLowerCase() === 'server-guide'));
+  const guide = findConfiguredChannel(guild, 'serverGuide', { textOnly: true })
+    || guild.channels.cache.find(c => c.isTextBased?.() && c.name === guideChName && /^👋 Welcome to/i.test(String(c.parent?.name || '')));
   const join = findConfiguredChannel(guild, 'howToJoin', { textOnly: true });
   const polls = findConfiguredChannel(guild, 'polls', { textOnly: true });
 
   async function replaceBotPosts(ch, embed) {
     if (!ch) return;
-    const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);
+    const recent = await ch.messages.fetch({ limit: 20 });
+    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
     for (const m of (recent ? [...recent.values()] : [])) {
       if (m.author?.id !== guild.members.me?.id) continue;
       const title = String(m.embeds?.[0]?.title || '');
       if (title && (title === embed.title || /Server Rules|Base Server Guide|League Guide|Server Guide|How to Join|Welcome to|Polls & Voting/i.test(title))) await m.delete().catch(() => null);
     }
-    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
   }
 
   const settings = serverSettings.getSettings();
-  const openTeamsName = getConfiguredChannelName('openTeams') || 'open-teams';
-  const hasLeague = !!(guild.channels.cache.find(c => c.isTextBased?.() && /^..\.open-teams$/i.test(c.name || '')) || guild.channels.cache.find(c => c.isTextBased?.() && String(c.name || '').toLowerCase() === openTeamsName));
+  const hasLeague = require('./activeLeagueService').listActiveLeagues().length > 0;
   const guideTitle = '🧭 Server Guide';
   // V199 FIX: Append commands/actions block to every core channel guide
   const _cmdBlock = channelGuideService.getCommandsBlock;
-  await Promise.allSettled([
+  await Promise.all([
     replaceBotPosts(welcome, { color: 0x2ecc71, title: '👋 Welcome to the Server', description: `${templateLogic.buildWelcomeText(guild.name, settings)}\n\nThis channel is read-only on purpose so the important info stays visible.${_cmdBlock('welcome')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(rules, { color: 0x4da3ff, title: '📖 Server Rules', description: `${buildServerRulesText()}${_cmdBlock('rules')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(guide, { color: 0x5865f2, title: guideTitle, description: `${templateLogic.buildBaseGuideText(settings)}\n\n• Staff-only tools stay hidden from members.\n• Trash talk is allowed. Slurs and hateful nonsense are not.${_cmdBlock('server-guide')}`, timestamp: new Date().toISOString() }),
@@ -448,6 +431,8 @@ async function postBaseGuideMessages(guild) {
 
   for (const ch of guild.channels.cache.values()) {
     if (!ch.isTextBased?.()) continue;
+    // League guides are posted by the selected league's lifecycle.
+    if (require('./activeLeagueService').findLeagueForChannel(ch)) continue;
     const rawName = String(ch.name || '').toLowerCase();
     const cleanName = rawName.replace(/^[^\w-]+/, '').trim();
     if (coreNames.has(cleanName)) continue;
@@ -471,11 +456,13 @@ async function normalizeBaseChannelPolicies(guild) {
   const tasks = [];
   for (const ch of guild.channels.cache.values()) {
     if (!ch.isTextBased?.()) continue;
+    // Plain league channel names must retain their private league overwrites.
+    if (require('./activeLeagueService').findLeagueForChannel(ch) || _isProtectedScopeCategory(guild, ch.parent)) continue;
     const name = String(ch.name || '').toLowerCase();
     const parentName = String(ch.parent?.name || '').toLowerCase();
     const isStaff = isStaffRepairChannel(ch) || isStaffRepairChannel(parentName) || /staff & commissioner/i.test(parentName);
     if (isStaff) {
-      tasks.push(ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }).catch(() => null));
+      tasks.push(ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }));
       continue;
     }
     if (readOnly.has(name)) {
@@ -504,11 +491,13 @@ async function normalizeBaseChannelPolicies(guild) {
           SendMessagesInThreads: ow.deny?.includes?.(PermissionFlagsBits.SendMessagesInThreads) ? false : undefined,
           ManageMessages: ow.allow?.includes?.(PermissionFlagsBits.ManageMessages) ? true : undefined,
           ManageChannels: ow.allow?.includes?.(PermissionFlagsBits.ManageChannels) ? true : undefined,
-        }).catch(() => null));
+        }));
       }
     }
   }
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 
@@ -534,113 +523,70 @@ function serverRulesChannelTopic(settings) {
 }
 
 async function createTemplateStructure(guild, state, templateKey = 'gaming', options = {}) {
-  // V194: Reset per-build category registry so this run gets a clean slate
   _clearBuildRegistry(guild.id);
-  // Blueprint: one local settings snapshot — never alias as liveSettings
-  const snap = { ...serverSettings.getSettings(), ...(options.settings || {}), serverTemplate: String(templateKey || options?.settings?.serverTemplate || serverSettings.getSettings().serverTemplate || 'gaming').toLowerCase() };
-  const template = resolveTemplateProfile(snap);
+  const snap = { ...serverSettings.getSettings(), ...(options.settings || {}) };
   const serverName = guild.name || 'Server';
-  const mode = String(options.structureMode || snap.customStructureMode || 'base').toLowerCase() === 'empty' ? 'empty' : 'base';
+  const modeRaw = String(options.structureMode || snap.customStructureMode || 'base').toLowerCase();
+  const mode = ['base','template','custom'].includes(modeRaw) ? modeRaw : 'base';
   let flushSummary = { deletedChannels: 0, deletedCategories: 0 };
 
-  // Custom mix-and-match build path
-  const customSelections = Array.isArray(options.customSelections) ? options.customSelections : [];
-  const isCustomMix = customSelections.length > 0 && customSelections.some(s => /^(gaming|sports|community|media):/.test(s));
+  // Every supported structure starts from the same stable bot/server core. BASE stops there.
+  const base = await initializeBaseStructure(guild, state, { flush: true, ...options, settings: snap });
+  flushSummary = base.flushSummary || flushSummary;
+  await guild.channels.fetch().catch(() => null);
 
-  if (isCustomMix) {
-    // Build from mix-and-match selections — always start with base structure
-    const base = await initializeBaseStructure(guild, state, { flush: true, ...options });
-    flushSummary = base.flushSummary || flushSummary;
-    // V201 FIX: Refresh cache after base creates channels
-    await guild.channels.fetch().catch(() => null);
-    const { buildChannelSpecs } = require('./customMixService');
-    const specs = buildChannelSpecs(customSelections);
-    // V198 FIX: Phase 1 — create all custom categories in parallel
+  let desiredTemplateSpecs = [];
+  let templateLabel = 'Base Structure';
+  let templateSummary = 'Core bot/server lanes only. No template or subtemplate is applied.';
+
+  if (mode === 'template') {
+    if (!snap.serverTemplate) throw new Error('Template Structure requires a server template');
+    const profile = resolveTemplateProfile({ ...snap, serverTemplate: String(templateKey || snap.serverTemplate).toLowerCase() });
+    const specs = (profile.categories || [])
+      .map(c => ({ name: String(c.name || '').replace('{server}', serverName), channels: c.channels || [] }))
+      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.name));
     const catMap = new Map();
-    await Promise.all(specs.map(async spec => {
-      const cat = await findOrCreateCategory(guild, spec.categoryName);
-      catMap.set(spec.categoryName, cat);
-    }));
-    // Phase 2 — create all channels in parallel
-    await Promise.all(specs.flatMap(spec => {
-      const cat = catMap.get(spec.categoryName);
-      return (spec.channels || []).map(([chName, readOnly]) =>
-        findOrCreateText(guild, cat, chName, `Custom space: ${spec.categoryName}`, { readOnly: !!readOnly })
-      );
-    }));
-  } else if (mode === 'base') {
-    const base = await initializeBaseStructure(guild, state, { flush: true, ...options });
-    flushSummary = base.flushSummary || flushSummary;
-    // V201 FIX: Refresh cache after base creates 18 channels — ensures template findOrCreate sees them
-    await guild.channels.fetch().catch(() => null);
-    // V198 FIX: Phase 1 — create all template categories in parallel (skip base ones)
-    const templateCats = (template.categories || [])
-      .map(catSpec => ({ ...catSpec, resolvedName: String(catSpec.name || '').replace('{server}', serverName) }))
-      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.resolvedName));
-    const catMap2 = new Map();
-    await Promise.all(templateCats.map(async c => {
-      const cat = await findOrCreateCategory(guild, c.resolvedName);
-      catMap2.set(c.resolvedName, cat);
-    }));
-    // Phase 2 — create all template channels in parallel
-    await Promise.all(templateCats.flatMap(c => {
-      const cat = catMap2.get(c.resolvedName);
-      return (c.channels || []).map(([chName, readOnly]) =>
-        findOrCreateText(guild, cat, chName, `${template.name} channel for ${serverName}`, { readOnly: !!readOnly })
-      );
-    }));
-  } else {
-    flushSummary = await flushServerChannels(guild);
-    resetBotState(state);
-    await guild.channels.fetch().catch(() => null);
-    // V198 FIX: Phase 1 — create all categories in parallel
-    const emptyCats = (template.categories || [])
-      .map(catSpec => ({ ...catSpec, resolvedName: String(catSpec.name || '').replace('{server}', serverName) }));
-    const catMap3 = new Map();
-    await Promise.all(emptyCats.map(async c => {
-      const cat = await findOrCreateCategory(guild, c.resolvedName);
-      catMap3.set(c.resolvedName, cat);
-    }));
-    // Phase 2 — create all channels in parallel
-    await Promise.all(emptyCats.flatMap(c => {
-      const cat = catMap3.get(c.resolvedName);
-      return (c.channels || []).map(([chName, readOnly]) =>
-        findOrCreateText(guild, cat, chName, `${template.name} channel for ${serverName}`, { readOnly: !!readOnly })
-      );
-    }));
-    const staffCat = await findOrCreateCategory(guild, '🧠 Staff & Commissioner', staffRoleOverwrites(guild));
-    await Promise.all([
-      findOrCreateText(guild, staffCat, 'commissioner-ai', 'AI commissioner tools and staff requests.', { staffOnly: true }),
-      findOrCreateText(guild, staffCat, 'admin-hq', 'Commissioner tools, bot controls, and server operations.', { staffOnly: true }),
-      findOrCreateText(guild, staffCat, 'commish-hub', 'Commissioner screenshots, notes, and workflow hub.', { staffOnly: true }),
-      findOrCreateText(guild, staffCat, 'scoresheets', 'Private data submissions and processing intake.', { staffOnly: true }),
-    ]);
+    await Promise.all(specs.map(async spec => { catMap.set(spec.name, await findOrCreateCategory(guild, spec.name)); }));
+    await Promise.all(specs.flatMap(spec => (spec.channels || []).map(([chName, readOnly]) =>
+      findOrCreateText(guild, catMap.get(spec.name), chName, `${profile.name} channel for ${serverName}`, { readOnly: !!readOnly }))));
+    desiredTemplateSpecs = specs;
+    templateLabel = profile.name;
+    templateSummary = getTemplateSummary(profile);
+  } else if (mode === 'custom') {
+    const templateSelections = Array.isArray(options.customTemplateSelections) ? options.customTemplateSelections : (snap.customTemplateSelections || []);
+    const subtemplateSelections = Array.isArray(options.customSubtemplateSelections) ? options.customSubtemplateSelections : (snap.customSubtemplateSelections || []);
+    let specs = require('./templateMixService').buildTemplateMixSpecs(templateSelections, subtemplateSelections)
+      .map(c => ({ name: String(c.name || '').replace('{server}', serverName), channels: c.channels || [] }))
+      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.name));
+    // Compatibility bridge for pre-v204.7 custom-pack settings. It is read-only fallback, not the new wizard model.
+    if (!specs.length && Array.isArray(options.customSelections) && options.customSelections.length) {
+      specs = require('./customMixService').buildChannelSpecs(options.customSelections).map(s => ({ name: s.categoryName, channels: s.channels || [] }));
+    }
+    if (!specs.length) throw new Error('Custom Structure requires at least one template selection');
+    const catMap = new Map();
+    await Promise.all(specs.map(async spec => { catMap.set(spec.name, await findOrCreateCategory(guild, spec.name)); }));
+    await Promise.all(specs.flatMap(spec => (spec.channels || []).map(([chName, readOnly]) =>
+      findOrCreateText(guild, catMap.get(spec.name), chName, `Custom template mix for ${serverName}`, { readOnly: !!readOnly }))));
+    desiredTemplateSpecs = specs;
+    templateLabel = 'Custom Structure';
+    templateSummary = require('./templateMixService').buildSelectionSummary(templateSelections, subtemplateSelections);
   }
 
-  // V198 FIX: Run final build steps in parallel — they operate on independent targets.
-  // normalizeBaseChannelPolicies: edits channel permissions (already parallel internally)
-  // reorderBaseCategoryStack: moves category positions
-  // postBaseGuideMessages: posts/replaces guide embeds in core channels (parallel internally)
-  // publishPatchNotes: creates/updates patch notes category + channel
-  // These 4 are independent. _silentDedupSweep runs AFTER all channels are finalized.
-  await Promise.allSettled([
+  const templateReconciliation = require('./templateReconciliationService');
+  const finalResults = await Promise.allSettled([
     normalizeBaseChannelPolicies(guild),
     reorderBaseCategoryStack(guild),
     postBaseGuideMessages(guild),
     patchNotesService.publishPatchNotes(guild).catch(() => null),
   ]);
-  // Dedup sweep runs last — needs to see the final state of all channels
+  const finalFailure = finalResults.find(result => result.status === 'rejected');
+  if (finalFailure) throw finalFailure.reason;
   await _silentDedupSweep(guild);
-  const { buildSelectionSummary } = require('./customMixService');
-  const mixSummary = isCustomMix ? buildSelectionSummary(customSelections) : null;
-  return {
-    serverName,
-    flushSummary,
-    template: isCustomMix ? 'Custom Mix' : template.name,
-    structureMode: isCustomMix ? 'custom-mix' : mode,
-    templateSummary: mixSummary || getTemplateSummary(template),
-    customSelections: isCustomMix ? customSelections : [],
-  };
+  templateReconciliation.recordDesired(guild, desiredTemplateSpecs);
+  return { serverName, flushSummary, template: templateLabel, structureMode: mode, templateSummary,
+    customSelections: mode === 'custom' ? (options.customSelections || []) : [],
+    customTemplateSelections: mode === 'custom' ? (options.customTemplateSelections || snap.customTemplateSelections || []) : [],
+    customSubtemplateSelections: mode === 'custom' ? (options.customSubtemplateSelections || snap.customSubtemplateSelections || []) : [] };
 }
 
 
@@ -652,7 +598,7 @@ async function initializeBaseStructure(guild, state, options = {}) {
   const snap = {
     ...serverSettings.getSettings(),
     ...(options.settings || {}),
-    serverTemplate: String(options?.settings?.serverTemplate || serverSettings.getSettings().serverTemplate || 'gaming').toLowerCase(),
+    serverTemplate: String(options?.settings?.serverTemplate ?? serverSettings.getSettings().serverTemplate ?? '').toLowerCase(),
   };
   const serverName = resolveServerName(guild, 'this server');
   const flushSummary = flush ? await flushServerChannels(guild, options) : { deletedChannels:0, deletedCategories:0 };
@@ -724,99 +670,59 @@ async function initializeBaseStructure(guild, state, options = {}) {
  * @param {Object} options - { settings, structureMode, customSelections, arrangementMode }
  */
 async function applyEditChanges(guild, state, templateKey = 'gaming', options = {}) {
-  // V194: Reset per-build category registry so this run gets a clean slate
   _clearBuildRegistry(guild.id);
-  const snap = {
-    ...serverSettings.getSettings(),
-    ...(options.settings || {}),
-    serverTemplate: String(templateKey || serverSettings.getSettings().serverTemplate || 'gaming').toLowerCase(),
-  };
-  const template = resolveTemplateProfile(snap);
+  const snap = { ...serverSettings.getSettings(), ...(options.settings || {}) };
   const serverName = guild.name || 'Server';
+  const modeRaw = String(options.structureMode || snap.customStructureMode || 'base').toLowerCase();
+  const mode = ['base','template','custom'].includes(modeRaw) ? modeRaw : 'base';
+  await guild.channels.fetch().catch(() => null);
+  const templateReconciliation = require('./templateReconciliationService');
+  const priorTemplate = templateReconciliation.capture(guild);
 
-  // Refresh cache to see current guild state accurately
+  // Edit mode is non-destructive for core lanes. Ensure the base core exists without flushing.
+  await initializeBaseStructure(guild, state, { flush: false, ...options, settings: snap });
   await guild.channels.fetch().catch(() => null);
 
-  const customSelections = Array.isArray(options.customSelections) ? options.customSelections : [];
-  const isCustomMix = customSelections.length > 0 && customSelections.some(s => /^(gaming|sports|community|media):/.test(s));
+  let desiredSpecs = [];
+  let templateLabel = 'Base Structure';
+  let templateSummary = 'Core bot/server lanes only. No template or subtemplate is applied.';
 
-  // V198 FIX: Create base categories in parallel
-  const [welcomeCat, communityCat, disciplineCat, staffCat] = await Promise.all([
-    findOrCreateCategory(guild, `👋 Welcome to ${serverName}`),
-    findOrCreateCategory(guild, '💬 Community'),
-    findOrCreateCategory(guild, '⚖️ Discipline & Activity'),
-    findOrCreateCategory(guild, '🧠 Staff & Commissioner', staffRoleOverwrites(guild)),
-  ]);
-
-  // V198 FIX: Create base + staff channels in parallel
-  await Promise.all([
-    findOrCreateText(guild, welcomeCat, 'welcome', `Welcome members to ${serverName}.`, { readOnly: true }),
-    findOrCreateText(guild, welcomeCat, 'rules', serverRulesChannelTopic(snap), { readOnly: true }),
-    findOrCreateText(guild, welcomeCat, templateLogic.getGuideChannelName(snap), templateLogic.getGuideChannelTopic(snap), { readOnly: true }),
-    findOrCreateText(guild, welcomeCat, 'how-to-join', 'How new members join the server and reach the right areas.', { readOnly: true }),
-    findOrCreateText(guild, welcomeCat, 'announcements', 'Commissioner and bot announcements only.', { readOnly: true }),
-    findOrCreateText(guild, communityCat, 'general-chat', 'General server chat and member discussion.', {}),
-    findOrCreateText(guild, communityCat, 'polls', 'Community polls and votes.', { readOnly: true }),
-    findOrCreateText(guild, disciplineCat, 'active-check', 'Member activity checks and roll calls.', {}),
-    findOrCreateText(guild, disciplineCat, 'warnings-log', 'Commissioner/admin warnings and discipline record.', { readOnly: true }),
-    findOrCreateText(guild, disciplineCat, 'boot-log', 'Boot/removal actions and discipline trail.', { readOnly: true }),
-    findOrCreateText(guild, staffCat, 'commissioner-ai', 'AI commissioner tools and staff requests.', { staffOnly: true }),
-    findOrCreateText(guild, staffCat, 'admin-hq', 'Admin-only bot operations and league controls.', { staffOnly: true }),
-    findOrCreateText(guild, staffCat, 'commish-hub', 'Commissioner screenshots, notes, and workflow hub.', { staffOnly: true }),
-    findOrCreateText(guild, staffCat, 'scoresheets', 'Private score/stat processing intake.', { staffOnly: true }),
-  ]);
-
-  // Layer template-specific channels (non-destructive — findOrCreate)
-  // V198 FIX: Two-phase parallel — categories first, then all channels
-  if (isCustomMix) {
-    const { buildChannelSpecs } = require('./customMixService');
-    const specs = buildChannelSpecs(customSelections);
-    const catMap = new Map();
-    await Promise.all(specs.map(async spec => {
-      const cat = await findOrCreateCategory(guild, spec.categoryName);
-      catMap.set(spec.categoryName, cat);
-    }));
-    await Promise.all(specs.flatMap(spec => {
-      const cat = catMap.get(spec.categoryName);
-      return (spec.channels || []).map(([chName, readOnly]) =>
-        findOrCreateText(guild, cat, chName, `Custom space: ${spec.categoryName}`, { readOnly: !!readOnly })
-      );
-    }));
-  } else {
-    const templateCats = (template.categories || [])
-      .map(catSpec => ({ ...catSpec, resolvedName: String(catSpec.name || '').replace('{server}', serverName) }))
-      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.resolvedName));
-    const catMap = new Map();
-    await Promise.all(templateCats.map(async c => {
-      const cat = await findOrCreateCategory(guild, c.resolvedName);
-      catMap.set(c.resolvedName, cat);
-    }));
-    await Promise.all(templateCats.flatMap(c => {
-      const cat = catMap.get(c.resolvedName);
-      return (c.channels || []).map(([chName, readOnly]) =>
-        findOrCreateText(guild, cat, chName, `${template.name} channel for ${serverName}`, { readOnly: !!readOnly })
-      );
-    }));
+  if (mode === 'template') {
+    if (!snap.serverTemplate) throw new Error('Template Structure requires a server template');
+    const profile = resolveTemplateProfile({ ...snap, serverTemplate: String(templateKey || snap.serverTemplate).toLowerCase() });
+    desiredSpecs = (profile.categories || [])
+      .map(c => ({ name: String(c.name || '').replace('{server}', serverName), channels: c.channels || [] }))
+      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.name));
+    templateLabel = profile.name; templateSummary = getTemplateSummary(profile);
+  } else if (mode === 'custom') {
+    const ts = Array.isArray(options.customTemplateSelections) ? options.customTemplateSelections : (snap.customTemplateSelections || []);
+    const ss = Array.isArray(options.customSubtemplateSelections) ? options.customSubtemplateSelections : (snap.customSubtemplateSelections || []);
+    desiredSpecs = require('./templateMixService').buildTemplateMixSpecs(ts, ss)
+      .map(c => ({ name: String(c.name || '').replace('{server}', serverName), channels: c.channels || [] }))
+      .filter(c => !/welcome to|discipline|staff & commissioner/i.test(c.name));
+    if (!desiredSpecs.length && Array.isArray(options.customSelections) && options.customSelections.length) {
+      desiredSpecs = require('./customMixService').buildChannelSpecs(options.customSelections).map(s => ({ name: s.categoryName, channels: s.channels || [] }));
+    }
+    if (!desiredSpecs.length) throw new Error('Custom Structure requires at least one template selection');
+    templateLabel = 'Custom Structure'; templateSummary = require('./templateMixService').buildSelectionSummary(ts, ss);
   }
 
-  // V198 FIX: Parallel final steps (same as createTemplateStructure)
-  await Promise.allSettled([
-    normalizeBaseChannelPolicies(guild),
-    reorderBaseCategoryStack(guild),
-    postBaseGuideMessages(guild),
-  ]);
-  await _silentDedupSweep(guild);
+  const catMap = new Map();
+  await Promise.all(desiredSpecs.map(async spec => { catMap.set(spec.name, await findOrCreateCategory(guild, spec.name)); }));
+  await Promise.all(desiredSpecs.flatMap(spec => (spec.channels || []).map(([chName, readOnly]) =>
+    findOrCreateText(guild, catMap.get(spec.name), chName, `${templateLabel} channel for ${serverName}`, { readOnly: !!readOnly }))));
 
-  const { buildSelectionSummary } = require('./customMixService');
-  const mixSummary = isCustomMix ? buildSelectionSummary(customSelections) : null;
-  return {
-    serverName,
-    flushSummary: { deletedChannels: 0, deletedCategories: 0 },
-    template: isCustomMix ? 'Custom Mix' : template.name,
-    structureMode: 'edit-apply',
-    templateSummary: mixSummary || getTemplateSummary(template),
-    customSelections: isCustomMix ? customSelections : [],
-  };
+  const templateCleanup = await templateReconciliation.reconcile(guild, priorTemplate, desiredSpecs, cat => _isProtectedScopeCategory(guild, cat));
+  const finalResults = await Promise.allSettled([ normalizeBaseChannelPolicies(guild), reorderBaseCategoryStack(guild), postBaseGuideMessages(guild) ]);
+  const finalFailure = finalResults.find(result => result.status === 'rejected');
+  if (finalFailure) throw finalFailure.reason;
+  await _silentDedupSweep(guild);
+  templateReconciliation.recordDesired(guild, desiredSpecs);
+  return { serverName, flushSummary: templateCleanup, template: templateLabel, structureMode: 'edit-apply', templateSummary,
+    customSelections: mode === 'custom' ? (options.customSelections || []) : [],
+    customTemplateSelections: mode === 'custom' ? (options.customTemplateSelections || snap.customTemplateSelections || []) : [],
+    customSubtemplateSelections: mode === 'custom' ? (options.customSubtemplateSelections || snap.customSubtemplateSelections || []) : [] };
 }
+
 
 module.exports = { initializeBaseStructure, ensureBaseStructure: initializeBaseStructure, normalizeBaseChannelPolicies, resetToInstallationMode, createTemplateStructure, applyEditChanges, reorderBaseCategoryStack, findOrCreateCategory, findOrCreateText, SERVER_TEMPLATES, _internals: { _silentDedupSweep, _isProtectedScopeCategory } };

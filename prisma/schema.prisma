@@ -53,6 +53,8 @@ model ServerConfig {
   customStructureMode     String?
   customArrangementMode   String?   @default("auto")
   customCatalogSelections Json?     @default("[]")
+  customTemplateSelections Json?     @default("[]")
+  customSubtemplateSelections Json?  @default("[]")
   toneVisibility          String?   @default("public")
   ageWarningEnabled       Boolean   @default(true)
   payload                 Json?
@@ -479,4 +481,79 @@ model GuildLock {
 
   @@id([guildId, lockType])
   @@map("guild_locks")
+}
+
+
+// v204.7 provider control-plane models. League IDs intentionally do not FK to League because
+// activeLeagueService supports legacy/non-Prisma league identifiers during migration.
+model ProviderConnection {
+  id               String   @id
+  leagueId         String
+  providerKey      String
+  status           String   @default("draft")
+  healthStatus     String   @default("unknown")
+  fallbackMode     String   @default("none")
+  endpointUrl      String?
+  externalLeagueId String?
+  routeTokenHash   String?
+  secretCiphertext String?
+  config           Json?    @default("{}")
+  lastHealthAt     DateTime?
+  lastSyncAt       DateTime?
+  lastSuccessAt    DateTime?
+  lastError        String?
+  blockedReason    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([leagueId, providerKey])
+  @@index([providerKey, status])
+  @@map("provider_connections")
+}
+
+model ProviderSyncRun {
+  id            String   @id
+  leagueId      String
+  providerKey   String
+  trigger       String
+  status        String
+  inputRevision String?
+  metadata      Json?    @default("{}")
+  result        Json?
+  error         String?
+  startedAt     DateTime
+  finishedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([leagueId, providerKey, status])
+  @@index([startedAt])
+  @@map("provider_sync_runs")
+}
+
+
+model ProviderImportReceipt {
+  id                  String   @id
+  connectionId        String
+  leagueId            String
+  providerKey         String
+  identityKey         String
+  externalEventId     String?
+  payloadHash         String?
+  stage               String?
+  size                Int      @default(0)
+  status              String   @default("received")
+  artifactBody        String?
+  meta                Json?    @default("{}")
+  duplicateDeliveries Int      @default(0)
+  receivedAt          DateTime @default(now())
+  completedAt         DateTime?
+  error               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([connectionId, identityKey])
+  @@index([leagueId, providerKey, status])
+  @@index([providerKey, status, receivedAt])
+  @@map("provider_import_receipts")
 }

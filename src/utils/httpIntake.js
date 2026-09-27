@@ -32,30 +32,28 @@ const DISCORD_CDN_HOSTS = Object.freeze([
   'images-ext-2.discordapp.net',
 ]);
 
-function _isPrivateHostname(hostname) {
-  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (!h) return true;
-  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (h === '0.0.0.0' || h === '::' || h === '::1') return true;
-  // IPv4 literal
-  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;            // link-local / cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;  // CGNAT
-    return false;
-  }
-  // IPv6 literal (unique local / link local / v4-mapped)
-  if (h.includes(':')) {
-    if (/^f[cd][0-9a-f]{2}:/i.test(h)) return true;
-    if (/^fe[89ab][0-9a-f]:/i.test(h)) return true;
-    if (h.startsWith('::ffff:')) return _isPrivateHostname(h.slice(7));
-    return false;
-  }
-  return false;
+const net=require('node:net');
+const dns=require('node:dns');
+const blocked=new net.BlockList();
+for(const [address,prefix]of [['0.0.0.0',8],['10.0.0.0',8],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.168.0.0',16],['100.64.0.0',10],['224.0.0.0',4],['240.0.0.0',4]])blocked.addSubnet(address,prefix,'ipv4');
+const globalV6=new net.BlockList();globalV6.addSubnet('2000::',3,'ipv6');
+function _isPrivateHostname(hostname){
+ const h=String(hostname||'').toLowerCase().replace(/^\[|\]$/g,'');
+ if(!h||h==='localhost'||/\.(localhost|local|internal)$/.test(h))return true;
+ const family=net.isIP(h);
+ if(family===4)return blocked.check(h,'ipv4');
+ if(family===6)return !globalV6.check(h,'ipv6')||h.startsWith('2001:db8:')||h.startsWith('2001:0:')||h.startsWith('2002:');
+ return false;
+}
+function validatedLookup(resolve=dns.lookup,allowPrivate=false){
+ return(hostname,options,callback)=>resolve(hostname,{all:true,verbatim:true},(err,addresses)=>{
+  if(err)return callback(err);
+  if(!addresses?.length||addresses.some(a=>!net.isIP(a.address)||(!allowPrivate&&_isPrivateHostname(a.address))))return callback(Object.assign(Error('Private or invalid DNS destination rejected'),{code:'PRIVATE_DESTINATION'}));
+  const family=Number(options.family)||0;const usable=family?addresses.filter(a=>a.family===family):addresses;
+  if(!usable.length)return callback(Error('No address for requested family'));
+  if(options.all)return callback(null,usable);
+  callback(null,usable[0].address,usable[0].family);
+ });
 }
 
 /**
@@ -80,12 +78,21 @@ function validateExternalUrl(input, opts = {}) {
   return { ok: true, url };
 }
 
+function _responseMeta(res) {
+  return {
+    etag: res?.headers?.get?.('etag') || null,
+    lastModified: res?.headers?.get?.('last-modified') || null,
+    retryAfter: res?.headers?.get?.('retry-after') || null,
+  };
+}
+
 function _contentTypeAllowed(actual, expected) {
   if (!expected || !expected.length) return true;
   const ct = String(actual || '').toLowerCase().split(';')[0].trim();
   if (!ct) return false;
   return expected.some(e => {
     const want = String(e).toLowerCase();
+    if(want.includes('*+')){const [prefix,suffix]=want.split('*');return ct.startsWith(prefix)&&ct.endsWith(suffix);}
     if (want.endsWith('/*')) return ct.startsWith(want.slice(0, -1));
     return ct === want;
   });
@@ -145,17 +152,23 @@ async function fetchExternal(req = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   if (typeof timer.unref === 'function') timer.unref();
 
-  let res;
+  let res,dispatcher;
+  if(!req.fetchImpl){
+    const {Agent}=require('undici');
+    dispatcher=new Agent({connect:{lookup:validatedLookup(dns.lookup,!!req.allowPrivate)}});
+  }
   try {
     res = await fetchImpl(check.url.toString(), {
       method: req.method || DEFAULTS.method,
       headers: req.headers || {},
       body: req.body,
       signal: controller.signal,
+      ...(dispatcher?{dispatcher}:{}),
       redirect: 'manual', // a redirect to a private/unallowed host must not be followed silently
     });
   } catch (err) {
     clearTimeout(timer);
+    if(dispatcher)await dispatcher.destroy();
     const aborted = err?.name === 'AbortError' || /aborted/i.test(String(err?.message || ''));
     return { ok: false, reason: aborted ? 'timeout' : 'network-error', error: String(err?.message || err) };
   }
@@ -164,7 +177,9 @@ async function fetchExternal(req = {}) {
     if (res.status >= 300 && res.status < 400) {
       return { ok: false, reason: 'redirect-not-followed', status: res.status };
     }
-    if (!res.ok) return { ok: false, reason: 'bad-status', status: res.status };
+    const accepted = Array.isArray(req.acceptStatuses) && req.acceptStatuses.includes(res.status);
+    if (!res.ok && !accepted) return { ok: false, reason: 'bad-status', status: res.status, headers: _responseMeta(res) };
+    if (accepted && res.status === 304) return { ok:true, status:304, notModified:true, contentType:String(res.headers?.get?.('content-type')||''), bytes:0, data:null, buffer:Buffer.alloc(0), headers:_responseMeta(res) };
     const contentType = String(res.headers?.get?.('content-type') || '');
     if (!_contentTypeAllowed(contentType, req.expectedContentTypes)) {
       return { ok: false, reason: 'unexpected-content-type', status: res.status, contentType };
@@ -180,10 +195,13 @@ async function fetchExternal(req = {}) {
       try { data = JSON.parse(buffer.toString('utf8')); }
       catch (e) { return { ok: false, reason: 'invalid-json', status: res.status, error: e.message }; }
     }
-    return { ok: true, status: res.status, contentType, bytes: buffer.length, data, buffer };
+    return { ok: true, status: res.status, contentType, bytes: buffer.length, data, buffer, headers:_responseMeta(res) };
+  } catch(err) {
+    return {ok:false,reason:controller.signal.aborted?'timeout':'body-read-failed',error:err.message};
   } finally {
     clearTimeout(timer);
+    if(dispatcher)await dispatcher.destroy();
   }
 }
 
-module.exports = { fetchExternal, validateExternalUrl, DISCORD_CDN_HOSTS, DEFAULTS };
+module.exports = { validatedLookup, fetchExternal, validateExternalUrl, DISCORD_CDN_HOSTS, DEFAULTS };

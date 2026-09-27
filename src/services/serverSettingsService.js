@@ -75,6 +75,8 @@ const DEFAULTS = {
   customStructureMode: '',
   customArrangementMode: 'auto',
   customCatalogSelections: [],
+  customTemplateSelections: [],
+  customSubtemplateSelections: [],
   serverInitialized: false,
   allowGifReplies: true,
   communities: [],           // [{name, type, createdAt}] — communities defined by commissioner
@@ -130,7 +132,7 @@ function sanitizeAvatarUrl(value) {
 
 function sanitizeCustomStructureMode(value) {
   const mode = String(value || '').trim().toLowerCase();
-  return ['base', 'empty', 'custom'].includes(mode) ? mode : '';
+  return ['base', 'template', 'custom'].includes(mode) ? mode : '';
 }
 
 function sanitizeArrangementMode(value) {
@@ -180,6 +182,8 @@ function saveSettings(next) {
     customStructureMode: sanitizeCustomStructureMode(next?.customStructureMode ?? current.customStructureMode),
     customArrangementMode: sanitizeArrangementMode(next?.customArrangementMode ?? current.customArrangementMode),
     customCatalogSelections: sanitizeCatalogSelections(next?.customCatalogSelections ?? current.customCatalogSelections),
+    customTemplateSelections: sanitizeCatalogSelections(next?.customTemplateSelections ?? current.customTemplateSelections),
+    customSubtemplateSelections: sanitizeCatalogSelections(next?.customSubtemplateSelections ?? current.customSubtemplateSelections),
     allowGifReplies: sanitizeBool(next?.allowGifReplies ?? current.allowGifReplies, DEFAULTS.allowGifReplies),
     requireTimezone: sanitizeBool(next?.requireTimezone ?? current.requireTimezone, DEFAULTS.requireTimezone),
     filterMode: (() => {
@@ -197,6 +201,21 @@ function saveSettings(next) {
     ageWarningEnabled: sanitizeBool(next?.ageWarningEnabled ?? current.ageWarningEnabled, DEFAULTS.ageWarningEnabled),
     updatedAt: Date.now()
   };
+  // v204.7 structure semantics: Base is truly template-free; Template owns one template/subtemplate;
+  // Custom owns commissioner-selected template/subtemplate sets. Never leave stale selections behind.
+  if (out.customStructureMode === 'base') {
+    out.serverTemplate = '';
+    out.serverSubtemplate = '';
+    out.customTemplateSelections = [];
+    out.customSubtemplateSelections = [];
+  } else if (out.customStructureMode === 'template') {
+    out.customTemplateSelections = [];
+    out.customSubtemplateSelections = [];
+  } else if (out.customStructureMode === 'custom') {
+    out.serverTemplate = '';
+    out.serverSubtemplate = '';
+  }
+
   saveJson(FILE, out);
 
   // Dual-write to Prisma (non-blocking — JSON is still primary)
@@ -217,6 +236,8 @@ function saveSettings(next) {
         serverTemplate: out.serverTemplate || null,
         serverSubtemplate: out.serverSubtemplate || null,
         customStructureMode: out.customStructureMode || null,
+        customTemplateSelections: out.customTemplateSelections || [],
+        customSubtemplateSelections: out.customSubtemplateSelections || [],
         toneProfile: out.toneProfile || [],
         memberToneProfile: out.memberToneProfile || [],
         commToneProfile: out.commissionerToneProfile || [],

@@ -66,7 +66,7 @@ PHASE 6 - RELEASE GATE
 50. A release is complete only when code, state migration, documentation, tests and operational recovery are all aligned.
 
 V203.1 STABILIZATION ADDENDUM - REQUIRED
-51. The documented league channel naming contract from patch v18 is authoritative: first two alphanumeric league-name characters + '.' + channel key (example: no.rules). Do not change this format without a migration plan for discovery, permissions, rules lookup, and existing servers.
+51. User decision superseding v18: ordinary channel names inside unique league categories are authoritative. Preserve legacy prefixed discovery through leagueNamingService; never broadly rename or delete existing channels. Native nicknames remain stable per guild; per-league labels belong in bot output.
 52. leagueChannelName() and leaguePrefixCode() are owned by src/services/leagueNamingService.js. Do not duplicate inline naming logic in setup/feature services.
 53. A PrismaClient object existing does not mean PostgreSQL is healthy. Operational checks must use probePrisma()/getPrismaHealth() and distinguish clientInitialized, reachable, and schemaReady.
 54. Production Railway configuration must not use localhost for separate PostgreSQL/Redis services. Deployment validation must reject known placeholder credentials/secrets before boot.
@@ -76,3 +76,24 @@ V203.1 STABILIZATION ADDENDUM - REQUIRED
 58. Legacy JSON, PostgreSQL and Redis must never be treated as equal business-state authorities. Follow data/JSON_OWNERSHIP_MAP.md and document any cutover before changing read authority.
 59. Dedicated queue-worker readiness requires both Redis and PostgreSQL. Do not restore an unref'd retry loop that claims to keep the process alive.
 60. Do not convert broad best-effort catch behavior in one sweep. Replace silent catches only where the operation is classified, tested, and the caller can handle the new error/result contract.
+V204.7 CONVERSATION INTELLIGENCE ADDENDUM - REQUIRED
+61. Passive conversation awareness may observe permitted human guild messages only into bounded, short-lived, channel-local memory. Observation must not itself call AI, type, react, reply, mutate state, or persist message bodies.
+62. Conversational AI speech requires an explicit bot @mention. Channel location or reply-to-bot alone is not speech authorization. Slash commands, components, moderation, scheduled automation, and provider/system events remain separate explicit event paths.
+63. Ambient conversation text is untrusted context only. Never execute or authorize an action from ambient context, and never let it override permissions, action-catalog schemas, confirmation policy, or domain validation.
+64. Natural-language planners are adapters into existing domain services, not new state owners. Resolve intent and entities, ask only for genuine ambiguity, and call the same service used by the slash command.
+65. Multiple leagues are not automatically ambiguous. Ask for league scope only when the requested entity has multiple valid league-scoped matches or the existing domain owner requires an explicit scope.
+66. Pending conversational clarifications must be bounded by user+guild+channel, expire quickly, and revalidate live state before mutation. Pending context is never a reservation or lock.
+67. Do not persist passive chat history by default. Any future persistence requires an explicit privacy/retention design and migration review.
+68. Regression tests must prove: unmentioned messages cause no AI speech; no cross-channel ambient leakage; ambiguous member/team/league cases fail safe; and unique natural assignment reuses the existing assignment domain path.
+
+
+V204.7 RELEASE-CLOSURE ADDENDUM - REQUIRED
+69. Server structure has exactly three public modes: base, template, custom. Base has no selected template/subtemplate and MUST NOT silently default to gaming or any other family. Template uses one family plus its relevant built-in subtemplate. Custom composes commissioner-selected families/subtemplates with deterministic deduplication.
+70. The legacy Empty structure option is retired. Treat migrated legacy empty/base intent as Base, not as a hidden template.
+71. Natural-language planning should be broadened only where an existing domain owner/action can safely receive the resolved request. The planner resolves intent/entities; it does not duplicate persistence or bypass permission/confirmation rules.
+72. Fresh natural requests MUST NOT inherit stale pending entities. Pending clarification state may fill only the missing field(s) of a genuine continuation and must be revalidated immediately before mutation.
+73. Provider push endpoints MUST NOT return a success acknowledgement until the receipt and required raw artifact are durable under the production authority. Background processing is recovery/execution, not acknowledgement durability.
+74. Provider connection authority is league-scoped. A production league must not have multiple competing active external providers; ambiguous authority fails safe to local/manual behavior.
+75. Provider secrets are encrypted at rest and never echoed after initial route/token issuance. Receiver tokens are capabilities and must be hashed/stored/redacted accordingly.
+76. Direct EA remains disabled/unsupported until a legitimate authorized Madden interface exists. Do not implement password collection, cookie/session replay, or private control endpoint scraping.
+77. Before production promotion, the clean-install full suite, TypeScript validation, Prisma migration validation, release verifier and deployment preflight must all pass. A package may be called a production candidate before these gates, but not production-certified.

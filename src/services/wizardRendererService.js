@@ -68,15 +68,20 @@ function buildSummaryText(settings, prefs, note) {
   const lines = [note || 'Work through each step below. Wizard edits this message in place.', ''];
   lines.push(`**Step: ${stageName}**`);
   lines.push(`${_statusIcon(structure, true)} Structure: **${structure || 'not set'}**`);
-  lines.push(`${_statusIcon(templateName, true)} Template: **${templateName || 'not set'}**`);
-  if (templateName) lines.push(`${_statusIcon(subtemplateName, false)} Subtemplate: **${subtemplateName || 'none'}**`);
+  const mode = String(settings.customStructureMode || '').toLowerCase();
+  if (mode === 'base') {
+    lines.push(`✅ Template: **not used in Base Structure**`);
+    lines.push(`✅ Subtemplate: **not used in Base Structure**`);
+  } else if (mode === 'custom') {
+    lines.push(`✅ Template selection: **custom mix**`);
+  } else {
+    lines.push(`${_statusIcon(templateName, true)} Template: **${templateName || 'not set'}**`);
+    if (templateName) lines.push(`${_statusIcon(subtemplateName, false)} Subtemplate: **${subtemplateName || 'none'}**`);
+  }
   if (settings.customStructureMode === 'custom' || curStage === 'custom_structure') {
-    const sels = Array.isArray(settings.customCatalogSelections) ? settings.customCatalogSelections : [];
-    const groups = ['gaming:', 'sports:', 'community:', 'media:'].map(p => {
-      const count = sels.filter(s => s.startsWith(p)).length;
-      return count ? `${p.replace(':', '')} (${count})` : null;
-    }).filter(Boolean);
-    lines.push(`🧩 Custom spaces: **${sels.length ? groups.join(', ') : 'none selected yet'}**`);
+    const templates = Array.isArray(settings.customTemplateSelections) ? settings.customTemplateSelections : [];
+    const subs = Array.isArray(settings.customSubtemplateSelections) ? settings.customSubtemplateSelections : [];
+    lines.push(`🧩 Custom templates: **${templates.length || 0}** | Subtemplates: **${subs.length || 0}**`);
   }
   lines.push(`${_statusIcon(audience, true)} Audience: **${audience || 'not set'}**`);
   if (audience) {
@@ -106,9 +111,9 @@ function _buildStructureModeRow(settings) {
       .setCustomId('bot_structure_mode_select')
       .setPlaceholder(settings.customStructureMode ? `Structure mode: ${String(settings.customStructureMode).toUpperCase()}` : 'Choose structure mode (required)...')
       .addOptions([
-        { label: 'Standard Base Structure', value: 'base', description: 'Bot uses a proven category stack, then layers the template' },
-        { label: 'Custom Structure Builder', value: 'custom', description: 'Pick categories/channels and choose bot-arranged or manual layout' },
-        { label: 'Empty / Blank Structure', value: 'empty', description: 'Start blank, then add only the chosen template and staff lanes' },
+        { label: 'Base Structure', value: 'base', description: 'Core bot/server lanes only. No template or subtemplate.' },
+        { label: 'Template Structure', value: 'template', description: 'Choose one template and its relevant subtemplate.' },
+        { label: 'Custom Structure', value: 'custom', description: 'Mix multiple templates and optional subtemplates.' },
         { label: 'Clear structure selection', value: '__clear__', description: 'Clear the saved structure choice' },
       ])
   );
@@ -134,14 +139,6 @@ function _buildSubtemplateRow(settings) {
   const menu = new StringSelectMenuBuilder().setCustomId('bot_server_subtemplate_select').setPlaceholder(placeholder).addOptions(options);
   if (!opts.length) menu.setDisabled(true);
   return new ActionRowBuilder().addComponents(menu);
-}
-
-function _buildSetupModeRow(prefs) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('bot_setup_custom')
-      .setLabel(prefs.selectedSetupMode === 'custom' ? 'Custom Bot Setup Selected' : 'Use Custom Options')
-      .setStyle(prefs.selectedSetupMode === 'custom' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-  );
 }
 
 function _buildAudienceRow(settings) {
@@ -319,6 +316,39 @@ function _buildCustomMixMediaRow(settings) {
 
 
 
+
+function _buildCustomTemplateSelectionRow(settings) {
+  const selected = new Set(Array.isArray(settings.customTemplateSelections) ? settings.customTemplateSelections : []);
+  const opts = getTemplateOptions().map(o => ({ ...o, default: selected.has(o.value) }));
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('bot_custom_template_select')
+      .setPlaceholder(selected.size ? `Templates selected: ${selected.size}` : 'Pick one or more templates...')
+      .setMinValues(1).setMaxValues(Math.min(8, opts.length)).addOptions(opts)
+  );
+}
+function _buildCustomSubtemplateSelectionRow(settings) {
+  const templates = Array.isArray(settings.customTemplateSelections) ? settings.customTemplateSelections : [];
+  const selected = new Set(Array.isArray(settings.customSubtemplateSelections) ? settings.customSubtemplateSelections : []);
+  const opts = [];
+  for (const tk of templates) {
+    const templateLabel = getTemplateOptions().find(o => o.value === tk)?.label || tk;
+    for (const sub of getTemplateSubtemplateOptions(tk)) {
+      if (opts.length >= 25) break;
+      const value = `${tk}:${sub.value}`;
+      opts.push({ label: `${templateLabel} • ${sub.label}`.slice(0, 100), value, description: sub.description, default: selected.has(value) });
+    }
+    if (opts.length >= 25) break;
+  }
+  const menu = new StringSelectMenuBuilder().setCustomId('bot_custom_subtemplate_select');
+  if (!opts.length) {
+    menu.setPlaceholder('Pick templates first; subtemplates are optional').setDisabled(true).addOptions([{ label: 'No subtemplates available yet', value: '__none__' }]);
+  } else {
+    menu.setPlaceholder(selected.size ? `Subtemplates selected: ${selected.size}` : 'Optional: pick relevant subtemplates...').setMinValues(0).setMaxValues(Math.min(12, opts.length)).addOptions(opts);
+  }
+  return new ActionRowBuilder().addComponents(menu);
+}
+
 function _buildMainEmbed(guild, note, settings, prefs) {
   const profile = settings.serverTemplate ? templateLogic.getTemplateProfile(settings) : null;
 
@@ -353,6 +383,7 @@ function _buildMainEmbed(guild, note, settings, prefs) {
     .setDescription(buildSummaryText(settings, prefs, note))
     .addFields(
       { name: fieldLabel, value: fieldValue },
+      ...(stage === 'mode' ? [{ name: 'Structure strategy', value: '**BASE**: core bot/server lanes only; no template or subtemplate.\n**TEMPLATE**: core lanes + one selected template/subtemplate.\n**CUSTOM**: core lanes + the templates/subtemplates you select.' }] : []),
       { name: 'Template summary', value: profile?.summary || 'Choose a server template to unlock the right categories, channels, rules, and guide flow.' },
       { name: 'Theme preview', value: themePreviewText, inline: false },
     )
@@ -369,11 +400,11 @@ function buildFlowGuidePayload() {
       .setTitle('🧭 Setup Flow Guide')
       .setDescription(
         'Confirm this guide to open the main setup wizard. The setup will stay in one edited bot message instead of stacking a pile of prompts.\n\n' +
-        '**1. Choose setup mode**\nPick Standard or Custom.\n\n' +
-        '**2. Choose structure + template**\nStructure decides how the server is built. Template decides what kind of server logic, channels, and rules the bot should use.\n\n' +
-        '**3. Choose audience level**\nAudience level is mandatory before tone and unlocks more character/tone options.\n\n' +
-        '**4. Tune member AI and commissioner AI**\nChoose whether both lanes share the same tone or have separate tone builds.\n\n' +
-        '**5. Configure identity + rules + finalize**\nReview the full breakdown, then build the server.'
+        '**1. Choose structure strategy**\n**Base** = core bot/server lanes only, with no template or subtemplate. **Template** = choose one template and its relevant subtemplate. **Custom** = mix multiple templates and optional subtemplates.\n\n' +
+        '**2. Template choices**\nTemplate Structure gives you one purpose-built layout. Custom Structure lets you combine multiple template families and subtemplates. General / Simple Server is available when you want a lightweight layout.\n\n' +
+        '**3. Custom picks, only when Custom is selected**\nChoose the exact templates you want, then optionally layer relevant subtemplates. Duplicate categories/channels are deduplicated before build.\n\n' +
+        '**4. Audience + AI tone**\nAudience level is required before tone. Member and commissioner AI can share a tone profile or use separate profiles.\n\n' +
+        '**5. Final review**\nReview identity, rules, GIFs, timezone gate, structure, and template before build/apply.'
       )
       .setFooter({ text: 'Click Start Setup to move into the main setup message.' })
       .setTimestamp()],
@@ -410,18 +441,14 @@ function buildWizardPayload(guild, note = '', opts = {}) {
     const rows = [];
 
     if (stage === 'mode') {
-      rows.push(
-        _buildSetupModeRow(prefs),
-        _buildStructureModeRow(settings),
-        _buildTemplateRow(settings),
-        _buildSubtemplateRow(settings),
-        _buildNavRow('mode', !canAdvance, isEdit),
-      );
+      rows.push(_buildStructureModeRow(settings));
+      if (settings.customStructureMode === 'template') {
+        rows.push(_buildTemplateRow(settings), _buildSubtemplateRow(settings));
+      }
+      rows.push(_buildNavRow('mode', !canAdvance, isEdit));
     } else if (stage === 'custom_structure') {
-      rows.push(_buildCustomMixGamingRow(settings));
-      rows.push(_buildCustomMixSportsRow(settings));
-      rows.push(_buildCustomMixCommunityRow(settings));
-      rows.push(_buildCustomMixMediaRow(settings));
+      rows.push(_buildCustomTemplateSelectionRow(settings));
+      rows.push(_buildCustomSubtemplateSelectionRow(settings));
       rows.push(_buildNavRow('custom_structure', !canAdvance, isEdit));
     } else if (stage === 'tone') {
       rows.push(_buildAudienceRow(settings));

@@ -48,13 +48,19 @@ async function _handle(req, res) {
     try {
       const body = await _readBody(req, route.maxBytes);
       const leagues=require('../services/activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');
-      const selected=process.env.PROVIDER_HTTP_SPACE_ID || (leagues.length===1?leagues[0].id:null);
-      if(leagues.length>1 && !selected)return _send(res,409,{ok:false,reason:'Configure PROVIDER_HTTP_SPACE_ID for this receiver'});
-      if(selected&&!leagues.some(x=>x.id===selected))return _send(res,409,{ok:false,reason:'Configured provider space is not active'});
+      const routeSpace = typeof route.resolveSpace === 'function' ? route.resolveSpace(params, req) : null;
+      const selected=routeSpace || process.env.PROVIDER_HTTP_SPACE_ID || (leagues.length===1?leagues[0].id:null);
+      if(leagues.length>1 && !selected)return _send(res,409,{ok:false,reason:'receiver-route-is-ambiguous'});
+      if(selected&&!leagues.some(x=>String(x.id)===String(selected)))return _send(res,409,{ok:false,reason:'provider-space-is-not-active'});
       const r = await require('../league/spaceContext').run(selected,()=>route.handle(params, req, body, Object.fromEntries(url.searchParams)));
+      const importId = r?.body?.importId ? String(r.body.importId).slice(0, 64) : 'none';
+      if (Number(r?.status || 500) >= 400) log.warn(`provider request failed route=${route.routeName || 'unknown'} league=${selected || 'none'} status=${r.status} importId=${importId}`);
+      else log.info(`provider request accepted route=${route.routeName || 'unknown'} league=${selected || 'none'} status=${r.status} importId=${importId}`);
       return _send(res, r.status, r.body);
     } catch (e) {
-      return _send(res, e.status || 500, { ok: false, reason: e.status === 413 ? 'payload-too-large' : 'internal-error' });
+      const status = e.status || 500;
+      log.error(`provider request exception route=${route.routeName || 'unknown'} status=${status} error=${String(e?.message || e).slice(0, 180)}`);
+      return _send(res, status, { ok: false, reason: status === 413 ? 'payload-too-large' : 'internal-error' });
     }
   }
   return _send(res, 404, { ok: false, reason: 'not-found' });

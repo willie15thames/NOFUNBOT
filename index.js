@@ -191,10 +191,6 @@ async function _syncMemberDisplayForChannel(member, channel = null, extra = {}) 
     const nicknames = require('./src/services/nicknamePolicyService');
     const profile = profiles.getProfile(member.id);
     if (!profile?.timezone) return;
-    const league = nicknames.resolveLeagueContext(state, channel);
-    if (!league) {
-      profiles.upsertProfile(member.id, { lastSeenDisplayName: nicknames.stripTimezoneSuffix(member.displayName) });
-    }
     await nicknames.syncMemberNickname(member, state, { ...extra, channel, channelId: channel?.id || null }).catch(() => null);
   } catch {}
 }
@@ -256,10 +252,9 @@ function wireEvents() {
   client.on('guildCreate', async guild => {
     try {
       if (String(guild.id) !== String(GUILD_ID)) return;
-      const wizardPrefs = require('./src/services/wizardPreferencesService');
+      const wizardState = require('./src/services/wizardStateService');
       const router = require('./src/routing/interactionRouter');
-      const prefs = wizardPrefs.getPrefs();
-      if (prefs.installationMode) {
+      if (wizardState.isInstallationMode()) {
         await deployCommandsForCurrentState(state).catch(() => null);
         await require('./src/services/patchNotesService').publishPatchNotes(guild).catch(() => null);
         const ch = await router.ensureSetupWizardChannel(guild, { reveal: true }).catch(() => null);
@@ -349,6 +344,7 @@ function wireEvents() {
         return;
       }
     } catch {}
+
     if (message.guild && message.member?.partial) try { await message.member.fetch(); } catch {}
 
     // Track member activity in ledger (every message = proof of life)
@@ -365,7 +361,7 @@ function wireEvents() {
     }
 
     if (message.guild && message.member) {
-      _syncMemberDisplayForChannel(message.member, message.channel, { reason: 'Message channel nickname sync' }).catch(() => null);
+      // Native nicknames do not depend on message/channel activity.
     }
 
     if (await handleSpam(message).catch(()=>false)) return;
@@ -438,8 +434,10 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
   return;
 }
 
-    // Passive trash talk learning (throttled internally — non-blocking)
-    require('./src/services/trashTalkBank').learnFromMessage(message, aiCall, MODELS).catch(()=>null);
+    // Legacy AI-assisted trash-talk learning is opt-in and never runs on ordinary passive messages by default.
+    if (String(process.env.ENABLE_TRASH_TALK_LEARNING || '').toLowerCase() === 'true' && message.mentions.users?.has(client.user.id)) {
+      require('./src/services/trashTalkBank').learnFromMessage(message, aiCall, MODELS).catch(()=>null);
+    }
 
     if (await handleCommishHubScreenshot(message,{getCh,state,aiCall,MODELS,isAdminMember:(m)=>isAdminMember(m,COMM_ROLE,dynamicCommissioners(state)),COMM_ROLE}).catch(()=>false)) return;
 
@@ -462,6 +460,12 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
         require('./src/parsers/gameResultParser').handleGameChannelMessage(message, { state, getCh }).catch(() => null);
       }
       detectAndRouteOffense(message).catch(() => null);
+    }
+
+    // V204.7 passive conversation awareness runs only after moderation, read-only, setup/file intake,
+    // game-result and offense-routing gates have accepted the message. Observation is memory-only and silent.
+    if (message.guild) {
+      try { require('./src/services/ambientConversationService').observe(message); } catch (_ambientErr) { /* non-fatal */ }
     }
 
     // ── AI Routing (V184: persona arbiter + response lifecycle) ──────
@@ -508,6 +512,19 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
     }
   }));
 
+  // ── messageDelete ─────────────────────────────────────────
+  client.on('messageDelete', withMessageSpace(async msg => {
+    if (msg?.author?.bot) return;
+    try { require('./src/services/ambientConversationService').removeMessage(msg); } catch (_ambientDeleteErr) {}
+  }));
+
+  client.on('messageDeleteBulk', withMessageSpace(async messages => {
+    try {
+      const ambient = require('./src/services/ambientConversationService');
+      for (const msg of (messages?.values?.() || [])) if (!msg?.author?.bot) ambient.removeMessage(msg);
+    } catch (_ambientBulkDeleteErr) {}
+  }));
+
   // ── messageUpdate ─────────────────────────────────────────
   // Handles: stream link edits AND edited messages that @mention the bot
   client.on('messageUpdate', withMessageSpace(async (_old, msg) => {
@@ -516,6 +533,8 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
       return;
     }
     if (msg.author?.bot) return;
+    // Keep already-observed ambient context accurate when a human edits a message. This never creates a response.
+    try { require('./src/services/ambientConversationService').updateMessage(msg); } catch (_ambientUpdateErr) {}
     if (msg.partial) try { await msg.fetch(); } catch { return; }
 
     // Stream credit: link added or removed via edit
@@ -628,7 +647,7 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
       }
       if (interaction.guild && interaction.member) {
         try { if (interaction.member.partial) await interaction.member.fetch(); } catch {}
-        _syncMemberDisplayForChannel(interaction.member, interaction.channel, { reason: 'Channel-context nickname sync' }).catch(() => null);
+        // Community labels are rendered by the selected league, not native nicknames.
       }
       const { handleSetupInteraction, handleProAmTeamModal } = require('./src/services/leagueSetupService');
       const { handleJoinInteraction, handleJoinModal } = require('./src/services/joinLeagueService');
@@ -911,24 +930,8 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
   });
 
   client.on('guildMemberUpdate', async (oldMember, newMember) => {
-    // Rule 7: Nickname enforcement — always re-append timezone on any display name change
-    try {
-      const hierarchy = require('./src/services/hierarchyEnforcementService');
-      const memberProfiles = require('./src/services/memberProfileService');
-      const nicknames = require('./src/services/nicknamePolicyService');
-      const profile = memberProfiles.getProfile(newMember.id);
-      if (profile?.timezone) {
-        const oldDisplay = String(oldMember.displayName || '').trim();
-        const newDisplay = String(newMember.displayName || '').trim();
-        // If display name changed, re-apply the timezone suffix
-        if (oldDisplay !== newDisplay) {
-          const desired = hierarchy.buildEnforcedNickname(newMember, profile);
-          if (desired && String(newMember.nickname || newMember.displayName || '') !== desired) {
-            await newMember.setNickname(desired, 'Nickname enforcement — re-appending timezone').catch(() => null);
-          }
-        }
-      }
-    } catch (_e) {}
+    // One policy owns the guild-wide nickname. The old hierarchy handler
+    // enforced the account name while message sync enforced a channel team.
     await _syncMemberDisplay(newMember).catch(() => null);
   });
 
@@ -1117,16 +1120,41 @@ client.once('clientReady', async () => {
       }
     }, 3000); // 3 seconds after boot — bot is already responding by then
 
-    require('./src/services/readinessService').write(true);
+    await require('./src/services/readinessService').start(client);
   } catch (err) {
     const { makeLogger } = require('./src/utils/logger');
     require('./src/services/readinessService').write(false);
     makeLogger('startup').error('Startup error:', err.message);
+    process.exit(1); // Supervised restart; never leave an incompletely initialized bot accepting work.
   }
 });
 
+// Bounded shutdown closes intake, flushes pending compatibility writes and releases connections.
+let shuttingDown=false;
+async function shutdownBot(signal){
+  if(shuttingDown)return;shuttingDown=true;
+  console.log(`[shutdown] ${signal}`);
+  const deadline=setTimeout(()=>process.exit(1),15000);deadline.unref();
+  let failed=false;
+  try{
+    await require('./src/services/readinessService').stop();
+    client.destroy();
+    await require('./src/storage/jsonStore').flushPendingWrites();
+  }catch(error){failed=true;console.error(`[shutdown] ${error.message}`);}
+  const closed=await Promise.allSettled([
+    require('./src/queue/queues').closeQueues(),
+    require('./src/storage/prisma').disconnectPrisma(),
+    require('./src/storage/criticalStore').close(),
+    require('./src/storage/jsonStore').closeStore(),
+  ]);
+  if(closed.some(x=>x.status==='rejected'))failed=true;
+  clearTimeout(deadline);process.exit(failed?1:0);
+}
+process.once('SIGTERM',()=>void shutdownBot('SIGTERM'));
+process.once('SIGINT',()=>void shutdownBot('SIGINT'));
+
 client.on('shardDisconnect',()=>require('./src/services/readinessService').write(false));
-client.on('shardResume',()=>require('./src/services/readinessService').write(true));
+client.on('shardResume',()=>void require('./src/services/readinessService').check());
 
 // ── 5. Railway keepalive ─────────────────────────────────────
 // Health server runs as a SEPARATE process (health-server.js) started by railway-start.sh

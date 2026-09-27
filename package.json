@@ -1,6 +1,6 @@
 {
   "name": "nofunleague-bot",
-  "version": "21.10.0-rc.1",
+  "version": "21.11.0-rc.3",
   "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
   "main": "index.js",
   "scripts": {
@@ -35,10 +35,12 @@
     "static:undefined": "node scripts/check-undefined-identifiers.js",
     "command:contract": "node scripts/command-contract-check.js",
     "schema:check": "node scripts/schema-readiness.js",
-    "test:postgres": "node tests/postgres.integration.js"
+    "test:postgres": "node tests/postgres.integration.js",
+    "verify:local": "node scripts/verify-local.js",
+    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.18.1"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
@@ -48,7 +50,8 @@
     "discord.js": "^14.15.0",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "undici": "6.29.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

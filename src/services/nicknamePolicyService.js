@@ -52,26 +52,33 @@ function getLeagueDisplayForMember(state, memberId, channelOrId = null) {
   return null;
 }
 
+function getDisplayForLeague(state, memberId, leagueId) {
+  const entry = _allLeagueEntriesForMember(state, memberId)
+    .find(item => String(item.leagueId || '') === String(leagueId || ''));
+  return entry?.displayTeam || entry?.baseTeam || null;
+}
+
 function buildDesiredNickname(member, state, opts = {}) {
-  const profile = memberProfiles.ensureProfile(member.id, { lastSeenDisplayName: member.displayName });
-  if (!profile?.timezone) return null;
-  const label = String(profile.timezoneLabel || timezoneLabel(profile.timezone) || profile.timezone || '').toUpperCase();
-  const team = getLeagueDisplayForMember(state, member.id, opts.channel || opts.channelId || null);
-  const base = team || stripTimezoneSuffix(profile.lastSeenDisplayName || member.displayName || member.user?.username || 'member');
-  return `${base} (${label})`.slice(0, 32);
+  // Discord has one nickname per guild, not per channel/category. A team's
+  // display name belongs in league posts and roles, not on the guild member.
+  return null;
 }
 
 async function syncMemberNickname(member, state, opts = {}) {
-  if (!member?.manageable) return { ok: false, reason: 'not-manageable' };
-  const desired = buildDesiredNickname(member, state, opts);
-  if (!desired) return { ok: false, reason: 'timezone-missing' };
-  const current = String(member.nickname || member.displayName || '').trim();
-  if (current === desired) return { ok: true, skipped: true, desired };
+  const current = String(member?.nickname || '').trim();
+  if (!current) return { ok: true, skipped: true, reason: 'profile-name-preserved' };
+  const profile = memberProfiles.getProfile(member.id);
+  const assignment = profile?.botNicknameAssignment;
+  const proven = assignment && String(assignment.guildId) === String(member.guild?.id)
+    && assignment.value === current && assignment.status === 'ASSIGNED';
+  if (!proven) return { ok:true, skipped:true, reason:'custom-nickname-preserved' };
+  if (!member.manageable) return { ok: false, reason: 'not-manageable', action: 'clear legacy team nickname through a server admin with a higher role' };
   try {
-    await member.setNickname(desired, opts.reason || 'Timezone/team nickname sync');
-    return { ok: true, desired };
+    await member.setNickname(null, 'Restore profile name from legacy team nickname');
+    memberProfiles.upsertProfile(member.id,{botNicknameAssignment:{...assignment,status:'RESTORED',restoredAt:Date.now()}});
+    return { ok: true, restored: true };
   } catch (err) {
-    return { ok: false, reason: err.message, desired };
+    return { ok: false, reason: err.message };
   }
 }
 
@@ -79,10 +86,10 @@ async function syncGuildNicknames(guild, state) {
   const out = [];
   for (const member of guild.members.cache.values()) {
     const profile = memberProfiles.getProfile(member.id);
-    if (!profile?.timezone) continue;
+    if (!profile?.timezone && !profile?.teamDisplay) continue;
     out.push(await syncMemberNickname(member, state));
   }
   return out;
 }
 
-module.exports = { timezoneLabel, stripTimezoneSuffix, buildDesiredNickname, syncMemberNickname, syncGuildNicknames, resolveLeagueContext, getLeagueDisplayForMember };
+module.exports = { timezoneLabel, stripTimezoneSuffix, buildDesiredNickname, syncMemberNickname, syncGuildNicknames, resolveLeagueContext, getLeagueDisplayForMember, getDisplayForLeague };

@@ -117,10 +117,12 @@ async function postStatLeaders(guild, { announce = false } = {}) {
   }
 
   if (announce && announceCh) {
+    const spaceId = require('../league/spaceContext').current();
+    const roleId = spaceId ? require('./activeLeagueService').getLeague(spaceId)?.memberRoleId : null;
     await announceCh.send({
-      content: '@everyone',
+      content: roleId ? `<@&${roleId}>` : undefined,
       embeds: [embed],
-      allowedMentions: { parse: ['everyone'] },
+      allowedMentions: roleId ? { roles: [roleId], parse: [] } : { parse: [] },
     }).catch(e => log.error('#announcements stat leaders failed:', e.message));
   }
 }

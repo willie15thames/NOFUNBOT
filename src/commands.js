@@ -70,7 +70,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName('edit-community')
     .setDescription('Modify a community name or type (Commissioner only)')
-    .addStringOption(o => o.setName('name').setDescription('Current community name').setRequired(true))
+    .addStringOption(o => o.setName('name').setDescription('Current community name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('new-name').setDescription('New name (leave blank to keep current)').setRequired(false))
     .addStringOption(o => o.setName('type').setDescription('New community type').setRequired(false)
       .addChoices(
@@ -87,7 +87,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName('delete-community')
     .setDescription('Remove a community and all its channels and roles (Commissioner only)')
-    .addStringOption(o => o.setName('name').setDescription('Community name to delete').setRequired(true))
+    .addStringOption(o => o.setName('name').setDescription('Community name to delete').setRequired(true).setAutocomplete(true))
     .addBooleanOption(o => o.setName('confirm').setDescription('Type true to confirm deletion').setRequired(true))
     .setDefaultMemberPermissions(P),
 
@@ -159,7 +159,7 @@ new SlashCommandBuilder()
   new SlashCommandBuilder()
     .setName('toggle-team-mode')
     .setDescription('Change community type between league-enabled / event-driven / social (Commissioner only)')
-    .addStringOption(o => o.setName('community').setDescription('Community name').setRequired(true))
+    .addStringOption(o => o.setName('community').setDescription('Community name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('mode').setDescription('New mode').setRequired(true)
       .addChoices(
         { name: 'League enabled (teams + competition)', value: 'league-enabled' },
@@ -422,11 +422,26 @@ new SlashCommandBuilder()
   .addStringOption(o => o.setName('provider').setDescription('Sync provider').setRequired(true)
     .addChoices(
       { name: 'Off', value: 'off' },
-      { name: 'Madden Companion', value: 'madden_companion' },
+      { name: 'Madden Companion Direct', value: 'companion_export' },
+      { name: 'NeonSportz', value: 'neonsportz' },
+      { name: 'Legacy Madden JSON Endpoint', value: 'madden_companion' },
       { name: 'NBA 2K Companion', value: 'nba2k_companion' },
       { name: 'Custom Endpoint', value: 'custom_endpoint' },
     ))
   .addStringOption(o => o.setName('endpoint-url').setDescription('Optional JSON endpoint override URL'))
+  .addStringOption(o => o.setName('external-league-id').setDescription('Optional provider-side league ID/abbreviation (for example NeonSportz league ID)'))
+  .addStringOption(o => o.setName('resource-config-json').setDescription('Optional provider resource URL/config JSON (no secrets)'))
+  .addStringOption(o => o.setName('provider-secret').setDescription('Optional provider access token/secret; encrypted at rest and never echoed'))
+  .addStringOption(o => o.setName('connection-action').setDescription('Connection lifecycle action').setRequired(false)
+    .addChoices(
+      { name: 'Configure', value: 'configure' },
+      { name: 'Test connection', value: 'test' },
+      { name: 'Activate after test', value: 'activate' },
+      { name: 'Rotate receiver token', value: 'rotate' },
+      { name: 'Disconnect', value: 'disconnect' },
+      { name: 'Reconnect', value: 'reconnect' },
+      { name: 'Enter manual fallback', value: 'fallback' },
+    ))
   .addBooleanOption(o => o.setName('auto-sync-on-trigger').setDescription('Automatically sync when running sync-aware triggers'))
   .addBooleanOption(o => o.setName('load-current-week').setDescription('Load current synced week into the live schedule after sync'))
   .addBooleanOption(o => o.setName('run-weekly-automation').setDescription('Run weekly channel automation after a successful sync'))

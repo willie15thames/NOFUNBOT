@@ -103,6 +103,17 @@ function validateRuntimeEnvironment(env = process.env, opts = {}) {
     issues.push(_issue('warn', 'BOT_DATA_DIR', 'JSON compatibility state is ephemeral; use /data volume or rely on PostgreSQL authority'));
   }
 
+  const providerHttp = toBool(env.ENABLE_PROVIDER_HTTP, false);
+  if (providerHttp) {
+    const providerPort = Number(env.PROVIDER_HTTP_PORT || 3100);
+    const publicPort = Number(env.PORT || 3000);
+    if (!Number.isInteger(providerPort) || providerPort < 1 || providerPort > 65535) issues.push(_issue('error', 'PROVIDER_HTTP_PORT', 'must be a valid TCP port'));
+    if (providerPort === publicPort) issues.push(_issue('error', 'PROVIDER_HTTP_PORT', 'must differ from PORT because health-server proxies public provider requests to the internal receiver'));
+    if (prod && !db && !toBool(env.ALLOW_JSON_PROVIDER_RECEIPTS, false)) issues.push(_issue('error', 'DATABASE_URL', 'provider ingress requires PostgreSQL durability in production'));
+    if (prod && !String(env.PUBLIC_BASE_URL || env.RAILWAY_PUBLIC_DOMAIN || '').trim()) issues.push(_issue('error', 'PUBLIC_BASE_URL', 'provider ingress needs a public callback base URL (PUBLIC_BASE_URL or RAILWAY_PUBLIC_DOMAIN)'));
+    if (prod && !String(env.PROVIDER_SECRET_KEY || env.NOFUN_CONNECTION_MASTER_KEY || '').trim()) issues.push(_issue('error', 'PROVIDER_SECRET_KEY', 'provider connection secrets require an encryption key in production'));
+  }
+
   return { ok: !issues.some(i => i.severity === 'error'), production: prod, issues };
 }
 

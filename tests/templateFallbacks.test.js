@@ -59,6 +59,19 @@ test('legacy bot team nickname resets to Discord profile while commissioner hier
   eq(changedSeason.reason,'custom-nickname-preserved');
 });
 
+test('initial template manifest records ownership so a later edit can remove obsolete bot assets', async () => {
+  const guild = mockGuild();
+  const old = guild._makeChannel({name:'Initial Gaming',type:ChannelType.GuildCategory});
+  const stale = guild._makeChannel({name:'squad-up',parent:old}); stale.topic='Gaming Server channel for Test';
+  eq(cleanup.recordDesired(guild,[{name:'Initial Gaming',channels:[['squad-up',false]]}]).recorded,1);
+  const next = guild._makeChannel({name:'Next Sports',type:ChannelType.GuildCategory});
+  const keep = guild._makeChannel({name:'scores',parent:next}); keep.topic='Sports Server channel for Test';
+  const result = await cleanup.reconcile(guild, cleanup.capture(guild), [{name:'Next Sports',channels:[['scores',false]]}]);
+  eq(result.deletedChannels,1);
+  assert(!guild.channels.cache.has(stale.id),'obsolete bot-owned channel removed after manifest-backed edit');
+  assert(guild.channels.cache.has(keep.id),'new desired channel preserved');
+});
+
 test('template option switch deletes identifiable old assets and preserves manual channels', async () => {
   const guild = mockGuild();
   const old = guild._makeChannel({name:'Old Gaming',type:ChannelType.GuildCategory});

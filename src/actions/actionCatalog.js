@@ -214,6 +214,70 @@ const ACTIONS = [
     },
   },
   {
+    type: 'provider_status', owner: 'providerConnectionService', permission: 'commissioner', destructive: false, confirmation: 'none', idempotency: 'safe',
+    description: 'Show the current league data-provider connection status and recent sync state.', fields: {},
+    async execute(f, ctx) {
+      const status = await require('../services/leagueSyncService').getSyncStatus();
+      const rows = status.connections || [];
+      const lines = rows.length ? rows.map(c => `• **${c.providerKey}**: ${c.status} / health ${c.healthStatus}${c.fallbackMode === 'manual' ? ' / manual fallback' : ''}`).join('\n') : '• No league-scoped provider connections configured.';
+      return { ok:true, message:`📡 **Provider status**\nActive: **${status.activeProvider?.key || status.liveSync?.provider || 'local'}**\n${lines}` };
+    },
+  },
+  {
+    type: 'provider_sync_now', owner: 'leagueSyncService', permission: 'commissioner', destructive: false, confirmation: 'none', idempotency: 'keyed',
+    description: 'Run the active league data sync now. This refreshes data only and never advances the franchise.', fields: {},
+    async execute(f, ctx) {
+      const r = await require('../services/leagueSyncService').syncNow(ctx.guild, ctx.state, { trigger:'natural-language' });
+      if (!r?.ok) return { ok:false, reason:r?.reason || 'sync-failed' };
+      return { ok:true, message:`✅ Provider sync completed via **${r.provider || 'active provider'}**${r.processed != null ? `; processed **${r.processed}** queued import(s)` : ''}.` };
+    },
+  },
+  {
+    type: 'provider_test_connection', owner: 'providerConnectionActionService', permission: 'commissioner', destructive: false, confirmation: 'none', idempotency: 'safe',
+    description: 'Test a configured provider connection.', fields: { provider: { type:'string', required:true, maxLength:40 } },
+    async execute(f) {
+      const r = await require('../services/providerConnectionActionService').test({ provider:f.provider });
+      if (!r?.ok) return { ok:false, reason:r?.reason || r?.health?.reason || 'provider-test-failed' };
+      return { ok:true, message:`✅ **${f.provider}** connection test passed.` };
+    },
+  },
+  {
+    type: 'provider_activate_connection', owner: 'providerConnectionActionService', permission: 'commissioner', destructive: true, confirmation: 'interactive', idempotency: 'safe',
+    description: 'Activate a tested provider as the authoritative external data source for the current league.', fields: { provider: { type:'string', required:true, maxLength:40 } },
+    async execute(f) {
+      const r = await require('../services/providerConnectionActionService').activate({ provider:f.provider });
+      if (!r?.ok) return { ok:false, reason:r?.reason || 'provider-activation-failed' };
+      return { ok:true, message:`✅ **${f.provider}** is now the active league data source.` };
+    },
+  },
+  {
+    type: 'provider_disconnect', owner: 'providerConnectionActionService', permission: 'commissioner', destructive: true, confirmation: 'interactive', idempotency: 'safe',
+    description: 'Disconnect a provider and revoke its stored receiver token/credential.', fields: { provider: { type:'string', required:true, maxLength:40 } },
+    async execute(f) {
+      const r = await require('../services/providerConnectionActionService').disconnect({ provider:f.provider });
+      if (!r?.ok) return { ok:false, reason:r?.reason || 'provider-disconnect-failed' };
+      return { ok:true, message:`✅ **${f.provider}** disconnected. League returned to bot-managed/manual data mode.` };
+    },
+  },
+  {
+    type: 'provider_reconnect', owner: 'providerConnectionActionService', permission: 'commissioner', destructive: true, confirmation: 'interactive', idempotency: 'keyed',
+    description: 'Reconnect a provider. Push providers rotate their receiver token, invalidating the old URL.', fields: { provider: { type:'string', required:true, maxLength:40 } },
+    async execute(f) {
+      const r = await require('../services/providerConnectionActionService').reconnect({ provider:f.provider });
+      if (!r?.ok) return { ok:false, reason:r?.reason || 'provider-reconnect-failed' };
+      return { ok:true, message:`✅ **${f.provider}** reconnected${r.receiverUrl ? `\nNew receiver URL: **${r.receiverUrl}**` : ''}.` };
+    },
+  },
+  {
+    type: 'provider_manual_fallback', owner: 'providerConnectionActionService', permission: 'commissioner', destructive: true, confirmation: 'interactive', idempotency: 'safe',
+    description: 'Put a provider connection into manual fallback without deleting its configuration.', fields: { provider: { type:'string', required:true, maxLength:40 } },
+    async execute(f) {
+      const r = await require('../services/providerConnectionActionService').fallback({ provider:f.provider, reason:'commissioner natural-language fallback' });
+      if (!r?.ok) return { ok:false, reason:r?.reason || 'provider-fallback-failed' };
+      return { ok:true, message:`✅ **${f.provider}** is in manual fallback. Existing configuration is retained.` };
+    },
+  },
+  {
     type: 'league_status', owner: 'advanceEngine', permission: 'commissioner', destructive: false, confirmation: 'none', idempotency: 'safe',
     description: 'Report the league automation state (source week, workflow week, state, next deadline, provider).', fields: {},
     async execute(f, ctx) {

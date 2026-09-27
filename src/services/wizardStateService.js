@@ -276,18 +276,18 @@ function canAdvanceFrom(step, settings, prefs) {
   if (step === 'mode') {
     const missing = [];
     if (!settings.customStructureMode) missing.push('structure mode');
-    if (!settings.serverTemplate) missing.push('server template');
-    const { getTemplateSubtemplateOptions } = require('./templateRegistryService');
-    if (settings.serverTemplate && getTemplateSubtemplateOptions(settings.serverTemplate).length && !settings.serverSubtemplate) {
-      missing.push('subtemplate');
+    if (settings.customStructureMode === 'template') {
+      if (!settings.serverTemplate) missing.push('server template');
+      const { getTemplateSubtemplateOptions } = require('./templateRegistryService');
+      if (settings.serverTemplate && getTemplateSubtemplateOptions(settings.serverTemplate).length && !settings.serverSubtemplate) missing.push('subtemplate');
     }
     return { canAdvance: missing.length === 0, missing };
   }
 
   if (step === 'custom_structure') {
     const missing = [];
-    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) {
-      missing.push('custom spaces');
+    if (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length) {
+      missing.push('custom templates');
     }
     return { canAdvance: missing.length === 0, missing };
   }
@@ -301,7 +301,8 @@ function canAdvanceFrom(step, settings, prefs) {
   if (step === 'finalize') {
     const missing = [];
     if (!settings.customStructureMode) missing.push('structure mode');
-    if (!settings.serverTemplate) missing.push('server template');
+    if (settings.customStructureMode === 'template' && !settings.serverTemplate) missing.push('server template');
+    if (settings.customStructureMode === 'custom' && (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length)) missing.push('custom templates');
     if (!settings.audienceRating) missing.push('audience level');
     return { canAdvance: missing.length === 0, missing };
   }

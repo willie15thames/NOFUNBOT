@@ -38,10 +38,16 @@ function matchesConfiguredChannel(subject, key, opts = {}) {
 
 function findConfiguredChannel(guild, key, opts = {}) {
   if (!guild?.channels?.cache) return null;
-  return guild.channels.cache.find(channel => {
+  const candidates = [...guild.channels.cache.values()].filter(channel => {
     if (opts.textOnly && !channel.isTextBased?.()) return false;
     return matchesConfiguredChannel(channel, key, { includes: !!opts.includes });
-  }) || null;
+  });
+  const base = candidates.find(c => /^👋 Welcome to/i.test(String(c.parent?.name || '')));
+  const staff = candidates.find(c => /Staff & Commissioner/i.test(String(c.parent?.name || '')));
+  if (['welcome','rules','serverGuide','howToJoin','announcements'].includes(key) && base) return base;
+  if (['commAI','adminHq','commishHub','scoresheets'].includes(key) && staff) return staff;
+  // A league's plain #rules/#announcements is not a server-wide destination.
+  return candidates.find(c => !require('./activeLeagueService').findLeagueForChannel(c)) || null;
 }
 
 function getConfiguredChannelNames(keys = []) {

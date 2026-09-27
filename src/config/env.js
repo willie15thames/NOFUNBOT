@@ -75,7 +75,7 @@ for (const key of REQUIRED) {
 // Soft-required: warn clearly at startup when these are missing so deploys don't silently degrade
 const SOFT_REQUIRED = {
   COMMISSIONER_ROLE_ID: 'Commissioner role detection falls back to Discord Administrator permission. Set this to your commissioner role ID for reliable access control.',
-  DATABASE_URL:         'Prisma/PostgreSQL unavailable — all DB writes will silently no-op. State will not persist across restarts.',
+  DATABASE_URL:         'PostgreSQL is unavailable. Critical production writes are blocked; local test records use BOT_DATA_DIR.',
   REDIS_URL:            'BullMQ queue worker will not start — background jobs and storage sync are inert.',
 };
 for (const [key, hint] of Object.entries(SOFT_REQUIRED)) {

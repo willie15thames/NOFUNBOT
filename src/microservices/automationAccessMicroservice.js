@@ -14,6 +14,7 @@ const state = require('../state');
 const { resolveCommissionerRoleId } = require('../services/accessPolicyService');
 
 let _activeCheckTimer = null; // V202: single scheduler handle (re-entry safe)
+let _providerRecoveryTimer = null; // v204.7 wake-up only; durable receipts remain the authority
 
 module.exports = {
   key: 'automationAndAccess',
@@ -69,6 +70,20 @@ module.exports = {
     } catch (err) {
       logger.warn(`Provider HTTP receiver failed to start: ${err.message}`);
     }
+
+    // Recover durable provider receipts and nonterminal sync runs from a prior crash/restart.
+    // The interval below is only a wake-up safety net: durable receipt rows own truth, so a lost timer cannot lose work.
+    try {
+      const recovery = require('../services/providerRecoveryService');
+      await recovery.recover(logger);
+      if (_providerRecoveryTimer) clearInterval(_providerRecoveryTimer);
+      _providerRecoveryTimer = setInterval(() => recovery.recover(logger).catch(err => logger.warn(`Provider recovery wake-up failed: ${err.message}`)), 60 * 1000);
+      _providerRecoveryTimer.unref?.();
+      logger.info('Provider durable-receipt recovery wake-up armed (60s) ✅');
+    } catch (err) {
+      logger.warn(`Provider recovery scan failed: ${err.message}`);
+    }
+
 
     logger.info('Phase 4 complete ✅');
     return { activeChecksArmed: typeof processDueActiveChecks === 'function', advanceSchedulerArmed };

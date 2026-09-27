@@ -38,32 +38,21 @@ function _findPlayerByAny(state, teamOrUser) {
   ) || null;
 }
 
-function addCount(state, teamOrUser, url = '') {
-  const player = _findPlayerByAny(state, teamOrUser);
-  if (!player) return null;
-  player.streamLog = Array.isArray(player.streamLog) ? player.streamLog : [];
-  player.streamLog.push({ timestamp: Date.now(), url: String(url || '').trim(), manual: true });
-  player.streamCount = player.streamLog.length;
-  return player;
+async function adjust(state,teamOrUser,delta,ctx={}){
+ const player=_findPlayerByAny(state,teamOrUser);if(!player)return null;
+ const progress=await require('./lifetimeHistoryService').adjustStreamProgress(ctx.guildId||process.env.GUILD_ID,player,delta,ctx.operationId);
+ player.streamCount=progress.count;player.lastStreamCreditAt=progress.lastCreditAt;
+ saveJsonDebounced('players.json',[...state.players].map(([key,value])=>({key,...value})));
+ return player;
 }
-
-function removeCount(state, teamOrUser) {
-  const player = _findPlayerByAny(state, teamOrUser);
-  if (!player) return null;
-  player.streamLog = Array.isArray(player.streamLog) ? player.streamLog : [];
-  if (player.streamLog.length) player.streamLog.pop();
-  player.streamCount = player.streamLog.length;
-  return player;
-}
-
-function resetAll(state) {
-  let count = 0;
-  for (const player of state.players.values()) {
-    player.streamLog = [];
-    player.streamCount = 0;
-    count++;
-  }
-  return count;
+async function addCount(state,teamOrUser,url='',ctx={}){return adjust(state,teamOrUser,1,ctx);}
+async function removeCount(state,teamOrUser,ctx={}){return adjust(state,teamOrUser,-1,ctx);}
+async function resetAll(state,ctx={}){
+ let count=0;
+ for(const player of state.players.values()){
+  await adjust(state,player.userId,null,{...ctx,operationId:ctx.operationId?`${ctx.operationId}:${player.leagueId}:${player.userId}`:undefined});count++;
+ }
+ return count;
 }
 
 module.exports = {

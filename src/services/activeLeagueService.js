@@ -96,6 +96,24 @@ function removeLeague(id) {
   return reg;
 }
 
+
+function setDataSourceMode(id, mode) {
+  const leagueId = String(id || '').trim();
+  if (!leagueId) throw new Error('league id is required');
+  const normalized = String(mode || '').toLowerCase() === 'external_sync' ? 'external_sync' : 'custom_bot_managed';
+  const reg = getRegistry();
+  if (!reg[leagueId]) throw new Error('league-not-found');
+  reg[leagueId] = { ...reg[leagueId], dataSourceMode:normalized, updatedAt:Date.now() };
+  saveRegistry(reg);
+  return { id:leagueId, ...reg[leagueId] };
+}
+function getDataSourceMode(id) {
+  const leagueId = String(id || '').trim();
+  if (!leagueId) return 'custom_bot_managed';
+  const row = getRegistry()[leagueId];
+  return row?.dataSourceMode === 'external_sync' ? 'external_sync' : 'custom_bot_managed';
+}
+
 function findLeagueForChannel(channelOrId) {
   const channel = channelOrId && typeof channelOrId === 'object' ? channelOrId : null;
   const channelId = String(channel?.id || channelOrId || '');
@@ -121,5 +139,7 @@ module.exports = {
   leagueTypeLabel,
   upsertLeague,
   removeLeague,
+  setDataSourceMode,
+  getDataSourceMode,
   findLeagueForChannel,
 };

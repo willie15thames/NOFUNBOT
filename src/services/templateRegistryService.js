@@ -18,6 +18,32 @@ function clone(value) {
 }
 
 const TEMPLATE_REGISTRY = {
+  general: {
+    key: 'general',
+    name: 'General / Simple Server',
+    summary: 'A lightweight starting point with only the essentials for a simple community.',
+    leagueFriendly: false,
+    subservers: ['chat','announcements','events'],
+    guideBullets: [
+      'Keep the layout light: one main chat lane, one information lane, and only add more when the community needs it.',
+      'Use a simple subtemplate when you want purpose-specific naming without a large channel tree.',
+      'League tools stay out of the way unless a competition module is added later.'
+    ],
+    joinHelp: 'Start in general chat and check announcements or the server guide for anything important.',
+    aiHints: ['General/simple template: keep guidance concise and avoid inventing extra structure.'],
+    quickAnswers: { whatisthis: 'This is a lightweight general community server with a simple channel layout.' },
+    categories: [
+      cat('💬 Community', [ch('general-chat'), ch('announcements', true)])
+    ],
+    subtemplates: {
+      chat: { name: 'Simple Community Chat', summary: 'Just the basics for conversation, announcements, and member updates.', subservers:['chat','announcements'], categories:[cat('💬 Community', [ch('general-chat'), ch('announcements', true)])], aiHints:['Simple community subtemplate: keep navigation and conversation lightweight.'] },
+      gaming: { name: 'Simple Gaming', summary: 'A small gaming setup with chat, LFG, and clips without a complex league layout.', subservers:['game-chat','lfg','clips'], categories:[cat('🎮 Gaming', [ch('game-chat'), ch('looking-for-group'), ch('clips-and-highlights')])], aiHints:['Simple gaming subtemplate: focus on game chat, LFG, and clips.'] },
+      sports: { name: 'Simple Sports', summary: 'A compact sports community with general talk, scores, and watch-party planning.', subservers:['sports-chat','scores','watch-party'], categories:[cat('🏟 Sports', [ch('sports-chat'), ch('scores', true), ch('watch-party-planning')])], aiHints:['Simple sports subtemplate: focus on sports chat, scores, and watch parties.'] },
+      study: { name: 'Simple Study Group', summary: 'A compact learning setup with questions, resources, and study chat.', subservers:['questions','resources','study'], categories:[cat('📚 Study', [ch('questions'), ch('resources', true), ch('study-chat')])], aiHints:['Simple study subtemplate: answer clearly and prioritize questions and resources.'] },
+      watchparty: { name: 'Simple Watch Party', summary: 'A lightweight media setup for scheduling, live reactions, and recaps.', subservers:['schedule','live','recap'], categories:[cat('📺 Watch Party', [ch('watch-schedule', true), ch('live-reactions'), ch('recap-chat')])], aiHints:['Simple watch-party subtemplate: focus on schedules, live reactions, and recaps.'] },
+    },
+    usabilityFlows: ['timezone-onboarding','wizard-build']
+  },
   gaming: {
     key: 'gaming',
     name: 'Gaming Server',
@@ -487,13 +513,14 @@ const TEMPLATE_REGISTRY = {
   },
 };
 
-function getTemplate(key = 'gaming') {
-  const raw = String(key || 'gaming').trim().toLowerCase();
-  return TEMPLATE_REGISTRY[raw] || TEMPLATE_REGISTRY.gaming;
+function getTemplate(key = '') {
+  const raw = String(key || '').trim().toLowerCase();
+  return raw ? (TEMPLATE_REGISTRY[raw] || null) : null;
 }
 
 function getTemplateSubtemplateOptions(templateKey = '') {
-  const template = getTemplate(templateKey || 'gaming');
+  const template = getTemplate(templateKey);
+  if (!template) return [];
   const entries = Object.entries(template.subtemplates || {});
   return entries.map(([value, item]) => ({
     label: item.name,
@@ -503,7 +530,8 @@ function getTemplateSubtemplateOptions(templateKey = '') {
 }
 
 function resolveTemplateProfile(settings = {}) {
-  const template = getTemplate(settings.serverTemplate || 'gaming');
+  const template = getTemplate(settings.serverTemplate);
+  if (!template) return null;
   const subKey = String(settings.serverSubtemplate || '').trim().toLowerCase();
   const sub = subKey && template.subtemplates && template.subtemplates[subKey] ? template.subtemplates[subKey] : null;
   if (!sub) return clone(template);

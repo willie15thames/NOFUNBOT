@@ -150,11 +150,12 @@ function recordTeamClaim(userId, teamName, leagueId) {
   return rec;
 }
 
-function recordTeamRelease(userId) {
+function recordTeamRelease(userId, leagueId = null) {
   const rec = getRecord(userId);
-  const hist = rec.teamHistory[rec.teamHistory.length - 1];
+  const hist = [...rec.teamHistory].reverse().find(item => !item.releasedAt && (!leagueId || String(item.leagueId || '') === String(leagueId)));
   if (hist && !hist.releasedAt) hist.releasedAt = Date.now();
-  rec.currentTeam = null; rec.currentLeagueId = null;
+  const latest = [...rec.teamHistory].reverse().find(item => !item.releasedAt);
+  rec.currentTeam = latest?.team || null; rec.currentLeagueId = latest?.leagueId || null;
   _save();
   return rec;
 }

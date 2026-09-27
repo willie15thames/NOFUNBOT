@@ -8,7 +8,7 @@ const context=require('../src/league/spaceContext');
 const history=require('../src/services/lifetimeHistoryService');
 const storage=require('../src/storage/jsonStore');
 const guild=mockGuild();
-guild.roles.create=async({name})=>{const role={id:`role-${guild.roles.cache.size}`,name,delete:async()=>guild.roles.cache.delete(role.id)};guild.roles.cache.set(role.id,role);return role;};
+guild.roles.create=async({name,mentionable,permissions})=>{const role={id:`role-${guild.roles.cache.size}`,name,mentionable,permissions,delete:async()=>guild.roles.cache.delete(role.id)};guild.roles.cache.set(role.id,role);return role;};
 const state=require('../src/state');
 setup.init?.({state});
 // setup takes positional state through its explicit initializer.
@@ -20,6 +20,7 @@ test('three combined slots are reserved atomically and reject a fourth concurren
 });
 test('league builds have exclusive private categories and preserve staff-only access',async()=>{
  for(const name of ['Alpha','Beta']){const built=await setup.buildLeagueStructure(guild,'madden_franchise',null,name);leagues.push(built.activeLeague);}
+ for(const league of leagues){const role=guild.roles.cache.get(league.memberRoleId);assert(role.name.includes(league.leagueName)&&role.mentionable,'league role supports human-readable tagging');eq(role.permissions,[]);}
  assert(!leagues[0].builtCategoryIds.some(id=>leagues[1].builtCategoryIds.includes(id)),'no shared category');
  for(const id of leagues[0].builtChannelIds){const ch=guild.channels.cache.get(id);const all=ch.permissionOverwrites.cache.get(guild.id);assert(all.deny.includes(P.ViewChannel),'everyone denied');if(/admin|commish|commissioner|scoresheets/.test(ch.name))assert(!ch.permissionOverwrites.cache.has(leagues[0].memberRoleId),'staff channel has no member role');}
 });
@@ -79,6 +80,7 @@ test('unknown league cannot trigger fuzzy deletion',async()=>{
 test('event occupies a shared slot and grants only its dedicated member role',async()=>{
  registry.removeLeague(leagues[0].id);await spaces.transition(guild.id,leagues[0].id,'ARCHIVED');
  const ev=await require('../src/services/eventSpaceService').create(guild,{name:'Tournament'});
+ assert(guild.roles.cache.get(ev.memberRoleId).name.includes('Tournament')&&guild.roles.cache.get(ev.memberRoleId).mentionable,'event role supports tagging');
  eq(ev.kind,'event');const ch=guild.channels.cache.get(ev.builtChannelIds[0]);assert(ch.permissionOverwrites.cache.get(guild.id).deny.includes(P.ViewChannel),'event private');
  assert(ch.permissionOverwrites.cache.has(ev.memberRoleId),'event-specific role');
 });
@@ -86,6 +88,6 @@ test('league runtime A cannot change B policy or channel resolver',async()=>{
  const policy=require('../src/league/automationPolicyService');
  context.run('A',()=>policy.setPolicy({intervalHours:24}));context.run('B',()=>policy.setPolicy({intervalHours:72}));
  context.run('A',()=>eq(policy.getPolicy().intervalHours,24));context.run('B',()=>eq(policy.getPolicy().intervalHours,72));
- context.run(leagues[1].id,()=>assert(require('../src/services/channels/channelResolver').getCh(guild,'rules')?.name==='be.rules','resolves selected league channel'));
+ context.run(leagues[1].id,()=>{const ch=require('../src/services/channels/channelResolver').getCh(guild,'rules');assert(ch?.name==='rules'&&leagues[1].builtCategoryIds.includes(ch.parentId),'resolves selected league channel');});
 });
 run('auditV204.test.js');
