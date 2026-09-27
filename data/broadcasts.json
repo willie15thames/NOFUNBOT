@@ -1,8 +1,0 @@
-{
-  "channelId": null,
-  "pingRoleId": null,
-  "keyword": "",
-  "youtube": [],
-  "twitch": [],
-  "notes": "Auto-live polling needs provider credentials or feed support; this build stores and manages sources safely."
-}

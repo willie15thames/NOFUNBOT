@@ -78,6 +78,14 @@ function validateExternalUrl(input, opts = {}) {
   return { ok: true, url };
 }
 
+function _responseMeta(res) {
+  return {
+    etag: res?.headers?.get?.('etag') || null,
+    lastModified: res?.headers?.get?.('last-modified') || null,
+    retryAfter: res?.headers?.get?.('retry-after') || null,
+  };
+}
+
 function _contentTypeAllowed(actual, expected) {
   if (!expected || !expected.length) return true;
   const ct = String(actual || '').toLowerCase().split(';')[0].trim();
@@ -169,7 +177,9 @@ async function fetchExternal(req = {}) {
     if (res.status >= 300 && res.status < 400) {
       return { ok: false, reason: 'redirect-not-followed', status: res.status };
     }
-    if (!res.ok) return { ok: false, reason: 'bad-status', status: res.status };
+    const accepted = Array.isArray(req.acceptStatuses) && req.acceptStatuses.includes(res.status);
+    if (!res.ok && !accepted) return { ok: false, reason: 'bad-status', status: res.status, headers: _responseMeta(res) };
+    if (accepted && res.status === 304) return { ok:true, status:304, notModified:true, contentType:String(res.headers?.get?.('content-type')||''), bytes:0, data:null, buffer:Buffer.alloc(0), headers:_responseMeta(res) };
     const contentType = String(res.headers?.get?.('content-type') || '');
     if (!_contentTypeAllowed(contentType, req.expectedContentTypes)) {
       return { ok: false, reason: 'unexpected-content-type', status: res.status, contentType };
@@ -185,7 +195,7 @@ async function fetchExternal(req = {}) {
       try { data = JSON.parse(buffer.toString('utf8')); }
       catch (e) { return { ok: false, reason: 'invalid-json', status: res.status, error: e.message }; }
     }
-    return { ok: true, status: res.status, contentType, bytes: buffer.length, data, buffer };
+    return { ok: true, status: res.status, contentType, bytes: buffer.length, data, buffer, headers:_responseMeta(res) };
   } catch(err) {
     return {ok:false,reason:controller.signal.aborted?'timeout':'body-read-failed',error:err.message};
   } finally {

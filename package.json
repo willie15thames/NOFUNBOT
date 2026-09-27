@@ -1,6 +1,6 @@
 {
   "name": "nofunleague-bot",
-  "version": "21.10.0-rc.7",
+  "version": "21.11.0-rc.3",
   "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
   "main": "index.js",
   "scripts": {
@@ -36,7 +36,8 @@
     "command:contract": "node scripts/command-contract-check.js",
     "schema:check": "node scripts/schema-readiness.js",
     "test:postgres": "node tests/postgres.integration.js",
-    "verify:local": "node scripts/verify-local.js"
+    "verify:local": "node scripts/verify-local.js",
+    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh"
   },
   "engines": {
     "node": ">=20.18.1"

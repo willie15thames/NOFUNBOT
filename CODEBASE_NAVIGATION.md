@@ -61,3 +61,49 @@
 ## V203 Command registry
 - `src/services/commandAliasService.js` — GROUPED_ALIASES: legacy commands nested into existing groups (registration + routing from one spec). Add a command to a group here; never add a new top-level command.
 - `docs/COMMAND_ARCHITECTURE.md` — verified command counts, restored paths, legacy routes, consolidation plan.
+
+
+## v204.7 conversation intelligence additions
+
+- `src/services/ambientConversationService.js` — passive, memory-only, guild+channel-scoped recent conversation window. It performs no AI call and causes no reply. Context is only rendered when a later explicit bot mention is routed to conversational AI.
+- `src/services/naturalActionPlannerService.js` — deterministic natural-language action adapter for team assignment. Resolves member, team, and league; asks only on real ambiguity; delegates the mutation to `openTeamsService` rather than owning league state.
+- `src/handlers/commissionerHandler.js` — explicit-mention speech gate, deterministic planner before AI, ambient context as untrusted prompt context.
+- `src/handlers/memberMentionHandler.js` — explicit-mention speech gate and ambient context injection for member conversation.
+- `src/handlers/itHandler.js` — IT conversational AI requires explicit bot mention rather than channel presence alone.
+- `tests/conversationAwareness.test.js` — zero-dependency targeted regression checks for passive context boundaries and natural assignment resolution.
+
+The conversation-intelligence layer must not persist full chat history, must not treat ambient text as executable instructions, and must not bypass existing domain services or permission checks.
+
+## v204.7 Release-Candidate Owners
+
+### Conversation and planning
+- `src/services/ambientConversationService.js` - bounded in-memory channel context only
+- `src/services/explicitMentionGateService.js` - conversational speech authorization
+- `src/services/naturalActionPlannerService.js` - deterministic intent/entity resolver and pending clarification state
+- `src/handlers/commissionerHandler.js` - deterministic planner/action-catalog bridge before model fallback
+
+### Structure modes
+- `src/services/serverSettingsService.js` - canonical base/template/custom settings semantics
+- `src/services/serverTemplateLogicService.js` - structure-aware summaries/requirements
+- `src/services/templateRegistryService.js` - curated families including General/Simple
+- `src/services/templateMixService.js` - custom composition/deduplication
+- `src/services/wizardRendererService.js` / `wizardStateService.js` - three-mode setup UX
+
+### Provider connection control plane
+- `src/services/providerConnectionService.js` - league-scoped connection authority/state/secret metadata
+- `src/services/providerConnectionActionService.js` - configure/test/activate/reconnect/disconnect/fallback actions
+- `src/services/providerSecretService.js` - provider secret encryption/redaction
+- `src/services/providerSyncRunService.js` - durable sync-run lifecycle
+- `src/league/importRunService.js` - durable import receipts/raw artifacts/idempotency/recovery queue
+- `src/services/providerSyncOrchestrator.js` - league/provider sync lock and run orchestration
+- `src/services/providerRecoveryService.js` - boot/recurrent recovery
+- `src/services/providerProjectionService.js` / `providerDataSnapshotService.js` - normalized provider projection/stale revision guard
+- `src/providers/madden/companion/exportGateway.js` - Companion Direct receiver
+- `src/providers/madden/neonsportz/webhook.js` / `client.js` - Neon push notification + read-side fetch
+- `src/providers/customEndpoint.js` - first-class custom HTTPS/JSON source
+- `src/http/providerHttpServer.js` + `health-server.js` - internal receiver and public ingress
+
+### Trade state
+- `src/services/tradeWorkflowService.js` - proposal/decision validation, persistence and single-consume decision owner
+
+See `docs/V204_7_RELEASE_COMPLETION_REPORT.md` for release gates and verification evidence.

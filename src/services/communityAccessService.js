@@ -94,9 +94,9 @@ function buildSelectorPayload(settings = serverSettings.getSettings(), note = ''
 }
 
 async function postSelectorPanel(guild, note = '') {
-  // Hierarchy Rules 1 & 2: no selector without template + communities
+  // Selector requires actual exposed communities, not a serverTemplate. Base Structure is intentionally template-free.
   const _settings = serverSettings.getSettings();
-  if (!_settings.serverTemplate || !getAvailableCommunities(_settings).length) return null;
+  if (!getAvailableCommunities(_settings).length) return null;
   const settings = serverSettings.getSettings();
   if (!_selectorEnabled(settings)) {
     const existing = guild?.channels?.cache?.find?.(c => c.type === ChannelType.GuildText && c.name === CHANNEL_NAME);

@@ -422,11 +422,26 @@ new SlashCommandBuilder()
   .addStringOption(o => o.setName('provider').setDescription('Sync provider').setRequired(true)
     .addChoices(
       { name: 'Off', value: 'off' },
-      { name: 'Madden Companion', value: 'madden_companion' },
+      { name: 'Madden Companion Direct', value: 'companion_export' },
+      { name: 'NeonSportz', value: 'neonsportz' },
+      { name: 'Legacy Madden JSON Endpoint', value: 'madden_companion' },
       { name: 'NBA 2K Companion', value: 'nba2k_companion' },
       { name: 'Custom Endpoint', value: 'custom_endpoint' },
     ))
   .addStringOption(o => o.setName('endpoint-url').setDescription('Optional JSON endpoint override URL'))
+  .addStringOption(o => o.setName('external-league-id').setDescription('Optional provider-side league ID/abbreviation (for example NeonSportz league ID)'))
+  .addStringOption(o => o.setName('resource-config-json').setDescription('Optional provider resource URL/config JSON (no secrets)'))
+  .addStringOption(o => o.setName('provider-secret').setDescription('Optional provider access token/secret; encrypted at rest and never echoed'))
+  .addStringOption(o => o.setName('connection-action').setDescription('Connection lifecycle action').setRequired(false)
+    .addChoices(
+      { name: 'Configure', value: 'configure' },
+      { name: 'Test connection', value: 'test' },
+      { name: 'Activate after test', value: 'activate' },
+      { name: 'Rotate receiver token', value: 'rotate' },
+      { name: 'Disconnect', value: 'disconnect' },
+      { name: 'Reconnect', value: 'reconnect' },
+      { name: 'Enter manual fallback', value: 'fallback' },
+    ))
   .addBooleanOption(o => o.setName('auto-sync-on-trigger').setDescription('Automatically sync when running sync-aware triggers'))
   .addBooleanOption(o => o.setName('load-current-week').setDescription('Load current synced week into the live schedule after sync'))
   .addBooleanOption(o => o.setName('run-weekly-automation').setDescription('Run weekly channel automation after a successful sync'))

@@ -82,3 +82,14 @@ criticalStore serializes space reservations, assignments, locks and lifetime sou
 ## RC6 ownership updates
 
 `gameResultService` commits through `lifetimeHistoryService.transaction` before rebuilding projections. Stream credits use durable message IDs in the lifetime transaction; manual adjustments use interaction IDs. `criticalStore.withExclusive` owns structural operation locks across router commands. Membership, community deletion and pending active removals keep repair intent until completion. Queue producers reuse a bounded connection/cache. See docs/RC6_DEPENDENCY_MAP.md and the RC6 deployment guide.
+
+## v204.7 Dedup/Single-Owner Addendum
+
+- Passive conversation context is never a durable business-state owner.
+- Natural planner state is clarification-only and never reserves a team, provider, trade, week or channel.
+- Team ownership continues through `openTeamsService` / assignment domain services.
+- Trade proposal/decision state is owned by `tradeWorkflowService`; router/UI code publishes the result after the domain decision is consumed/persisted.
+- Provider connection authority is one league-scoped `ProviderConnection` in active/degraded state. Multiple active matches fail safe rather than picking one.
+- Push provider idempotency is owned by durable `ProviderImportReceipt` identity keys. JSON mirrors are compatibility/recovery helpers, not equal production authority.
+- Provider source revisions are guarded before snapshot replacement so an older payload cannot overwrite newer resource state.
+- Workflow week remains owned by the advance engine. Provider projection must not advance workflow week.

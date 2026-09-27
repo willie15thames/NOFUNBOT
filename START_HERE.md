@@ -1,6 +1,6 @@
-# NOFUNBOT audit update release candidate
+# NOFUNBOT v204.7 RC3 release candidate
 
-Package version: 21.10.0-rc.7. Archive label: v204.6 wizard and wiring repairs.
+Package version: 21.11.0-rc.3. Archive label: v204.7 Madden Connect + Conversation Intelligence + Structure Reset.
 
 Start with `docs/V204_6_WIZARD_WIRING_RC7.md` for the RC7 delta, then `docs/RC6_STABILITY_AND_DEPLOYMENT.md` for the underlying RC6 repair matrix and exact VS Code, GitHub, Railway, staging and rollback steps. RC6 repairs the thirteen RC5 fault cases. The current Word supplement is `docs/NOFUNBOT_RC6_Stability_Audit.docx`; older reports below are historical. Run `npm ci` followed by `npm run verify:local`.
 
@@ -17,3 +17,7 @@ Read `docs/V204_RELEASE_NOTES.md` for implemented capabilities, deployment steps
 This package includes source, tests, migration files and a lockfile. It contains no live database or Discord state and has not been deployed. Use a staging server and restored staging database before production. Preserve your existing database and BOT_DATA_DIR; do not replace them with this source archive. Keep one bot replica while legacy state projections remain.
 
 Core changes include a combined three-space cap, private league/event roles, scoped team ownership and operations, ID-based erasure, and permanent lifetime member result/award/stat history. Historical records without verified member IDs require reconciliation. Detailed sports metrics need verified entry or a future provider mapper. The release candidate does not claim every recommendation or live integration gate is complete.
+
+## v204.7 production-candidate note
+
+The current v204.7 RC3 source implements the Madden provider connection framework, conversation intelligence, natural planner expansion, and Base/Template/Custom structure reset. Read `docs/V204_7_RELEASE_COMPLETION_REPORT.md` before deployment. Production promotion requires the clean-install full-suite/TypeScript/Prisma/release-preflight commands listed there to pass.

@@ -578,15 +578,15 @@ function _wizardStatus(settings = serverSettings.getSettings(), prefs = wizardPr
   const commTone = serverSettings.getEffectiveToneProfile(settings, 'commissioner');
   const missing = [];
   if (!settings.customStructureMode) missing.push('structure mode');
-  if (!settings.serverTemplate) missing.push('server template');
-  const subOpts = settings.serverTemplate ? getTemplateSubtemplateOptions(settings.serverTemplate) : [];
-  if (subOpts.length && !settings.serverSubtemplate) missing.push('subtemplate');
+  if (settings.customStructureMode === 'template') {
+    if (!settings.serverTemplate) missing.push('server template');
+    const subOpts = settings.serverTemplate ? getTemplateSubtemplateOptions(settings.serverTemplate) : [];
+    if (subOpts.length && !settings.serverSubtemplate) missing.push('subtemplate');
+  }
+  if (settings.customStructureMode === 'custom' && (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length)) missing.push('custom templates');
   if (!settings.audienceRating) missing.push('audience level');
   if (!memberTone.length) missing.push('member AI tone');
   if (!settings.useSharedToneProfile && !commTone.length) missing.push('commissioner AI tone');
-  if (settings.customStructureMode === 'custom') {
-    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) missing.push('custom categories/channels');
-  }
   return { canInitialize: missing.length === 0, missing };
 }
 
@@ -1066,8 +1066,13 @@ if (cid === 'wizard_next') {
   const currentStep = wiz.currentStep || 'mode';
 
   if (currentStep === 'mode') {
-    if (!settings.customStructureMode || !settings.serverTemplate) {
-      return interaction.followUp({ content:'⚠️ Choose a structure strategy and server template before continuing.', flags:64 }).catch(() => null);
+    if (!settings.customStructureMode) {
+      return interaction.followUp({ content:'⚠️ Choose a structure strategy before continuing.', flags:64 }).catch(() => null);
+    }
+    if (settings.customStructureMode === 'template') {
+      if (!settings.serverTemplate) return interaction.followUp({ content:'⚠️ Choose a server template before continuing.', flags:64 }).catch(() => null);
+      const subOpts = getTemplateSubtemplateOptions(settings.serverTemplate);
+      if (subOpts.length && !settings.serverSubtemplate) return interaction.followUp({ content:'⚠️ Choose a subtemplate before continuing.', flags:64 }).catch(() => null);
     }
     const nextStage = settings.customStructureMode === 'custom' ? 'custom_structure' : 'tone';
     wizardStateService.patch({ currentStep: nextStage, lastAdvancedAt: Date.now() });
@@ -1078,12 +1083,12 @@ if (cid === 'wizard_next') {
         : 'Now choose audience level and AI tones.'));
   }
   if (currentStep === 'custom_structure') {
-    if (!Array.isArray(settings.customCatalogSelections) || !settings.customCatalogSelections.length) {
-      return interaction.followUp({ content:'⚠️ Choose at least one custom pack before continuing.', flags:64 }).catch(() => null);
+    if (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length) {
+      return interaction.followUp({ content:'⚠️ Choose at least one template for Custom Structure before continuing.', flags:64 }).catch(() => null);
     }
     wizardStateService.patch({ currentStep: 'tone', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'tone' });
-    return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, 'Custom structure picks saved. Now choose audience level and AI tones.'));
+    return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, 'Custom templates/subtemplates saved. Now choose audience level and AI tones.'));
   }
   if (currentStep === 'tone') {
     if (!settings.audienceRating) {
@@ -1186,7 +1191,17 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
   if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
   try { await interaction.deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
-  serverSettings.saveSettings({ ...serverSettings.getSettings(), customStructureMode: selected === '__clear__' ? '' : selected });
+  const mode = selected === '__clear__' ? '' : selected;
+  const current = serverSettings.getSettings();
+  const patch = { ...current, customStructureMode: mode };
+  if (mode === 'base') {
+    patch.serverTemplate = ''; patch.serverSubtemplate = ''; patch.customTemplateSelections = []; patch.customSubtemplateSelections = [];
+  } else if (mode === 'template') {
+    patch.customTemplateSelections = []; patch.customSubtemplateSelections = [];
+  } else if (mode === 'custom') {
+    patch.serverTemplate = ''; patch.serverSubtemplate = '';
+  }
+  serverSettings.saveSettings(patch);
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, selected === '__clear__' ? 'Structure mode selection cleared.' : `Structure mode saved: **${String(selected).toUpperCase()}**.`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_arrangement_select') {
@@ -1194,6 +1209,23 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_arrangement_sel
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customArrangementMode: interaction.values[0] });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Custom arrangement saved: **${String(interaction.values[0]).toUpperCase()}**.`));
 }
+if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_template_select') {
+  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interaction.deferUpdate(); } catch (_e) {}
+  const current = serverSettings.getSettings();
+  const templates = interaction.values.filter(v => v !== '__none__');
+  const validSubs = (current.customSubtemplateSelections || []).filter(v => templates.includes(String(v).split(':')[0]));
+  serverSettings.saveSettings({ ...current, customTemplateSelections: templates, customSubtemplateSelections: validSubs });
+  return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Saved **${templates.length}** custom template(s).`));
+}
+if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_subtemplate_select') {
+  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interaction.deferUpdate(); } catch (_e) {}
+  const values = interaction.values.filter(v => v !== '__none__');
+  serverSettings.saveSettings({ ...serverSettings.getSettings(), customSubtemplateSelections: values });
+  return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Saved **${values.length}** custom subtemplate(s).`));
+}
+
 if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_catalog_select') {
   if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
   try { await interaction.deferUpdate(); } catch (_e) {}
@@ -1419,6 +1451,8 @@ if (cid === 'bot_setup_initialize') {
         structureMode: chosenStructure,
         arrangementMode: buildSettings.customArrangementMode,
         customSelections: buildSettings.customCatalogSelections,
+        customTemplateSelections: buildSettings.customTemplateSelections,
+        customSubtemplateSelections: buildSettings.customSubtemplateSelections,
       });
     } else {
       log.info('[BUILD] Full build path — flush + create from template');
@@ -1427,6 +1461,8 @@ if (cid === 'bot_setup_initialize') {
         structureMode: chosenStructure,
         arrangementMode: buildSettings.customArrangementMode,
         customSelections: buildSettings.customCatalogSelections,
+        customTemplateSelections: buildSettings.customTemplateSelections,
+        customSubtemplateSelections: buildSettings.customSubtemplateSelections,
       });
     }
     serverSettings.saveSettings({ ...serverSettings.getSettings(), setupCompletedAt: Date.now(), serverInitialized: true });
@@ -1747,14 +1783,15 @@ if (cid.startsWith('comp_predictions_start::')) {
     if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
     const approved = cid.startsWith('trade_approve_');
     const tradeId  = cid.replace(/^trade_(approve|decline)_/,'');
-    const trade = _state.pendingTrades.get(tradeId);
-    if (!trade) return interaction.reply({content:'⚠️ Trade already processed.',flags:64});
+    const tradeDecision = require('../services/tradeWorkflowService').decide(_state, tradeId, { approved, actorId:interaction.user.id });
+    if (!tradeDecision.ok) return interaction.reply({content:'⚠️ Trade already processed.',flags:64});
+    const trade = tradeDecision.trade;
     const destCh = _getCh(guild, approved?'acceptedTrades':'declinedTrades');
     const embed = new EmbedBuilder().setColor(approved?0x2ecc71:0xe74c3c).setTitle(approved?'✅ TRADE APPROVED':'❌ TRADE DECLINED')
       .addFields({name:'Trade ID',value:tradeId,inline:true},{name:'Proposing',value:`${trade.proposerTeam} (${trade.proposerBase})`,inline:true},{name:'Target',value:`${trade.targetTeam} (${trade.targetBase})`,inline:true},{name:'Details',value:trade.details},{name:'Decision By',value:`${interaction.user}`}).setTimestamp();
     if (destCh) await destCh.send({content:approved?'@everyone':undefined,embeds:[embed],allowedMentions:approved?{parse:['everyone']}:{}}).catch(()=>null);
     const proposerM = await guild.members.fetch(trade.proposerId).catch(()=>null);
-    const targetEntry = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===norm(trade.targetBase));
+    const targetEntry = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===norm(trade.targetBase) && String(t.leagueId || '')===String(trade.leagueId || ''));
     const targetM = targetEntry?.ownerId?await guild.members.fetch(targetEntry.ownerId).catch(()=>null):null;
     if (proposerM||targetM) {
       const mentions = [proposerM,targetM].filter(Boolean).map(m=>`${m}`).join(' ');
@@ -1765,7 +1802,6 @@ if (cid.startsWith('comp_predictions_start::')) {
       new ButtonBuilder().setCustomId(`trade_decline_${tradeId}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger).setDisabled(true),
     );
     await interaction.update({components:[disabled]}).catch(()=>null);
-    _state.pendingTrades.delete(tradeId);
   }
 
   // ── Rejoin buttons (previously kicked member) ──
@@ -2158,7 +2194,8 @@ async function _handleCommand(interaction, commandMeta = null) {
           .setColor(summary.serverInitialized ? 0x2ecc71 : 0xffa500)
           .setTitle('🏗️ Server Hierarchy Status')
           .addFields(
-            { name: 'Template',         value: ok(summary.templateSet) + ' ' + (settings.serverTemplate || 'not set'), inline: true },
+            { name: 'Structure',        value: ok(!!summary.structureMode) + ' ' + (summary.structureMode || 'not set'), inline: true },
+            { name: 'Template',         value: ok(summary.templateSet) + ' ' + (settings.serverTemplate || (summary.structureMode === 'base' ? 'not used' : summary.structureMode === 'custom' ? `${settings.customTemplateSelections?.length || 0} selected` : 'not set')), inline: true },
             { name: 'Subtemplate',      value: ok(summary.subtemplateSet) + ' ' + (settings.serverSubtemplate || 'none'), inline: true },
             { name: 'Initialized',      value: ok(summary.serverInitialized), inline: true },
             { name: 'Communities',      value: ok(summary.communitiesExist) + ' ' + communities.length + ' defined', inline: true },
@@ -2168,7 +2205,7 @@ async function _handleCommand(interaction, commandMeta = null) {
             { name: 'Wizard stage',     value: summary.wizardStage, inline: true },
             { name: 'Bot status',       value: summary.botStatus, inline: true },
           )
-          .setFooter({ text: 'Template → Subtemplate → Community Type → Communities → Spaces → Events / Leagues / Teams' })
+          .setFooter({ text: 'Structure → optional template/subtemplate → Community Type → Communities → Spaces → Events / Leagues / Teams' })
           .setTimestamp()
         ]});
       } catch (err) {
@@ -2179,8 +2216,9 @@ async function _handleCommand(interaction, commandMeta = null) {
     case 'setup-community': {
       if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
       const settings = serverSettings.getSettings();
-      if (!settings.serverTemplate) {
-        return interaction.reply({ content:'🏗️ Run /setup-server first to choose a template before creating communities.', flags:64 });
+      const structureError = hierarchyService.checkTemplateBeforeCommunity(settings);
+      if (structureError) {
+        return interaction.reply({ content:`🏗️ ${structureError}`, flags:64 });
       }
       const communityName = interaction.options.getString('name');
       const communityType = interaction.options.getString('type') || 'social';
@@ -2516,44 +2554,125 @@ case 'set-league-source-mode': {
 }
 case 'set-live-sync': {
   if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  await interaction.deferReply({flags:64});
+
+  const actions = require('../services/providerConnectionActionService');
+  const pcs = require('../services/providerConnectionService');
+  const providerService = require('../services/providerService');
   const provider = interaction.options.getString('provider');
   const endpointUrl = interaction.options.getString('endpoint-url');
   const autoSyncOnTrigger = interaction.options.getBoolean('auto-sync-on-trigger');
   const loadCurrentWeekIntoLiveSchedule = interaction.options.getBoolean('load-current-week');
   const runWeeklyAutomationAfterSync = interaction.options.getBoolean('run-weekly-automation');
-  const next = { provider };
-  if (endpointUrl != null) next.endpointUrl = endpointUrl.trim();
-  if (autoSyncOnTrigger != null) next.autoSyncOnTrigger = autoSyncOnTrigger;
-  if (loadCurrentWeekIntoLiveSchedule != null) next.loadCurrentWeekIntoLiveSchedule = loadCurrentWeekIntoLiveSchedule;
-  if (runWeeklyAutomationAfterSync != null) next.runWeeklyAutomationAfterSync = runWeeklyAutomationAfterSync;
-  const saved = liveSync.saveLiveSyncConfig(next);
-  return interaction.reply({
-    content:
-      `✅ Live sync updated.\n` +
-      `• Source mode: **${saved.sourceMode}**\n` +
-      `• Provider: **${saved.provider}**\n` +
-      `• Endpoint override: **${saved.endpointUrl ? 'SET' : 'ENV/DEFAULT'}**\n` +
-      `• Auto-sync on trigger: **${saved.autoSyncOnTrigger ? 'ON' : 'OFF'}**\n` +
-      `• Load current week after sync: **${saved.loadCurrentWeekIntoLiveSchedule ? 'ON' : 'OFF'}**\n` +
-      `• Run weekly automation after sync: **${saved.runWeeklyAutomationAfterSync ? 'ON' : 'OFF'}**`,
-    flags:64,
-  });
+  const connectionAction = interaction.options.getString('connection-action') || 'configure';
+  const externalLeagueId = interaction.options.getString('external-league-id');
+  const providerSecret = interaction.options.getString('provider-secret');
+  const resourceConfigRaw = interaction.options.getString('resource-config-json');
+
+  const leagueId = actions.resolveLeagueId();
+  if (!leagueId) {
+    return interaction.editReply('❌ I cannot safely determine which league to configure. Run this from a league-scoped channel, or make only one league active, then try again.');
+  }
+
+  if (provider === 'off') {
+    activeLeagueService.setDataSourceMode(leagueId, 'custom_bot_managed');
+    // Per-league source mode is authoritative. Do not clear the legacy global provider here because another league may still use it.
+    // Keep configured connections dormant so a commissioner can reconnect without losing setup.
+    liveSync.saveLiveSyncConfig({ sourceMode:'custom_bot_managed', provider:'off' });
+    return interaction.editReply(
+      `✅ External live sync is **OFF** for league **${leagueId}**.\n` +
+      `• Source mode: **custom_bot_managed**\n` +
+      `• Existing provider connections were preserved but are not authoritative until reactivated.`
+    );
+  }
+
+  let resourceConfig = {};
+  if (resourceConfigRaw) {
+    try {
+      const parsed = JSON.parse(resourceConfigRaw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be a JSON object');
+      resourceConfig = (provider === 'neonsportz' && !parsed.resourceUrls) ? { resourceUrls: parsed } : parsed;
+    } catch (e) {
+      return interaction.editReply(`❌ Resource config JSON is invalid: ${String(e.message || e).slice(0,140)}`);
+    }
+  }
+
+  const existing = pcs.getConnection(leagueId, provider);
+  const priorCfg = existing?.config || {};
+  const config = {
+    ...priorCfg,
+    ...resourceConfig,
+    ...(autoSyncOnTrigger != null ? { autoSyncOnTrigger } : {}),
+    ...(loadCurrentWeekIntoLiveSchedule != null ? { loadCurrentWeekIntoLiveSchedule } : {}),
+    ...(runWeeklyAutomationAfterSync != null ? { runWeeklyAutomationAfterSync } : {}),
+  };
+
+  let out;
+  const actionArgs = {
+    leagueId,
+    provider,
+    endpointUrl: endpointUrl != null ? endpointUrl.trim() : undefined,
+    externalLeagueId: externalLeagueId != null ? externalLeagueId.trim() : undefined,
+    secret: providerSecret !== null ? providerSecret : undefined,
+    config,
+  };
+
+  if (connectionAction === 'configure') {
+    out = await actions.configure(actionArgs).catch(e => ({ok:false,reason:e.message}));
+  } else {
+    const fn = actions[connectionAction];
+    if (typeof fn !== 'function') return interaction.editReply(`❌ Unknown connection action: ${connectionAction}`);
+    out = await fn(actionArgs).catch(e => ({ok:false,reason:e.message}));
+  }
+  if (!out?.ok) return interaction.editReply(`❌ Provider connection **${connectionAction}** failed: **${out?.reason || 'unknown error'}**`);
+
+  // Legacy liveSync.json remains a compatibility mirror only. It must not demote the authoritative connection state.
+  if (connectionAction === 'activate') {
+    liveSync.saveLiveSyncConfig({
+      sourceMode:'external_sync', provider,
+      endpointUrl: out.connection?.endpointUrl || existing?.endpointUrl || '',
+      autoSyncOnTrigger: !!(out.connection?.config?.autoSyncOnTrigger ?? config.autoSyncOnTrigger),
+      loadCurrentWeekIntoLiveSchedule: (out.connection?.config?.loadCurrentWeekIntoLiveSchedule ?? config.loadCurrentWeekIntoLiveSchedule) !== false,
+      runWeeklyAutomationAfterSync: (out.connection?.config?.runWeeklyAutomationAfterSync ?? config.runWeeklyAutomationAfterSync) !== false,
+    });
+  } else if (connectionAction === 'disconnect' || connectionAction === 'fallback') {
+    liveSync.saveLiveSyncConfig({ sourceMode:'custom_bot_managed', provider:'off' });
+  }
+
+  const current = pcs.getConnection(leagueId, provider) || out.connection || existing;
+  const tokenNote = out.receiverUrl
+    ? `\n• Receiver URL: **${out.receiverUrl}**\n  Save this URL now. Newly generated receiver tokens are shown only once.`
+    : '';
+  const healthNote = out.health
+    ? `\n• Health: **${out.health.healthy === false ? 'UNHEALTHY' : out.health.ok ? 'HEALTHY' : 'CHECKED'}**`
+    : '';
+  const sourceMode = activeLeagueService.getDataSourceMode(leagueId);
+  const secretNote = providerSecret !== null ? '\n• Provider credential: **ENCRYPTED/SAVED**' : '';
+
+  return interaction.editReply(
+    `✅ Provider connection **${connectionAction}** completed.\n` +
+    `• League: **${leagueId}**\n` +
+    `• Provider: **${provider}**\n` +
+    `• Connection state: **${current?.status || 'unknown'}**\n` +
+    `• Health: **${current?.healthStatus || 'unknown'}**\n` +
+    `• Source mode: **${sourceMode}**` + secretNote + tokenNote + healthNote
+  );
 }
 case 'live-sync-status': {
   if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
   const cfg = liveSync.getLiveSyncConfig();
+  const full = await require('../services/leagueSyncService').getSyncStatus().catch(() => null);
   const last = cfg.lastSyncAt ? `<t:${Math.floor(cfg.lastSyncAt/1000)}:R>` : 'N/A';
+  const connections = full?.connections || [];
+  const connectionLines = connections.length ? connections.map(c => `• ${c.providerKey}: **${c.status}** / health **${c.healthStatus}**${c.fallbackMode==='manual'?' / manual fallback':''}`).join('\n') : '• No league-scoped provider connections yet.';
   return interaction.reply({
     content:
       `📡 Live sync status\n` +
       `• Source mode: **${cfg.sourceMode}**\n` +
-      `• Provider: **${cfg.provider}**\n` +
-      `• Endpoint override: **${cfg.endpointUrl ? 'SET' : 'ENV/DEFAULT'}**\n` +
-      `• Auto-sync on trigger: **${cfg.autoSyncOnTrigger ? 'ON' : 'OFF'}**\n` +
-      `• Load current week after sync: **${cfg.loadCurrentWeekIntoLiveSchedule ? 'ON' : 'OFF'}**\n` +
-      `• Run weekly automation after sync: **${cfg.runWeeklyAutomationAfterSync ? 'ON' : 'OFF'}**\n` +
+      `• Effective provider: **${cfg.provider}**\n` +
       `• Last sync: **${last}**\n` +
-      `• Last status: **${cfg.lastSyncStatus || 'idle'}**`,
+      `• Last status: **${cfg.lastSyncStatus || 'idle'}**\n` +
+      `\n**Authoritative league connections**\n${connectionLines}`,
     flags:64,
   });
 }
@@ -2562,17 +2681,21 @@ case 'live-sync-now': {
   await interaction.deferReply({flags:64});
   try {
     const { postScheduleEmbed, startScheduleTimer } = hubReleaseService;
-    const result = await liveSync.syncNow(guild, _state, _state.players, {
+    const result = await require('../services/leagueSyncService').syncNow(guild, _state, {
       postScheduleEmbed,
       startScheduleTimer,
       getCh: _getCh,
       getTeamEmoji,
+      trigger: 'slash-live-sync-now',
     });
     if (!result.ok) {
       return interaction.editReply(
         `⚠️ Live sync did not run. Reason: **${result.reason}**.\n` +
         `Check source mode, provider, and endpoint settings.`
       );
+    }
+    if (result.mode === 'import-provider') {
+      return interaction.editReply(`✅ Processed **${result.processed || 0}** queued import(s) from **${result.provider}**. Sync run: **${result.syncRunId}**.`);
     }
     const autoNote = result.auto?.ran
       ? `\n🤖 Weekly automation: cleared **${result.auto.cleared}**, created **${result.auto.created}**.`
@@ -4126,11 +4249,23 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const yourTeam = interaction.options.getString('your-team');
       const targetTeam = interaction.options.getString('target-team');
       const details = interaction.options.getString('details');
-      const tradeId = _state.nextTradeId ? _state.nextTradeId() : `TRADE-${Date.now()}`;
-      _state.pendingTrades.set(tradeId, { tradeId, proposerId: interaction.user.id, yourTeam, targetTeam, details, createdAt: Date.now() });
+      const leagueId = (() => { try { return require('../league/spaceContext').current() || null; } catch { return null; } })();
+      const proposal = require('../services/tradeWorkflowService').propose(_state, {
+        proposerId: interaction.user.id, yourTeam, targetTeam, details, leagueId,
+      });
+      if (!proposal.ok) {
+        const friendly = proposal.reason === 'league-ambiguous'
+          ? `That team exists in multiple leagues (${(proposal.leagues || []).join(', ')}). Run the command from the league scope you mean.`
+          : proposal.reason;
+        return interaction.reply({ content:`❌ Trade proposal was not created: **${friendly}**.`, flags:64 });
+      }
+      const trade = proposal.trade;
       const ch = _getCh(guild, 'pendingTrades');
-      if (ch) await ch.send(`📨 **${tradeId}**\n**${yourTeam}** ↔ **${targetTeam}**\n${details}\nProposed by <@${interaction.user.id}>`).catch(() => null);
-      return interaction.reply({ content:`✅ Trade proposal submitted as **${tradeId}**.`, flags:64 });
+      if (ch) await ch.send(`📨 **${trade.tradeId}**
+**${trade.proposerTeam}** ↔ **${trade.targetTeam}**
+${trade.details}
+Proposed by <@${interaction.user.id}>`).catch(() => null);
+      return interaction.reply({ content:`✅ Trade proposal submitted as **${trade.tradeId}**.`, flags:64 });
     }
 
     case 'transaction': {

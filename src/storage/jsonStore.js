@@ -54,7 +54,7 @@ let dbPool = null;
 let dbEnabled = false;
 let bootstrapped = false;
 
-const SPACE_FILES = new Set(['leagueRuntime.json','automationPolicy.json','scheduleRegistry.json','weeklyAutomation.json','liveSync.json','hubWeeklyData.json','leagueConfig.json','rewardHistory.json','scheduleStateRuntime.json','spaceState.json','importedLeagueData.json','streamOps.json','leagueMemory.json','importRuns.json','importArtifacts.json','leagueConfigDefaults.json']);
+const SPACE_FILES = new Set(['leagueRuntime.json','automationPolicy.json','scheduleRegistry.json','weeklyAutomation.json','liveSync.json','hubWeeklyData.json','leagueConfig.json','rewardHistory.json','scheduleStateRuntime.json','spaceState.json','importedLeagueData.json','streamOps.json','leagueMemory.json','importRuns.json','importArtifacts.json','leagueConfigDefaults.json','companionSnapshots.json','providerDataSnapshots.json']);
 function scopedFilename(filename) {
   const id = require('../league/spaceContext').current();
   return id && SPACE_FILES.has(filename) ? `space_${encodeURIComponent(id)}__${filename}` : filename;

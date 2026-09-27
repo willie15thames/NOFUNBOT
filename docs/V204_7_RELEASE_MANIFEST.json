@@ -1,0 +1,86 @@
+{
+  "release": "NOFUNBOT v204.7",
+  "packageVersion": "21.11.0-rc.3",
+  "status": "production-candidate",
+  "date": "2026-09-27",
+  "implementation": {
+    "conversationIntelligence": "implemented",
+    "explicitMentionSpeechGate": "implemented",
+    "naturalPlannerExpansion": "implemented",
+    "baseTemplateCustomStructureReset": "implemented",
+    "simpleGeneralTemplates": "implemented",
+    "providerConnectionControlPlane": "implemented",
+    "companionDirect": "implemented",
+    "neonSportz": "implemented",
+    "customEndpoint": "implemented",
+    "manualFallback": "implemented",
+    "directEA": "intentionally-disabled-until-authorized-interface",
+    "tradeWorkflowOwner": "implemented",
+    "multiLeagueProviderFailSafe": "implemented",
+    "providerGlobalAuthorityIsolation": "implemented"
+  },
+  "focusedVerification": {
+    "structureSemantics": {
+      "passed": 7,
+      "failed": 0
+    },
+    "conversationAwareness": {
+      "passed": 10,
+      "failed": 0
+    },
+    "speechGate": {
+      "passed": 4,
+      "failed": 0
+    },
+    "naturalPlanner": {
+      "passed": 36,
+      "failed": 0
+    },
+    "providerDurability": {
+      "passed": 11,
+      "failed": 0
+    },
+    "providerFaults": {
+      "passed": 8,
+      "failed": 0
+    },
+    "messageRouting": {
+      "passed": 7,
+      "failed": 0
+    },
+    "tradeFlow": {
+      "passed": 6,
+      "failed": 0
+    },
+    "targetedTestsTotal": {
+      "passed": 100,
+      "failed": 0
+    },
+    "javascriptSyntaxFiles": {
+      "checked": 238,
+      "failed": 0
+    },
+    "undefinedIdentifierGuard": "pass",
+    "commandContract": {
+      "status": "pass",
+      "commandDefinitions": 116,
+      "routerCases": 129,
+      "classifiedLegacyInternal": 13
+    },
+    "changelogGuard": "pass",
+    "providerContract": {
+      "passed": 11,
+      "failed": 0
+    }
+  },
+  "promotionGatesNotCertifiedInBuildEnvironment": [
+    "npm ci",
+    "npm test aggregate historical suite",
+    "npm run tsc",
+    "Prisma CLI schema/migration validation",
+    "npm run release:verify aggregate",
+    "npm run deploy:preflight"
+  ],
+  "promotionGateReason": "Fresh dependency installation timed out in the build container. Run the clean-environment gates on the developer workstation or CI before production promotion.",
+  "releaseCandidate": "RC3"
+}

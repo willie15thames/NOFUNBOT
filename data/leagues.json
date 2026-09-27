@@ -1,8 +1,0 @@
-{
-  "leagues": [],
-  "meta": {
-    "serverIsContainer": true,
-    "defaultAdvanceHours": 48,
-    "notes": "Commissioners can see all leagues. Members should only see leagues they belong to."
-  }
-}

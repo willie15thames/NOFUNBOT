@@ -17,7 +17,7 @@
  *   1. SYSTEM BYPASS (setup/install commands always pass)
  *   2. BOT STATUS CHECK (killed → only kill-flow commands)
  *   3. WIZARD STATE CHECK (installation mode → only allowlisted commands)
- *   4. SETUP STEP ENFORCEMENT (template required before communities, etc.)
+ *   4. SETUP STEP ENFORCEMENT (structure mode requirements before communities, etc.)
  *   5. GATE CHECKS (timezone / community — silent visibility, never message spam)
  *   6. COMMAND EXECUTION
  */
@@ -53,8 +53,13 @@ const TEAM_ENABLED_COMMUNITY_TYPES = new Set([
  * Returns null (pass) or an error string (block).
  */
 function checkTemplateBeforeCommunity(settings) {
-  if (!settings.serverTemplate) {
-    return 'Choose a server template before creating communities. Communities need a template to know what kind of spaces to build.';
+  const mode = String(settings?.customStructureMode || '').toLowerCase();
+  if (!mode) return 'Choose a structure mode before creating communities.';
+  if (mode === 'template' && !settings.serverTemplate) {
+    return 'Choose a server template before creating communities in Template Structure.';
+  }
+  if (mode === 'custom' && (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length)) {
+    return 'Choose at least one template before creating communities in Custom Structure.';
   }
   return null;
 }
@@ -64,9 +69,8 @@ function checkTemplateBeforeCommunity(settings) {
  * Returns null (pass) or an error string (block).
  */
 function checkCommunitiesExistBeforeSelector(settings, availableCommunities = []) {
-  if (!settings.serverTemplate) {
-    return 'No template selected — community selector requires a template first.';
-  }
+  const structureError = checkTemplateBeforeCommunity(settings);
+  if (structureError) return structureError;
   if (!availableCommunities || availableCommunities.length === 0) {
     return 'No communities have been defined yet. Create communities before opening the selector.';
   }
@@ -198,8 +202,9 @@ function buildHierarchySummary(settings, availableCommunities = []) {
   const teamsEnabled = teamsAllowedForCommunityType(communityType);
 
   return {
-    templateSet: !!settings.serverTemplate,
-    subtemplateSet: !!settings.serverSubtemplate,
+    structureMode: String(settings.customStructureMode || ''),
+    templateSet: String(settings.customStructureMode || '') === 'base' ? true : (String(settings.customStructureMode || '') === 'custom' ? !!settings.customTemplateSelections?.length : !!settings.serverTemplate),
+    subtemplateSet: String(settings.customStructureMode || '') === 'base' ? true : (String(settings.customStructureMode || '') === 'custom' ? true : !!settings.serverSubtemplate),
     serverInitialized: !!settings.serverInitialized,
     communitiesExist: availableCommunities.length > 0,
     timezoneGateAllowed: isTimezoneGateAllowed(settings),

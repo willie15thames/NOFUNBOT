@@ -394,10 +394,11 @@ function registerAll(engine) {
       fn: async ctx => {
         const validation = require('./validationGateService');
         const settings = require('./serverSettingsService').getSettings();
-        if (!settings.serverTemplate) throw new Error('No server template selected');
+        const structureCheck = validation.validateTemplateDependencies(settings);
+        if (!structureCheck.ok) throw new Error(`Structure configuration: ${structureCheck.failures.join(', ')}`);
         const envCheck = validation.validateEnvironment(['TOKEN', 'CLIENT_ID', 'GUILD_ID']);
         if (!envCheck.ok) throw new Error(`Environment: ${envCheck.failures.join(', ')}`);
-        return { template: settings.serverTemplate };
+        return { structureMode: settings.customStructureMode, template: settings.serverTemplate || null };
       },
     },
     {

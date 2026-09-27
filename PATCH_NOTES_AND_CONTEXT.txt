@@ -1,3 +1,17 @@
+[V204.7 RC1] Conversation intelligence + natural action planning | 2026-09-27 | package 21.11.0-rc.1
+
+- FEATURE: Added memory-only passive channel awareness. Ordinary human guild messages can populate a bounded guild+channel context window without any AI call, typing indicator, reaction, reply, mutation, or persistence. Default TTL is 30 minutes / 32 messages and operational channels are excluded by default.
+- BEHAVIOR: Conversational speech is now explicit-mention-only across member AI, commissioner AI, and IT AI. Merely typing in #commissioner-ai or #it-ops and replying to the bot without @mention no longer authorizes AI speech. Slash commands/components/system workflows remain explicit event paths and are unchanged.
+- FEATURE: Added deterministic natural action planner for commissioner team assignment. Requests such as `@myBot put Paul on the Ravens` resolve the member, team, and league, then reuse `openTeamsService.claimTeam()` instead of returning slash-command guidance.
+- UX: Multiple leagues no longer force a league question when the requested team exists in exactly one league. If the same requested team exists in multiple leagues, myBot asks only which league and retains the rest of the plan for a short clarification window. Ambiguous member names request an @mention instead of guessing.
+- UX: Explicit natural scoping such as `@myBot put Paul on the Ravens in Sunday League` is normalized into a clean team query plus league hint. The current explicit @mention message is excluded from ambient prompt rendering so the same request is not duplicated in model context.
+- SAFETY: Passive context is labelled untrusted in AI prompts and cannot authorize an action. Natural mutations use current-message/pending explicit entities plus existing domain validation. No ambient conversation archive is written to JSON, PostgreSQL, Redis, or analytics.
+- FALLBACK: If the deterministic planner does not recognize an intent, the request falls through to the existing commissioner AI/action-catalog path. If AI is down, supported deterministic team assignment still works. Process restart safely clears ambient and pending conversation state without touching durable league state.
+- DOCS: Added docs/V204_7_CONVERSATION_INTELLIGENCE_RC1.md and expanded the comprehensive v204.7 implementation specification with conversation-awareness architecture, privacy boundaries, ambiguity logic, examples, failure matrix, test plan, and release gates.
+- AFFECTED: index.js; src/handlers/commissionerHandler.js; src/handlers/memberMentionHandler.js; src/handlers/itHandler.js; src/services/ambientConversationService.js (new); src/services/naturalActionPlannerService.js (new); tests/conversationAwareness.test.js (new); .env.example; docs; package metadata.
+- VALIDATION IN THIS WORKSPACE: modified JavaScript syntax checks pass; unresolved executable identifier scan passes; command-contract check passes (116 definitions / 129 router cases / 13 classified legacy-internal); focused zero-dependency conversation-awareness suite passes 7/7. Full `npm test` still cannot execute because the extracted dependency tree is incomplete (`MODULE_NOT_FOUND` from the shared test harness), and `npm run tsc` remains dependency-blocked; do not represent RC1 as production-certified until `npm ci && npm test && npm run tsc` pass in a dependency-complete environment.
+- NO-REGRESSION: Existing slash commands, domain ownership, scoped team identity, Discord nickname policy, provider/advance ownership, confirmation rules, moderation workflows, and system-event automation are not replaced by passive conversation state.
+
 [V204.6] Wizard semantics, edit reconciliation provenance, and scoped command wiring | 2026-09-27 | package 21.10.0-rc.7
 
 - FIX: The setup wizard no longer presents a second “Custom Bot Setup” selection that can disagree with BASE/CUSTOM/EMPTY. Structure Strategy is the single build authority. BASE means core server lanes plus the selected template; CUSTOM means core lanes plus only the selected custom packs; EMPTY means the selected template plus staff/setup controls without the standard community stack.
@@ -2894,3 +2908,51 @@ FIX: In Railway dashboard → Service → Settings → Volumes → add a volume 
 - Commands: lifecycle compatibility is `/workflow bot kill|ignite|status`; guide republish is `/workflow guide republish`. Legacy router handlers remain the executor target through commandAliasService.
 - CI: run `npm install` (this package does not currently include a lockfile), Prisma generate, `npm run release:verify`, and deploy preflight. `release:verify` now checks command contracts and unresolved executable identifiers.
 - Deliberately deferred: interactionRouter decomposition, wholesale silent-catch cleanup, and JSON-to-Postgres read-authority cutover. Those are larger P2/migration changes and were not bundled into this stabilization patch because doing so would raise regression risk.
+
+
+============================================================
+V204.7 RC3 - PRODUCTION-CANDIDATE RELEASE CLOSURE HARDENING
+Date: 2026-09-27
+============================================================
+- Provider authority is now fail-safe when league scope is ambiguous: unscoped multi-league resolution returns local/manual rather than a legacy global external provider.
+- League-scoped provider connection lifecycle no longer mutates the legacy runtime provider as authority; per-league ProviderConnection + dataSourceMode remain authoritative.
+- Production provider-connection durability now treats APP_ENV=production the same as NODE_ENV=production before permitting JSON compatibility fallback.
+- Natural planner action coverage was re-audited against the registered Action Catalog and broadened with deterministic rules replacement while preserving confirmation/permission/domain ownership.
+- Focused v204.7 release-closure regression suites now total 100 passing checks in this environment; JavaScript syntax, command contract, undefined-identifier and changelog guards pass.
+- Clean npm dependency install/full historical suite/TypeScript/Prisma/release-preflight certification remains an external promotion gate because package installation timed out in this container.
+
+============================================================
+V204.7 RC2 - MADDEN CONNECT + CONVERSATION INTELLIGENCE RELEASE CLOSURE
+Date: 2026-09-27
+============================================================
+- Closed stale pending natural-planner entity contamination.
+- Broadened deterministic natural planning through the registered action/domain layer.
+- Added explicit @mention-only conversational speech gate and bounded passive channel context.
+- Made passive context memory-only; no AI call/reply/mutation/persistence while observing.
+- Replaced Empty/Base ambiguity with Base, Template, Custom structure semantics.
+- Base no longer has or silently receives a template/subtemplate.
+- Added General/Simple template family with lightweight chat/gaming/sports/study/watch-party subtemplates.
+- Added league-scoped ProviderConnection/ProviderSyncRun/ProviderImportReceipt persistence and migrations.
+- Added encrypted provider secrets, hashed receiver tokens, connection lifecycle, manual fallback, recovery and health.
+- Hardened Companion/Neon acknowledgement so production success requires durable receipt/artifact first.
+- Added managed multi-league Companion/Neon route-token resolution and fail-closed ambiguity behavior.
+- Added Neon resource/pagination/retry and Custom URL conditional-sync support.
+- Added provider natural actions via the registered action catalog.
+- Added tradeWorkflowService as the trade proposal/decision state owner.
+- Added focused regressions for structure, speech gate, ambient context, natural planner, provider durability/faults, message routing and trade flow.
+- Fixed setup-community unresolved hierarchy identifier.
+- Updated README, deployment examples and v204.7 release completion report.
+- Full npm/TypeScript/Prisma aggregate certification remains a clean-environment release gate because npm dependency installation timed out in the build environment. Do not promote until those gates pass.
+
+v204.7 RC3 release-gate follow-up:
+- Fixed Companion export wrong-token handling so a configured legacy receiver returns security-safe 404 rather than gateway-not-configured 503.
+- Hardened tests/run-all.js so Railway production provider variables cannot contaminate hermetic provider regression tests.
+- Root cause was exposed only when running the full suite through `railway run`.
+
+v204.7 RC3 final release-gate follow-up:
+- Normalized NeonSportz missing-configuration reporting so both supported
+  configuration paths are reported individually.
+- Corrected the channel.send()/flags static pre-commit detector so it cannot
+  cross into a later interaction payload.
+- Added the required workflow ownership/failsafe/rollback contract metadata
+  to tradeWorkflowService.js.

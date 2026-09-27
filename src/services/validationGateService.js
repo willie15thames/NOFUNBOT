@@ -82,9 +82,13 @@ function validateEnvironment(requiredVars = []) {
 
 function validateTemplateDependencies(settings = {}) {
   const failures = [];
-  if (!settings.serverTemplate) failures.push('no-server-template');
+  const mode = String(settings.customStructureMode || '').toLowerCase();
+  if (!mode) failures.push('no-structure-mode');
+  if (mode === 'template' && !settings.serverTemplate) failures.push('no-server-template');
+  if (mode === 'custom' && (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length)) failures.push('no-custom-templates');
   return { ok: failures.length === 0, failures };
 }
+
 
 function validateBotPermissions(channel, permissionNames = []) {
   const failures = [];
@@ -165,7 +169,8 @@ function preflightForFlow(flowName, ctx = {}) {
       const env = validateEnvironment(['TOKEN', 'CLIENT_ID', 'GUILD_ID']);
       allFailures.push(...env.failures);
       const s2 = require('./serverSettingsService').getSettings();
-      if (!s2.serverTemplate) allFailures.push('no-template-selected');
+      const structure = validateTemplateDependencies(s2);
+      allFailures.push(...structure.failures);
       break;
     }
     case 'security-response': {
@@ -230,7 +235,8 @@ function validateServerInitialized() {
   const settings = require('./serverSettingsService').getSettings();
   const failures = [];
   if (!settings.serverInitialized) failures.push('server-not-initialized');
-  if (!settings.serverTemplate) failures.push('no-template');
+  const structure = validateTemplateDependencies(settings);
+  failures.push(...structure.failures);
   return { ok: failures.length === 0, failures };
 }
 

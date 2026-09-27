@@ -4,7 +4,7 @@
  * LAYER: HTTP transport (V202, spec §8)
  * PURPOSE: Transport adapter for POST /v1/providers/madden/companion/export/{leagueToken}. Reads the body under a
  *          hard size cap, delegates to exportGateway.receiveExport (durable receipt + dedupe), responds 2xx fast, and
- *          schedules parse/normalize/validate asynchronously so a slow parser never blocks the receiver.
+ *          returns only after the receipt/artifact is durable. Processing is owned by the recovery/sync worker, so a process crash after 202 cannot strand work.
  */
 
 'use strict';
@@ -20,11 +20,9 @@ function match(method, pathname) {
 }
 
 async function handle(params, req, body) {
-  const r = gateway.receiveExport({ leagueToken: params.leagueToken, contentType: req.headers['content-type'] || '', body });
-  if (r.importId && !r.duplicate && r.status === 202) {
-    setImmediate(() => { try { gateway.processImportRun(r.importId, {}); } catch {} });
-  }
+  const r = await gateway.receiveExportDurable({ leagueToken: params.leagueToken, leagueId: require('../../league/spaceContext').current(), contentType: req.headers['content-type'] || '', body });
   return { status: r.status, body: r.body };
 }
 
-module.exports = { ROUTE, match, handle, maxBytes: gateway.MAX_PAYLOAD_BYTES };
+function resolveSpace(params) { const r = gateway.resolveLeagueToken(params?.leagueToken); return r.valid ? r.leagueId : null; }
+module.exports = { ROUTE, routeName: 'madden-companion-export', match, handle, resolveSpace, maxBytes: gateway.MAX_PAYLOAD_BYTES };

@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const { isExplicitBotMention } = require('../services/explicitMentionGateService');
 // src/handlers/itHandler.js
 // IT role AI handler. Routes when:
 //   - Sender has IT_ROLE or is in IT_IDS (or is commissioner — they inherit IT)
@@ -323,7 +324,7 @@ async function runDiagCommand(command, guild, getCh, state, client) {
     case 'helpMenu': {
       const lines = Object.entries(DIAG_COMMANDS).map(([cmd, meta]) => `**${cmd}** — ${meta.desc}`).join('\n');
       return new EmbedBuilder().setColor(0x5865f2).setTitle('🛠️ IT Diagnostics — Commands')
-        .setDescription(`Mention the bot with any of these commands, or type them in #it-ops:\n\n${lines}\n\nYou can also ask natural language questions like "what's wrong" or "why won't it deploy" and the diagnostic engine will route to the right check.`)
+        .setDescription(`Mention the bot with any of these commands in #it-ops or another channel:\n\n${lines}\n\nYou can also ask natural language questions like "what's wrong" or "why won't it deploy" and the diagnostic engine will route to the right check.`)
         .setTimestamp();
     }
   }
@@ -336,12 +337,9 @@ function shouldHandleIT(message, client, getCh) {
   const isIT = isITMember(message.member, IT_ROLE, IT_IDS, COMM_ROLE, COMMISSIONER_IDS);
   if (!isIT) return false;
 
-  // In #it-ops channel — always handle
-  const itCh = getCh(message.guild, 'itOps');
-  if (itCh && message.channel.id === itCh.id) return true;
-
+  // V204.7 hard speech gate: being in #it-ops alone never authorizes AI speech.
   // @mention + IT member — only if message looks technical/diagnostic
-  const botMentioned = message.mentions.users?.has(client.user.id) ?? false;
+  const botMentioned = isExplicitBotMention(message, client);
   if (!botMentioned) return false;
 
   // Check if the message content looks like an IT/diagnostic query

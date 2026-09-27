@@ -1,7 +1,0 @@
-{
-  "schema": "nofunleague-team-registry",
-  "version": 1,
-  "teams": [],
-  "lastSyncedAt": null,
-  "notes": "Normalized team ownership registry used to keep open teams, owners, schedules, and weekly channel data aligned."
-}

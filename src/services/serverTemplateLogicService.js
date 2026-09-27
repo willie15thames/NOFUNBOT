@@ -12,6 +12,23 @@
 
 const { TEMPLATE_REGISTRY, getTemplate, resolveTemplateProfile } = require('./templateRegistryService');
 
+const BASE_PROFILE = {
+  key: 'base',
+  name: 'Base Structure',
+  summary: 'Core server structure only. No template or subtemplate is applied.',
+  leagueFriendly: false,
+  subservers: [],
+  guideBullets: [
+    'This server uses the Base Structure with only the shared core channels and bot services.',
+    'No template or subtemplate is active unless a commissioner later changes the structure mode.',
+    'Use commissioner tools to add communities, leagues, or other features intentionally.'
+  ],
+  joinHelp: 'Follow the core server guide and staff instructions for this community.',
+  aiHints: ['This server uses Base Structure. Do not invent a gaming, sports, or other template.'],
+  quickAnswers: {},
+  categories: [],
+};
+
 const UNSET_PROFILE = {
   key: '',
   name: 'Not selected yet',
@@ -35,13 +52,18 @@ function getTemplateKey(settings = {}) {
 }
 
 function getTemplateProfile(settings = {}) {
+  const mode = String(settings.customStructureMode || '').trim().toLowerCase();
+  if (mode === 'base') return BASE_PROFILE;
   const key = getTemplateKey(settings);
   return key ? resolveTemplateProfile(settings) : UNSET_PROFILE;
 }
 
+
 function buildBaseGuideText(settings = {}) {
   const profile = getTemplateProfile(settings);
-  return `This channel explains the server. Template: **${profile.name}**.\n\n• ${profile.guideBullets.join('\n• ')}\n• Use \`/manual\` for a guide based on **your** role.`;
+  const mode = String(settings.customStructureMode || '').trim().toLowerCase();
+  const label = mode === 'base' ? 'Structure' : 'Template';
+  return `This channel explains the server. ${label}: **${profile.name}**.\n\n• ${profile.guideBullets.join('\n• ')}\n• Use \`/manual\` for a guide based on **your** role.`;
 }
 
 function getGuideChannelName(settings = {}) {
@@ -59,7 +81,9 @@ function buildWelcomeText(serverName, settings = {}) {
   const purposeText = profile.leagueFriendly
     ? `the ${profile.name.toLowerCase()} layout and active communities`
     : `how ${profile.name.toLowerCase()} is structured`;
-  return `This is the home base for **${serverName}**.\n\n• Read **#rules** for server rules and conduct\n• Read **#${guideLabel}** for ${purposeText}\n• Read **#how-to-join** to get to the right place\n\nCurrent template: **${profile.name}**.`;
+  const mode = String(settings.customStructureMode || '').trim().toLowerCase();
+  const currentLabel = mode === 'base' ? 'Current structure' : 'Current template';
+  return `This is the home base for **${serverName}**.\n\n• Read **#rules** for server rules and conduct\n• Read **#${guideLabel}** for ${purposeText}\n• Read **#how-to-join** to get to the right place\n\n${currentLabel}: **${profile.name}**.`;
 }
 
 function buildHowToJoinText(settings = {}, hasLeague = false) {
@@ -102,6 +126,7 @@ function getGuideChannelTopic(settings = {}) {
 
 module.exports = {
   TEMPLATE_PROFILES: TEMPLATE_REGISTRY,
+  BASE_PROFILE,
   getTemplateKey,
   getTemplateProfile,
   getGuideChannelName,

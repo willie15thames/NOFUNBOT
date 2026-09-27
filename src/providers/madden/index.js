@@ -15,11 +15,16 @@ const exportGateway = require('./companion/exportGateway');
 const companionExport = createProvider({
   key: 'companion_export',
   label: 'Madden Companion export gateway (data only)',
-  verified: () => !!String(process.env.COMPANION_EXPORT_TOKEN || '').trim(),
-  capabilities: { dataImport: true, readSchedule: true, readLeagueState: true, readStats: false, webhook: false, advanceWeek: false, markReady: false, autoPilot: false, forceResult: false },
+  verified: () => {
+    if (String(process.env.COMPANION_EXPORT_TOKEN || '').trim() || String(process.env.COMPANION_EXPORT_TOKENS_JSON || '').trim()) return true;
+    try { const id=require('../../league/spaceContext').current(); return !!(id && require('../../services/providerConnectionService').getConnection(id,'companion_export')?.routeTokenHash); } catch { return false; }
+  },
+  capabilities: { dataImport: true, readSchedule: true, readLeagueState: true, readStats: true, webhook: false, advanceWeek: false, markReady: false, autoPilot: false, forceResult: false },
   methods: {
     async healthCheck() {
-      if (!String(process.env.COMPANION_EXPORT_TOKEN || '').trim()) return { ok: false, providerId: 'companion_export', healthy: false, reason: 'not-configured', missing: ['COMPANION_EXPORT_TOKEN'] };
+      let configured = !!(String(process.env.COMPANION_EXPORT_TOKEN || '').trim() || String(process.env.COMPANION_EXPORT_TOKENS_JSON || '').trim());
+      try { const id=require('../../league/spaceContext').current(); configured = configured || !!(id && require('../../services/providerConnectionService').getConnection(id,'companion_export')?.routeTokenHash); } catch {}
+      if (!configured) return { ok: false, providerId: 'companion_export', healthy: false, reason: 'not-configured', missing: ['Companion receiver token'] };
       const latest = exportGateway.getLatestSnapshot();
       return { ok: true, providerId: 'companion_export', healthy: true, lastValidatedAt: latest?.validatedAt || null };
     },

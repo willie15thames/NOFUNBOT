@@ -10,7 +10,7 @@
 
 'use strict';
 // src/services/trashTalkBank.js
-// Passive learning bank. Bot silently reads messages and learns:
+// Optional culture-learning bank. Disabled by default in v204.7; only explicit opt-in may persist derived chat data:
 //   - Slang and phrases members use with each other
 //   - Nicknames players give each other
 //   - Inside jokes and recurring bits
@@ -26,6 +26,8 @@ const log = makeLogger('trashBank');
 const BANK_CAP     = 100;  // max entries per bucket
 const LEARN_EVERY  = 6;    // run extraction every N messages per channel
 const REACTION_MIN = 2;    // min emoji reactions for a message to count as a "gold roast"
+
+function isEnabled() { return String(process.env.ENABLE_TRASH_TALK_LEARNING || '').toLowerCase() === 'true'; }
 
 // ── In-memory bank ────────────────────────────────────────────
 let _bank = {
@@ -47,6 +49,7 @@ let _bank = {
 
 // ── Persistence ───────────────────────────────────────────────
 function load() {
+  if (!isEnabled()) return;
   const saved = loadJson('trashTalkBank.json', null);
   if (saved) {
     _bank.culture    = saved.culture    || [];
@@ -57,6 +60,7 @@ function load() {
 }
 
 function save() {
+  if (!isEnabled()) return;
   const toSave = { culture: _bank.culture, players: _bank.players, goldRoasts: _bank.goldRoasts };
   saveJsonDebounced('trashTalkBank.json', toSave, 5000);
 }
@@ -67,6 +71,7 @@ function _cap(arr, max = BANK_CAP) {
 
 // ── Add entries ───────────────────────────────────────────────
 function addCulture(text, source) {
+  if (!isEnabled()) return;
   if (!text || text.length < 3) return;
   if (!isSafeToPersist(text)) return;
   // Deduplicate
@@ -77,6 +82,7 @@ function addCulture(text, source) {
 }
 
 function addPlayerData(userId, displayName, data) {
+  if (!isEnabled()) return;
   if (!_bank.players[userId]) {
     _bank.players[userId] = { userId, displayName, phrases: [], nicknames: [], style: '', lastUpdated: 0 };
   }
@@ -100,6 +106,7 @@ function addPlayerData(userId, displayName, data) {
 }
 
 function addGoldRoast(text, authorId, targetId, reactionCount) {
+  if (!isEnabled()) return;
   if (!isSafeToPersist(text)) return;
   _bank.goldRoasts.push({ text, authorId, targetId, reactions: reactionCount, timestamp: Date.now() });
   _bank.goldRoasts.sort((a, b) => b.reactions - a.reactions); // best first
@@ -109,6 +116,7 @@ function addGoldRoast(text, authorId, targetId, reactionCount) {
 
 // ── Build context string for AI prompt injection ──────────────
 function buildContext(targetUserId = null, opponentUserId = null) {
+  if (!isEnabled()) return null;
   const lines = [];
 
   // Gold roasts (top 5 that landed)
@@ -160,6 +168,7 @@ const STAFF_CHANNELS = new Set([
 // ── Passive learning from messages ────────────────────────────
 // Called on every message — throttled internally per channel
 async function learnFromMessage(message, aiCall, MODELS) {
+  if (!isEnabled()) return;
   if (message.author.bot) return;
   if (!message.content || message.content.length < 5) return;
   // Never learn from staff/admin lanes — keeps commissioner ops private
@@ -218,6 +227,7 @@ Be selective — only extract genuinely interesting slang, inside jokes, trash t
 
 // ── Gold roast detection (messageReactionAdd) ─────────────────
 async function checkGoldRoast(reaction, user) {
+  if (!isEnabled()) return;
   if (user.bot) return;
   const msg = reaction.message;
   if (msg.author.bot) return;
@@ -238,7 +248,7 @@ async function checkGoldRoast(reaction, user) {
   log.debug(`Gold roast logged from ${msg.author.username} (${totalReactions} reactions)`);
 }
 
-module.exports = {
+module.exports = { isEnabled,
   load,
   save,
   buildContext,
