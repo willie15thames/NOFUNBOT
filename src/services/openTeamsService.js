@@ -149,7 +149,7 @@ async function refreshOpenTeamsBoard(guild) {
   const hasConfiguredTeams = Array.isArray(_state.openTeamRegistry) && _state.openTeamRegistry.length > 0;
   if (!hasActiveLeague || !hasConfiguredTeams) return { skipped: true, reason: 'no-active-league' };
   for (const league of activeLeagueService.listActiveLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
-    const ch = (league.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && require('./leagueNamingService').matchesLeagueChannelKey(c.name,'open-teams'));
+    const ch = (league.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && /(^|\.)open-teams$/.test(c.name));
     if (!ch) continue;
     await upsertBoardMessage({boardKey:`openTeams:${guild.id}:${league.id}`,channel:ch,payload:{embeds:buildOpenTeamsEmbeds(guild,league.id),allowedMentions:{parse:[]}}});
   }
@@ -158,16 +158,15 @@ async function refreshOpenTeamsBoard(guild) {
 
 async function announceTeamOpen(guild, entry, reason) {
   const lg = activeLeagueService.getLeague(entry.leagueId);
-  const ch = (lg?.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && require('./leagueNamingService').matchesLeagueChannelKey(c.name,'announcements'));
+  const ch = (lg?.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && /(^|\.)announcements$/.test(c.name));
   if (!ch) return;
-  const roleId = lg.memberRoleId;
   await ch.send({
-    content: roleId ? `<@&${roleId}>` : undefined,
+    content: '@everyone',
     embeds: [new EmbedBuilder().setColor(0x2ecc71)
       .setTitle(`🏟 ${entry.displayTeam} is now open!`)
       .setDescription(`**${entry.displayTeam}** (slot: ${entry.baseTeam}) just opened — ${reason}.\nUse \`/select-team\` to claim it!`)
       .setTimestamp()],
-    allowedMentions: roleId ? { roles: [roleId], parse: [] } : { parse: [] },
+    allowedMentions: { parse: ['everyone'] },
   }).catch(() => null);
 }
 

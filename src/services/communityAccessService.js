@@ -63,7 +63,7 @@ async function ensureCommunityRoles(guild, settings = serverSettings.getSettings
   for (const community of communities) {
     const roleName = `Community • ${community.name}`;
     let role = guild.roles.cache.find(r => r.name === roleName);
-    if (!role) role = await guild.roles.create({ name: roleName, mentionable: false, reason: 'Community access role' });
+    if (!role) role = await guild.roles.create({ name: roleName, mentionable: false, reason: 'Community access role' }).catch(() => null);
     if (role) map.set(community.key, role);
   }
   return { communities, roles: map };
@@ -121,18 +121,16 @@ async function syncCommunityChannelPermissions(guild, settings = serverSettings.
   if (!guild) return { ok: false };
   const { communities, roles } = await ensureCommunityRoles(guild, settings);
   const roleMap = new Map(communities.map(c => [c.key, roles.get(c.key)]).filter(([, role]) => role));
-  const spaces = await require('./managedSpaceService').list(guild.id);
-  const privateCategories = new Set(spaces.flatMap(space => space.builtCategoryIds || []).map(String));
   const channels = [...guild.channels.cache.values()].filter(ch => ch?.permissionOverwrites?.edit && ch.type !== ChannelType.GuildCategory && ch.name !== CHANNEL_NAME);
   for (const ch of channels) {
-    if (privateCategories.has(String(ch.parentId)) || require('./activeLeagueService').findLeagueForChannel(ch)) continue; // Private space membership is exclusive.
+    if (require('./activeLeagueService').findLeagueForChannel(ch)) continue; // Space membership is exclusive; community roles must never grant access.
     const label = classifySpace(ch.name, settings);
     if (!label?.key) continue;
     const role = roleMap.get(label.key);
     if (!role) continue;
-    await ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false });
-    await ch.permissionOverwrites.edit(role.id, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true, UseApplicationCommands: true });
-    if (guild.members?.me?.id) await ch.permissionOverwrites.edit(guild.members.me.id, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true, UseApplicationCommands: true, ManageChannels: true, ManageMessages: true });
+    await ch.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }).catch(() => null);
+    await ch.permissionOverwrites.edit(role.id, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true, UseApplicationCommands: true }).catch(() => null);
+    if (guild.members?.me?.id) await ch.permissionOverwrites.edit(guild.members.me.id, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true, UseApplicationCommands: true, ManageChannels: true, ManageMessages: true }).catch(() => null);
   }
   return { ok: true, communities };
 }
@@ -147,31 +145,22 @@ async function applyCommunityMembership(member, values = []) {
       // Timezone gate or setup gate is blocking — don't grant community access yet
       return { ok: false, reason: `gate-blocked:${access.gate}`, message: access.reason };
     }
-  } catch (err) {
-    return { ok: false, reason: 'access-gate-unavailable', message: err.message };
-  }
+  } catch (_e) { /* gate check failures are non-fatal */ }
   const settings = serverSettings.getSettings();
   const { communities, roles } = await ensureCommunityRoles(member.guild, settings);
   const wanted = new Set((Array.isArray(values) ? values : []).map(_slug));
   const profile = memberProfiles.getProfile(member.id) || {};
-  await syncCommunityChannelPermissions(member.guild, settings);
-  const changed = [];
-  try {
-    for (const community of communities) {
-      const role = roles.get(community.key);
-      if (!role) throw new Error(`Community role missing for ${community.name}`);
-      if (wanted.has(community.key)) {
-        if (!member.roles.cache.has(role.id)) { await member.roles.add(role); changed.push({ role, added: true }); }
-      } else if (member.roles.cache.has(role.id)) {
-        await member.roles.remove(role); changed.push({ role, added: false });
-      }
-    }
-  } catch (err) {
-    const rollback = await Promise.allSettled(changed.reverse().map(({ role, added }) => added ? member.roles.remove(role) : member.roles.add(role)));
-    const failures = rollback.filter(result => result.status === 'rejected').map(result => result.reason?.message || String(result.reason));
-    throw new Error(`Community access update failed: ${err.message}${failures.length ? `; role rollback needs repair: ${failures.join(', ')}` : ''}`);
-  }
   memberProfiles.upsertProfile(member.id, { communities: [...wanted], lastCommunitySyncAt: Date.now(), lastSeenDisplayName: profile.lastSeenDisplayName || member.displayName || member.user?.username || 'member' });
+  for (const community of communities) {
+    const role = roles.get(community.key);
+    if (!role) continue;
+    if (wanted.has(community.key)) {
+      if (!member.roles.cache.has(role.id)) await member.roles.add(role).catch(() => null);
+    } else if (member.roles.cache.has(role.id)) {
+      await member.roles.remove(role).catch(() => null);
+    }
+  }
+  await syncCommunityChannelPermissions(member.guild, settings).catch(() => null);
   return { ok: true, selected: communities.filter(c => wanted.has(c.key)).map(c => c.name), communities };
 }
 

@@ -9,9 +9,10 @@
  */
 
 'use strict';
-const { CHANNEL_KEYS } = require('../../config/channels');
+const { CHANNEL_KEYS, REQUIRED_CHANNELS } = require('../../config/channels');
+const { loadJson } = require('../../storage/jsonStore');
 const { makeLogger } = require('../../utils/logger');
-const { findConfiguredChannel } = require('../channelTopologyService');
+const { matchesConfiguredChannel } = require('../channelTopologyService');
 const log = makeLogger('channels');
 const _reg = {};
 
@@ -20,16 +21,17 @@ async function resolveAllChannels(guild) {
   // MED-05 FIX: use EXACT match for startup resolution to prevent "welcome-archive"
   // matching the "welcome" key. includes:true is only for fuzzy search helpers.
   for (const key of Object.keys(CHANNEL_KEYS)) {
-    const found = findConfiguredChannel(guild, key, { textOnly: true });
+    const found = guild.channels.cache.find(channel => channel.isTextBased?.() && matchesConfiguredChannel(channel, key, { includes: false }));
     _reg[key] = found?.id || null;
   }
-  // A catalog key is not a required channel. League resources are validated
-  // by their recorded IDs, not as unscoped server channels.
-  const required = ['welcome','rules','announcements','serverGuide','howToJoin','commAI','adminHq'];
+  const activeLeagues = loadJson('activeLeagues.json', {}) || {};
+  const leagueConfig = loadJson('leagueConfig.json', {}) || {};
+  const hasActiveLeague = Object.keys(activeLeagues).length > 0 || !!leagueConfig.leagueTypeId;
+  const required = hasActiveLeague ? REQUIRED_CHANNELS : ['welcome','rules','announcements','serverGuide','activeCheck','warningsLog','bootLog','commAI','adminHq','commishHub','scoresheets'];
   const missing = required.filter(key => !_reg[key]);
   if (missing.length) {
     log.warn(`MISSING CHANNELS (${missing.length}):`);
-    missing.forEach(key => log.warn(`  • ${key}  (expected base channel "${CHANNEL_KEYS[key]}")`));
+    missing.forEach(key => log.warn(`  • ${key}  (needs "${CHANNEL_KEYS[key]}" in name)`));
   } else {
     log.info('All required channels resolved ✅');
   }
@@ -41,7 +43,7 @@ function getCh(guild, key) {
   if (spaceId) {
     const league = require('../activeLeagueService').getLeague(spaceId);
     const ids = new Set(league?.builtChannelIds || []);
-    return guild.channels.cache.find(ch => ids.has(ch.id) && require('../leagueNamingService').matchesLeagueChannelKey(ch.name, CHANNEL_KEYS[key])) || null;
+    return guild.channels.cache.find(ch => ids.has(ch.id) && (matchesConfiguredChannel(ch,key,{includes:false}) || ch.name.split('.').slice(1).join('.') === CHANNEL_KEYS[key])) || null;
   }
   const id = _reg[key];
   if (!id) return null;
@@ -51,7 +53,7 @@ function getCh(guild, key) {
 function invalidateChannel(guild, channelId) {
   for (const [key, id] of Object.entries(_reg)) {
     if (id !== channelId) continue;
-    const found = findConfiguredChannel(guild, key, { textOnly: true });
+    const found = guild.channels.cache.find(channel => channel.isTextBased?.() && matchesConfiguredChannel(channel, key, { includes: true }));
     _reg[key] = found?.id || null;
   }
 }

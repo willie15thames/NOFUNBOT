@@ -16,23 +16,7 @@ const { prismaSafe } = require('../storage/prisma');
 const { makeLogger } = require('../utils/logger');
 const log = makeLogger('streamCredit');
 
-const STREAM_RX = /https?:\/\/(?:www\.)?(?:twitch\.tv\/|youtube\.com\/(?:live\/|watch\?(?:[^\s]*&)?v=)|youtu\.be\/|kick\.com\/)\S+/i;
-function parseStreamUrl(text){
-  const candidate=String(text||'').match(STREAM_RX)?.[0]?.replace(/[).,>\]]+$/,'');
-  if(!candidate)return null;
-  try{
-    const url=new URL(candidate),host=url.hostname.toLowerCase().replace(/^www\./,'');
-    if(url.username||url.password||url.port)return null;
-    const parts=url.pathname.split('/').filter(Boolean);
-    if(host==='youtube.com'){
-      const id=url.pathname==='/watch'?url.searchParams.get('v'):(parts[0]==='live'?parts[1]:null);
-      if(!id||!/^[A-Za-z0-9_-]+$/.test(id))return null;
-    }else if(host==='youtu.be'){
-      if(parts.length!==1||!/^[A-Za-z0-9_-]+$/.test(parts[0]))return null;
-    }else if(!['twitch.tv','kick.com'].includes(host)||!parts.length)return null;
-    return url.toString();
-  }catch{return null;}
-}
+const STREAM_RX = /https?:\/\/(www\.)?(twitch\.tv|youtube\.com\/(live|watch)|youtu\.be|kick\.com)\/\S+/i;
 const STREAM_COOLDOWN = 60 * 60 * 1000; // 1 hour
 const REWARDS = [
   { count: 8,  label: 'Superstar Dev Trait', devTrait: 'Superstar', attrBonus: '+2 non-physical attribute' },
@@ -50,8 +34,8 @@ async function addStreamCredit(message, ctx) {
   const lsCh = getCh(message.guild, 'livestreams');
   if (!lsCh || message.channel.id !== lsCh.id) return false;
 
-  const streamUrl = parseStreamUrl(message.content);
-  if (!streamUrl) return false;
+  const match = message.content?.match(STREAM_RX);
+  if (!match) return false;
 
   const entry = [...state.players.values()].find(p => p.userId === message.author.id);
   if (!entry) {
@@ -59,52 +43,55 @@ async function addStreamCredit(message, ctx) {
     return false;
   }
 
-  entry.streamLog=Array.isArray(entry.streamLog)?entry.streamLog:[];
-  const last=entry.streamLog[entry.streamLog.length-1];
-  const credit=await require('./lifetimeHistoryService').creditStream(message.guild.id,{messageId:message.id,userId:message.author.id,leagueId:entry.leagueId,game:state.leagueConfig?.game||'community',seasonId:state.leagueConfig?.seasonId||'current',cooldown:STREAM_COOLDOWN,rewards:REWARDS},{count:entry.streamCount,lastCreditAt:entry.lastStreamCreditAt||last?.timestamp||0});
-  if(!credit.ok){
-    if(credit.reason==='cooldown')await message.reply({content:`Stream credit is on cooldown for ${Math.ceil(credit.remainingMs/60000)} more minute(s).`}).catch(()=>null);
+  if (entry.streamLog.findIndex(s => s.msgId === message.id) !== -1) return false;
+
+  const last = entry.streamLog[entry.streamLog.length - 1];
+  if (last && (Date.now() - last.timestamp) < STREAM_COOLDOWN) {
+    const rem = Math.ceil((STREAM_COOLDOWN - (Date.now() - last.timestamp)) / 60000);
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xf39c12).setTitle('⏳ Stream On Cooldown').setDescription(`You can earn another stream credit in **${rem} minute${rem !== 1 ? 's' : ''}**.`)] }).catch(() => null);
     return false;
   }
-  entry.streamLog.push({url:streamUrl,timestamp:credit.lastCreditAt,msgId:message.id});
-  entry.streamLog=entry.streamLog.slice(-16);entry.lastStreamCreditAt=credit.lastCreditAt;entry.streamCount=credit.nextCount;
-  require('../storage/jsonStore').saveJsonDebounced('players.json',[...state.players].map(([key,player])=>({key,...player})));
+
+  await require('./lifetimeHistoryService').recordStat(message.guild.id,{id:`stream:${message.id}`,leagueId:entry.leagueId,userId:message.author.id,metric:'stream_credits',value:1,game:state.leagueConfig?.game||'community',seasonId:state.leagueConfig?.seasonId||'current'});
+  entry.streamLog.push({ url: match[0], timestamp: Date.now(), msgId: message.id });
+  entry.streamCount = entry.streamLog.length;
 
   await prismaSafe(prisma => prisma.streamCredit.upsert({
     where: { guildId_messageId: { guildId: String(message.guild.id), messageId: String(message.id) } },
     update: {
       userId: String(message.author.id),
       teamName: String(entry.displayTeam || ''),
-      streamUrl: String(streamUrl || ''),
-      rewardLabel: credit.reward?.label || null,
+      streamUrl: String(match[0] || ''),
+      rewardLabel: REWARDS.find(t => t.count === entry.streamCount)?.label || null,
     },
     create: {
       guildId: String(message.guild.id),
       userId: String(message.author.id),
       teamName: String(entry.displayTeam || ''),
-      streamUrl: String(streamUrl || ''),
+      streamUrl: String(match[0] || ''),
       messageId: String(message.id),
-      rewardLabel: credit.reward?.label || null,
+      rewardLabel: REWARDS.find(t => t.count === entry.streamCount)?.label || null,
     },
   }), null);
 
-  const reward=credit.reward;
+  const reward = REWARDS.find(t => t.count === entry.streamCount);
+  if(reward)await require('./lifetimeHistoryService').award(message.guild.id,{id:`stream-award:${message.id}`,leagueId:entry.leagueId,userId:message.author.id,title:reward.label});
   const embed = new EmbedBuilder()
     .setColor(reward ? 0xf1c40f : 0x9b59b6)
     .setTitle(reward ? '🏆 Stream Logged — Reward Unlocked!' : '📺 Stream Logged')
     .addFields(
       { name: 'Player', value: `${message.author}`, inline: true },
       { name: 'Team', value: entry.displayTeam, inline: true },
-      { name: 'Total Streams', value: `**${credit.count}**`, inline: true },
-      { name: 'Progress', value: buildProgressBar(credit.count, 16), inline: false },
+      { name: 'Total Streams', value: `**${entry.streamCount}**`, inline: true },
+      { name: 'Progress', value: buildProgressBar(entry.streamCount, 16), inline: false },
     )
     .setTimestamp();
   if (reward) embed.addFields({ name: `🏆 Reward — ${reward.label}`, value: `Contact commissioner to claim.\n**Bonus:** ${reward.attrBonus}` });
 
   await message.channel.send({ embeds: [embed] }).catch(() => null);
-
+  if (entry.streamCount >= 16) { entry.streamLog = []; entry.streamCount = 0; }
   if (refreshRewards) await refreshRewards(message.guild).catch(() => null);
   return true;
 }
 
-module.exports = { addStreamCredit, parseStreamUrl, STREAM_RX, STREAM_COOLDOWN, REWARDS };
+module.exports = { addStreamCredit, STREAM_RX, STREAM_COOLDOWN, REWARDS };

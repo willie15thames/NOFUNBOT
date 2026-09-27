@@ -35,7 +35,7 @@ const TTL_MS = 5 * 60 * 1000; // 5 minutes max hold time
 const _locks = new Map();
 
 function _key(guildId, lockType) {
-  return `${guildId}:${DESTRUCTIVE_COMMANDS.has(lockType)?'structure':lockType}`;
+  return `${guildId}:${lockType}`;
 }
 
 function _isExpired(entry) {
@@ -143,10 +143,6 @@ const DESTRUCTIVE_COMMANDS = new Set([
   'reset-league',
   'delete-league',
   'delete-community',
-  'edit-community',
-  'setup-event',
-  'setup-community',
-  'fix-duplicates',
 ]);
 
 function isDestructiveCommand(commandName) {

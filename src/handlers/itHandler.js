@@ -113,13 +113,9 @@ async function collectDbDiagnostics() {
 
 function collectChannelDiagnostics(guild, getCh) {
   const { CHANNEL_KEYS } = require('../config/channels');
-  // The full catalog lists optional channels from unrelated templates and
-  // league spaces. Count only the server-level channels this diagnostic uses.
-  const keys = ['welcome','rules','announcements','serverGuide','howToJoin','commAI','adminHq'];
   const missing = [];
   const found = [];
-  for (const key of keys) {
-    const defaultName = CHANNEL_KEYS[key];
+  for (const [key, defaultName] of Object.entries(CHANNEL_KEYS)) {
     const ch = getCh(guild, key);
     if (ch) {
       found.push(`✅ ${key} → #${ch.name}`);
@@ -127,7 +123,7 @@ function collectChannelDiagnostics(guild, getCh) {
       missing.push(`❌ ${key} (expected: ${defaultName})`);
     }
   }
-  return { found, missing, total: keys.length };
+  return { found, missing, total: Object.keys(CHANNEL_KEYS).length };
 }
 
 function collectPermissionDiagnostics(guild) {
@@ -203,10 +199,9 @@ async function runDiagCommand(command, guild, getCh, state, client) {
       const issues = [];
       if (env.DATABASE_URL === '❌ NOT SET') issues.push('DATABASE_URL not set — no persistent storage');
       if (env.REDIS_URL === '❌ NOT SET') issues.push('REDIS_URL not set — queue worker inert');
-      if (env.BOT_DATA_DIR.includes('EPHEMERAL') || env.BOT_DATA_DIR === './data') issues.push('BOT_DATA_DIR is not on a confirmed persistent volume');
+      if (env.BOT_DATA_DIR.includes('EPHEMERAL')) issues.push('BOT_DATA_DIR is /tmp — state lost on restart');
       if (!aiStatus.ready) issues.push(`AI unavailable: ${aiStatus.reason}`);
-      if (!db.pgPool) issues.push('PostgreSQL is unreachable');
-      else if (db.schemaReady === false) issues.push('PostgreSQL reachable, required schema check failed');
+      if (!db.prismaAvailable) issues.push('Prisma client unavailable — DB writes silently fail');
       if (chDiag.missing.length) issues.push(`${chDiag.missing.length}/${chDiag.total} channels missing`);
       if (runtime.wsStatus !== 0 && runtime.wsStatus !== 'unknown') issues.push(`WebSocket status: ${runtime.wsStatus} (expected 0)`);
 
@@ -216,7 +211,7 @@ async function runDiagCommand(command, guild, getCh, state, client) {
         .addFields(
           { name: '🔧 Runtime', value: `Uptime: ${runtime.uptime}\nHeap: ${runtime.memory.heapUsed}/${runtime.memory.heapTotal}\nRSS: ${runtime.memory.rss}\nNode: ${runtime.nodeVersion}\nWS Ping: ${runtime.wsPing}`, inline: true },
           { name: '📊 State', value: `Players: ${stateD.players}\nGames: ${stateD.games}\nOpen Teams: ${stateD.openTeamsOpen}/${stateD.openTeams}\nPending: ${stateD.pendingTrades}T/${stateD.pendingBoosts}B/${stateD.pendingOffenses}O\nLeague: ${stateD.leagueName}`, inline: true },
-          { name: '🗄️ Infra', value: `DB: ${db.pgPool ? (db.schemaReady ? '✅ ready' : '⚠️ schema check failed') : '❌ offline'}\nRedis: ${env.REDIS_URL === '❌ NOT SET' ? '❌ not configured' : '✅ configured'}\nData Dir: ${env.BOT_DATA_DIR}\nAI: ${aiStatus.ready ? '✅ ready' : `❌ ${aiStatus.reason}`}`, inline: true },
+          { name: '🗄️ Infra', value: `DB: ${db.prismaAvailable ? `✅ (${db.botKvRecords} KV records)` : '❌ offline'}\nRedis: ${env.REDIS_URL === '❌ NOT SET' ? '❌ not configured' : '✅ configured'}\nData Dir: ${env.BOT_DATA_DIR}\nAI: ${aiStatus.ready ? '✅ ready' : `❌ ${aiStatus.reason}`}`, inline: true },
         )
         .addFields(
           { name: 'Channels', value: `${chDiag.found.length}/${chDiag.total} resolved, ${chDiag.missing.length} missing`, inline: true },
@@ -301,7 +296,7 @@ async function runDiagCommand(command, guild, getCh, state, client) {
       const env = collectEnvDiagnostics();
       const runtime = collectRuntimeDiagnostics(state, client);
       const issues = [];
-      if (env.BOT_DATA_DIR.includes('EPHEMERAL') || env.BOT_DATA_DIR === './data') issues.push('⚠️ BOT_DATA_DIR is not confirmed persistent. Mount a Railway Volume at /data and set BOT_DATA_DIR=/data');
+      if (env.BOT_DATA_DIR.includes('EPHEMERAL')) issues.push('⚠️ BOT_DATA_DIR is /tmp — state is lost on restart. Mount a Railway Volume at /data and set BOT_DATA_DIR=/data');
       if (env.REDIS_URL === '❌ NOT SET') issues.push('⚠️ REDIS_URL not set — add a Redis service in Railway and set the variable');
       if (env.DATABASE_URL === '❌ NOT SET') issues.push('⚠️ DATABASE_URL not set — add a Postgres service in Railway');
       if (!env.RAILWAY_PUBLIC_DOMAIN || env.RAILWAY_PUBLIC_DOMAIN === 'NOT SET') issues.push('ℹ️ RAILWAY_PUBLIC_DOMAIN not set — public access is not configured');
@@ -427,8 +422,6 @@ KNOWN ARCHITECTURE:
 
 RULES:
 - Answer from the live data above. Do not guess.
-- A failed schema probe does not prove the database was never migrated. Ask for the exact migration/schema error; never recommend prisma db push or reset on an existing database.
-- Channel counts include only the core channels checked. Other templates and private league categories may have different channels.
 - If something is broken, say exactly what is broken and the fix.
 - Mask sensitive values (tokens, keys) — never output them.
 - You may reference env vars, file paths, service names, and technical details.

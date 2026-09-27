@@ -1,18 +1,33 @@
+/*
+ * NAVIGATION HEADER
+ * FILE: src/queue/queues.js
+ * LAYER: Queue/background execution layer
+ * PURPOSE: Supports this part of the system; review exported functions/classes below for the exact execution path.
+ * LOOK HERE FIRST WHEN DEBUGGING: Search this file for exported functions, top-level listeners, and state writes.
+ * RELATED FLOW: See nearby files in the same folder for related behavior.
+ * NOTE: Keep comments in sync when adding new processes, handlers, or state transitions.
+ */
+
 'use strict';
-// Reuse a bounded set of BullMQ queues instead of opening a connection per write.
-const {Queue}=require('bullmq');
-const IORedis=require('ioredis');
-const queues=new Map();let connection;
-function getRedisConnection(){
- if(!process.env.REDIS_URL)return null;
- if(!connection){connection=new IORedis(process.env.REDIS_URL,{maxRetriesPerRequest:1,commandTimeout:5000,connectTimeout:5000,enableOfflineQueue:false});connection.on('error',e=>console.warn(`[queue] ${e.message}`));}
- return{connection};
+const { Queue } = require('bullmq');
+
+function getRedisConnection() {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+  return { connection: { url } };
 }
-function getQueue(name){
- const options=getRedisConnection();if(!options)return null;
- if(!queues.has(name)){if(queues.size>=8)throw Error('Queue cache limit reached');queues.set(name,new Queue(name,options));}
- return queues.get(name);
+
+function getQueue(name) {
+  const redis = getRedisConnection();
+  if (!redis) return null;
+  return new Queue(name, redis);
 }
-async function enqueueStorageSync(filename,data){const queue=getQueue('storage-sync');if(!queue)return false;await queue.add('storage-sync-write',{filename,data},{removeOnComplete:250,removeOnFail:250});return true;}
-async function closeQueues(){await Promise.allSettled([...queues.values()].map(q=>q.close()));queues.clear();connection?.disconnect();connection=null;}
-module.exports={getQueue,getRedisConnection,enqueueStorageSync,closeQueues};
+
+async function enqueueStorageSync(filename, data) {
+  const queue = getQueue('storage-sync');
+  if (!queue) return false;
+  await queue.add('storage-sync-write', { filename, data }, { removeOnComplete: 250, removeOnFail: 250 });
+  return true;
+}
+
+module.exports = { getQueue, getRedisConnection, enqueueStorageSync };

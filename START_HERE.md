@@ -1,16 +1,8 @@
 # NOFUNBOT audit update release candidate
 
-Package version: 21.10.0-rc.6. Archive label: v204.5 stability repairs.
+Package version: 21.10.0-rc.1. Archive label: v204 audit update RC1.
 
-Start with `docs/RC6_STABILITY_AND_DEPLOYMENT.md` for the current repair matrix and exact VS Code, GitHub, Railway, staging and rollback steps. RC6 repairs the thirteen RC5 fault cases. The current Word supplement is `docs/NOFUNBOT_RC6_Stability_Audit.docx`; older reports below are historical. Run `npm ci` followed by `npm run verify:local`.
-
-RC5 preserves the member's native server name, shows team identity inside its league posts, creates readable taggable roles for new leagues and events, and prevents an active-check failure or one league's inactivity rule from harming other memberships. Read `docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md` for the complete wiring record and the live checks still needed.
-
-RC4 addresses ordinary league channel names inside their categories, stable guild nicknames, template-edit cleanup, league-scoped rules and active checks, and base permission isolation. Read `docs/V204_TEMPLATE_AND_FALLBACK_AUDIT.md` for nine confirmed failure clusters, scan counts, residual risks and staging checks.
-
-Read `docs/V204_DATABASE_HOTFIX.md` first. RC1 referenced mixed-case PostgreSQL tables after migrations renamed them. RC2 aligns those paths and preserves legacy records through an additive migration. RC3 refuses to use a different directory when an explicitly configured BOT_DATA_DIR is unavailable.
-
-The updated 30-page Word report is `docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx`. It contains the original baseline findings plus the implemented changes, lifetime history behavior and outstanding stability work. Older audit documents remain as historical references.
+The updated 29-page Word report is `docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx`. It contains the original baseline findings plus the implemented changes, lifetime history behavior and outstanding stability work. Older audit documents remain as historical references.
 
 Read `docs/V204_RELEASE_NOTES.md` for implemented capabilities, deployment steps, remaining work, staging acceptance and recovery boundaries. Read `docs/VERIFICATION.md` for exact checks and limitations. `docs/V204_FILE_MANIFEST.json` records the source-file changes against the supplied v203.2 ZIP.
 

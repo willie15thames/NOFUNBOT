@@ -36,7 +36,7 @@ function checksum(value) {
     const data = JSON.parse(raw);
     const sum = checksum(data);
     await pool.query(
-      `INSERT INTO "bot_kv" ("key","value","source","checksum","updatedAt")
+      `INSERT INTO "BotKv" ("key","value","source","checksum","updatedAt")
        VALUES ($1,$2::jsonb,$3,$4,NOW())
        ON CONFLICT ("key") DO UPDATE SET "value"=EXCLUDED."value", "source"=EXCLUDED."source", "checksum"=EXCLUDED."checksum", "updatedAt"=NOW()`,
       [filename, JSON.stringify(data), 'json-import', sum]

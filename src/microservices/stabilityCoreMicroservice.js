@@ -62,8 +62,6 @@ const service = {
 
     const persisted = loadPersistedState();
     await require('../services/spaceMigrationService').migrate(guild.id,state);
-    const membershipRecovery=await require('../services/leagueVisibilityService').recover(guild);
-    if(membershipRecovery.some(x=>!x.repaired))throw Error('Membership access repair required; inspect Discord permissions and restart.');
     const services = initCoreServices({ guild, client });
 
     // V202 (BUG-007/BUG-003): durable game sessions → state.games + reminder/deadline re-arm (needs gameChannels.init above).
@@ -99,12 +97,7 @@ function loadPersistedState() {
   state.players.clear();
   for (const entry of savedPlayers) {
     const { key, ...data } = entry || {};
-    const team=String(data.baseTeam||data.team||'').trim().toLowerCase();
-    const restoredKey=key||(team&&data.leagueId?`${data.leagueId}::${team}`:null);
-    if(!restoredKey)throw Error('Player entry has no identifiable key; repair players.json before startup');
-    const existing=state.players.get(restoredKey);
-    if(existing?.userId&&data.userId&&existing.userId!==data.userId)throw Error('Conflicting player entries; repair players.json before startup');
-    state.players.set(restoredKey, { ...data, streamLog: data?.streamLog || [] });
+    if (key) state.players.set(key, { ...data, streamLog: data?.streamLog || [] });
   }
 
   const savedRoster = loadJson('rosterOverrides.json', {});

@@ -77,8 +77,3 @@ build; everything else is report-only.
 
 ## V204 persistence transactions
 criticalStore serializes space reservations, assignments, locks and lifetime source records with PostgreSQL transaction advisory locks. These are business-state concurrency controls; the existing message dedup hierarchy is unchanged. Lifetime correction keys supersede prior source values without deleting audit history.
-
-
-## RC6 ownership updates
-
-`gameResultService` commits through `lifetimeHistoryService.transaction` before rebuilding projections. Stream credits use durable message IDs in the lifetime transaction; manual adjustments use interaction IDs. `criticalStore.withExclusive` owns structural operation locks across router commands. Membership, community deletion and pending active removals keep repair intent until completion. Queue producers reuse a bounded connection/cache. See docs/RC6_DEPENDENCY_MAP.md and the RC6 deployment guide.

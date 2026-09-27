@@ -1,8 +1,6 @@
 'use strict';
 const { test, run, assert, eq, freshState, resetFiles } = require('./_harness');
-let fixture=0;
 function setup() {
-  process.env.GUILD_ID=`results-fixture-${++fixture}`;
   resetFiles(['gameResults.json', 'standings_proam_1.json', 'gameSessions.json']);
   const state = freshState();
   state.leagueConfig.proAm = { proam_1: { id: 'proam_1', teams: ['Bears', 'Lions', 'Jets'] } };

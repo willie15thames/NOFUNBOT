@@ -180,30 +180,21 @@ async function generateCommunityChannels(guild, communityName, communityType, co
  * Delete all channels and category for a community.
  */
 async function deleteCommunityChannels(guild, communityName) {
-  const store=require('../storage/criticalStore');
-  const key=`v204:community-delete:${guild.id}:${communityName.toLowerCase()}`;
-  const operation=await store.transact(key,{},data=>{
-    if(data.status && data.status!=='COMPLETE')return data;
-    const categories=[...guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildCategory&&c.name===communityName);
-    if(categories.length>1)throw Error('Multiple matching categories; resolve ownership before deleting');
-    const cat=categories[0];
-    const roles=[...guild.roles.cache.values()].filter(r=>r.name===`Community • ${communityName}`);
-    if(roles.length>1)throw Error('Multiple matching roles; resolve ownership before deleting');
-    Object.assign(data,{status:'DELETING',categoryId:cat?.id||null,channelIds:[...guild.channels.cache.values()].filter(c=>c.parentId===cat?.id).map(c=>c.id),roleId:roles[0]?.id||null,startedAt:Date.now()});return data;
-  });
-  const failures=[];
-  async function remove(manager,id){
-    if(!id)return;
-    try{let item=manager.cache.get(id);if(!item&&manager.fetch)item=await manager.fetch(id);if(item?.id===id)await item.delete(`Community deleted: ${communityName}`);}
-    catch(e){if(![10003,10011].includes(e.code))failures.push({id,error:e.message});}
+  const cat = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildCategory && c.name === communityName
+  );
+  if (cat) {
+    const children = guild.channels.cache.filter(c => c.parentId === cat.id);
+    for (const ch of children.values()) {
+      await ch.delete(`Community deleted: ${communityName}`).catch(() => null);
+    }
+    await cat.delete(`Community deleted: ${communityName}`).catch(() => null);
   }
-  for(const id of operation.channelIds)await remove(guild.channels,id);
-  const newChildren=[...guild.channels.cache.values()].filter(c=>operation.categoryId&&c.parentId===operation.categoryId&&!operation.channelIds.includes(c.id));
-  if(newChildren.length)failures.push({id:operation.categoryId,error:'New channels appeared after deletion started; move them out before retrying'});
-  if(!failures.length)await remove(guild.channels,operation.categoryId);
-  await remove(guild.roles,operation.roleId);
-  await store.transact(key,{},data=>{data.status=failures.length?'REPAIR_REQUIRED':'COMPLETE';data.failures=failures;data.updatedAt=Date.now();});
-  if(failures.length)throw Error(`Community deletion incomplete: ${failures.length} resources require repair. Fix permissions and retry the same command.`);
+
+  const roleName = `Community • ${communityName}`;
+  const role = guild.roles.cache.find(r => r.name === roleName);
+  if (role) await role.delete(`Community deleted: ${communityName}`).catch(() => null);
+
   return true;
 }
 
