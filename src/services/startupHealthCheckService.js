@@ -2,110 +2,128 @@
  * NAVIGATION HEADER
  * FILE: src/services/startupHealthCheckService.js
  * LAYER: Service layer
- * PURPOSE: Supports this part of the system; review exported functions/classes below for the exact execution path.
- * LOOK HERE FIRST WHEN DEBUGGING: Search this file for exported functions, top-level listeners, and state writes.
- * RELATED FLOW: Usually consumed by handlers, routers, or microservices.
- * NOTE: Keep comments in sync when adding new processes, handlers, or state transitions.
+ * PURPOSE: On-demand/startup dependency health: persistence, auth, Redis, PostgreSQL, AI configuration.
+ * LOOK HERE FIRST WHEN DEBUGGING: runStartupHealthCheck().
+ * RELATED FLOW: /health-status, startup diagnostics.
+ * NOTE: A configured client/URL is not treated as healthy until a real dependency probe succeeds.
  */
 
 'use strict';
-/**
- * startupHealthCheckService.js
- *
- * Runs once at bot startup (before clientReady event).
- * Checks all 5 known locks and logs a clear status table.
- * Non-fatal — bot always starts, but operators see exactly
- * what is and isn't working.
- */
 
 const { makeLogger } = require('../utils/logger');
 const log = makeLogger('healthCheck');
+const { getFeatureFlags } = require('../config/featureFlags');
+
+async function _probeRedis(redisUrl) {
+  if (!redisUrl) return { reachable: false, reason: 'not-configured' };
+  let client = null;
+  try {
+    const Redis = require('ioredis');
+    client = new Redis(redisUrl, {
+      lazyConnect: true,
+      connectTimeout: 3000,
+      maxRetriesPerRequest: 0,
+      enableReadyCheck: true,
+      retryStrategy: () => null,
+    });
+    await client.connect();
+    const pong = await Promise.race([
+      client.ping(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 3500)),
+    ]);
+    return { reachable: pong === 'PONG', reason: pong === 'PONG' ? null : `unexpected ping response: ${pong}` };
+  } catch (err) {
+    return { reachable: false, reason: String(err?.message || err).slice(0, 300) };
+  } finally {
+    if (client) {
+      try { client.disconnect(); } catch {}
+    }
+  }
+}
 
 async function runStartupHealthCheck() {
   const results = [];
+  const flags = getFeatureFlags(process.env);
 
-  // ── Lock 1: Persistent storage ──────────────────────────────
   const dataDir = process.env.BOT_DATA_DIR || '/tmp/nofunleague-data';
-  const isEphemeral = !process.env.BOT_DATA_DIR || dataDir.startsWith('/tmp');
+  const isEphemeral = !process.env.BOT_DATA_DIR || dataDir.startsWith('/tmp') || dataDir === './data';
   results.push({
     name: 'Persistent storage (BOT_DATA_DIR)',
     ok: !isEphemeral,
     value: dataDir,
-    fix: isEphemeral
-      ? 'Add a Railway Volume, mount at /data, set BOT_DATA_DIR=/data — state resets on every restart until this is fixed'
-      : null,
+    fix: isEphemeral ? 'Use PostgreSQL as authority and/or mount a Railway Volume at /data; set BOT_DATA_DIR=/data for JSON compatibility files.' : null,
+    blocking: isEphemeral,
   });
 
-  // ── Lock 2: Commissioner role ────────────────────────────────
   const commRole = process.env.COMMISSIONER_ROLE_ID;
   results.push({
     name: 'Commissioner role (COMMISSIONER_ROLE_ID)',
     ok: !!commRole,
     value: commRole ? `set (${commRole})` : 'NOT SET — falling back to Discord Administrator',
-    fix: !commRole
-      ? 'Set COMMISSIONER_ROLE_ID to your commissioner role\'s Discord ID for reliable access control'
-      : null,
+    fix: !commRole ? 'Set COMMISSIONER_ROLE_ID to the commissioner role ID for reliable access control.' : null,
+    blocking: false,
   });
 
-  // ── Lock 3: Redis ────────────────────────────────────────────
   const redisUrl = process.env.REDIS_URL;
+  const redis = await _probeRedis(redisUrl);
   results.push({
     name: 'Redis / BullMQ (REDIS_URL)',
-    ok: !!redisUrl,
-    value: redisUrl ? 'set' : 'NOT SET — queue worker inert, jobs fire-and-forget',
-    fix: !redisUrl
-      ? 'Add a Railway Redis service and set REDIS_URL from its Variables tab'
-      : null,
+    ok: !!redisUrl && redis.reachable,
+    value: !redisUrl ? 'NOT SET — queue worker unavailable' : redis.reachable ? 'connected ✅' : `set but unreachable — ${redis.reason}`,
+    fix: !redisUrl ? 'Add Railway Redis and reference its REDIS_URL.' : !redis.reachable ? 'Verify REDIS_URL points to the Railway Redis service and is reachable from NOFUNBOT.' : null,
+    blocking: !!flags.enableQueueWorker,
   });
 
-  // ── Lock 4: Database ─────────────────────────────────────────
   const dbUrl = process.env.DATABASE_URL;
-  let dbReachable = false;
-  if (dbUrl) {
-    try {
-      const { getPrisma } = require('../storage/prisma');
-      const prisma = getPrisma();
-      if (prisma) {
-        await prisma.$queryRaw`SELECT 1`;
-        dbReachable = true;
-      }
-    } catch (err) {
-      log.warn('DB ping failed:', err.message);
-    }
-  }
+  let db = null;
+  try { db = await require('../storage/prisma').probePrisma({ checkSchema: true }); }
+  catch (err) { db = { configured: !!dbUrl, reachable: false, lastError: err.message }; }
+  const dbOk = !!dbUrl && db?.reachable === true && db?.schemaReady !== false;
   results.push({
     name: 'PostgreSQL / Prisma (DATABASE_URL)',
-    ok: dbUrl && dbReachable,
+    ok: dbOk,
     value: !dbUrl
-      ? 'NOT SET — all DB writes no-op'
-      : dbReachable
-        ? 'connected ✅'
-        : 'set but unreachable — check DATABASE_URL and network',
+      ? 'NOT SET — DB persistence disabled'
+      : db?.reachable !== true
+        ? `set but unreachable${db?.lastErrorCode ? ` (${db.lastErrorCode})` : ''}${db?.circuitState === 'open' ? ' — circuit open' : ''}`
+        : db?.schemaReady === false
+          ? 'connected, but Prisma schema is not ready'
+          : 'connected + schema ready ✅',
     fix: !dbUrl
-      ? 'Add a Railway Postgres service and set DATABASE_URL'
-      : !dbReachable
-        ? 'DATABASE_URL is set but connection failed — verify credentials and Railway networking'
-        : null,
+      ? 'Add Railway Postgres and reference its DATABASE_URL.'
+      : db?.reachable !== true
+        ? 'Verify DATABASE_URL credentials/host and Railway networking; localhost is invalid for a separate Railway DB service.'
+        : db?.schemaReady === false
+          ? 'Run the intended Prisma migration/bootstrap before enabling authoritative automation.'
+          : null,
+    blocking: !!(flags.enableQueueWorker || flags.runPrismaMigrationsOnBoot || flags.runDbBootstrapOnBoot),
   });
 
-  // ── Lock 5: .env variable names ─────────────────────────────
-  // This is a deploy-time issue already addressed in .env.example and env.js
-  // Just check if COMMISSIONER_IDS is set when COMMISSIONER_ROLE_ID is not
   const commIds = process.env.COMMISSIONER_IDS;
   const hasAnyCommAuth = !!commRole || (!!commIds && commIds.trim().length > 0);
   results.push({
     name: 'Commissioner auth configured',
     ok: hasAnyCommAuth,
-    value: hasAnyCommAuth
-      ? (commRole ? `role ID set` : `user IDs only (${commIds})`)
-      : 'NONE — no COMMISSIONER_ROLE_ID or COMMISSIONER_IDS set',
-    fix: !hasAnyCommAuth
-      ? 'Set COMMISSIONER_ROLE_ID (preferred) or COMMISSIONER_IDS=your_discord_user_id'
-      : null,
+    value: hasAnyCommAuth ? (commRole ? 'role ID set' : 'commissioner user IDs set') : 'NONE',
+    fix: !hasAnyCommAuth ? 'Set COMMISSIONER_ROLE_ID (preferred) or COMMISSIONER_IDS.' : null,
+    blocking: false,
   });
 
-  // ── Print summary ────────────────────────────────────────────
+  let ai = { ready: false, reason: 'unknown' };
+  try { ai = require('./ai/anthropicService').getAIStatus(); } catch (err) { ai = { ready: false, reason: err.message }; }
+  const aiEnabled = String(process.env.AI_ENABLED ?? 'true').toLowerCase() !== 'false';
+  results.push({
+    name: 'AI provider',
+    ok: !aiEnabled || ai.ready,
+    value: !aiEnabled ? 'disabled by configuration' : ai.ready ? 'configured ✅' : `unavailable — ${ai.reason}`,
+    fix: aiEnabled && !ai.ready ? 'Set a valid provider API key or disable AI_ENABLED until a key is configured. Placeholder keys are rejected.' : null,
+    blocking: false,
+  });
+
+  const blockingFailures = results.filter(r => !r.ok && r.blocking);
+  const warnings = results.filter(r => !r.ok && !r.blocking);
   const allOk = results.every(r => r.ok);
+  const ready = blockingFailures.length === 0;
   log.info('');
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   log.info('  NOFUNLEAGUE startup health check');
@@ -114,21 +132,15 @@ async function runStartupHealthCheck() {
     const icon = r.ok ? '✅' : '⚠️ ';
     log.info(`  ${icon} ${r.name}`);
     log.info(`       ${r.value}`);
-    if (r.fix) {
-      log.warn(`       FIX: ${r.fix}`);
-    }
+    if (r.fix) log.warn(`       FIX: ${r.fix}`);
   }
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  if (allOk) {
-    log.info('  All systems operational.');
-  } else {
-    const issues = results.filter(r => !r.ok).length;
-    log.warn(`  ${issues} degraded system(s). Bot will still run but functionality is limited.`);
-    log.warn('  Fix the items above and redeploy to reach full operation.');
-  }
+  if (allOk) log.info('  All checked systems operational.');
+  else if (ready) log.warn(`  Core readiness is GREEN with ${warnings.length} non-blocking warning(s).`);
+  else log.warn(`  Core readiness is BLOCKED by ${blockingFailures.length} dependency issue(s). Authoritative automation must remain disabled.`);
   log.info('');
 
-  return { ok: allOk, results };
+  return { ok: allOk, ready, blockingFailures: blockingFailures.length, warnings: warnings.length, results };
 }
 
 module.exports = { runStartupHealthCheck };

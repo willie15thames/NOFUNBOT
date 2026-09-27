@@ -908,6 +908,22 @@ new SlashCommandBuilder()
         )))
     .setDefaultMemberPermissions(P),
 
+  // ── Legacy bot-lifecycle handlers kept reachable via /workflow bot ... ──
+  // These definitions are moved under /workflow by commandAliasService at build time.
+  new SlashCommandBuilder()
+    .setName('kill-bot').setDescription('Pause normal bot commands until reactivated (Commissioner only)')
+    .setDefaultMemberPermissions(P),
+  new SlashCommandBuilder()
+    .setName('ignite-bot').setDescription('Reactivate the bot and reopen setup (Commissioner only)')
+    .setDefaultMemberPermissions(P),
+  new SlashCommandBuilder()
+    .setName('bot-status').setDescription('Show bot lifecycle/install status (Commissioner only)')
+    .setDefaultMemberPermissions(P),
+
+  new SlashCommandBuilder()
+    .setName('post-server-guide').setDescription('Republish the server/member guide PDFs (Commissioner only)')
+    .setDefaultMemberPermissions(P),
+
   // ── Security audit log ──
   new SlashCommandBuilder()
     .setName('audit-log').setDescription('View recent security and audit log entries (Commissioner only)')

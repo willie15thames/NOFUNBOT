@@ -50,12 +50,18 @@ const GROUPED_ALIASES = Object.freeze([
   { legacy: 'restore-stream',           container: 'streams',       group: null,        name: 'restore',              kind: 'sub' },
   { legacy: 'process-builder',          container: 'workflow',      group: null,        name: 'process-builder',      kind: 'group' },
   { legacy: 'process-run',              container: 'workflow',      group: null,        name: 'process-run',          kind: 'sub' },
+  { legacy: 'kill-bot',                 container: 'workflow',      group: 'bot',       name: 'kill',                 kind: 'sub' },
+  { legacy: 'ignite-bot',               container: 'workflow',      group: 'bot',       name: 'ignite',               kind: 'sub' },
+  { legacy: 'bot-status',               container: 'workflow',      group: 'bot',       name: 'status',               kind: 'sub' },
+  { legacy: 'post-server-guide',        container: 'workflow',      group: 'guide',     name: 'republish',            kind: 'sub' },
 ]);
 
 const GROUP_DESCRIPTIONS = Object.freeze({
   'game-channels:hub': 'Weekly commish-hub staging and release timers (Commissioner only)',
   'game-channels:schedule': 'Weekly schedule posting and registry (Commissioner only)',
   'game-channels:live-sync': 'Legacy live sync controls and source mode (Commissioner only)',
+  'workflow:bot': 'Bot lifecycle controls (Commissioner only)',
+  'workflow:guide': 'Server guide publication controls (Commissioner only)',
 });
 
 const _byLegacy = new Map(GROUPED_ALIASES.map(a => [a.legacy, a]));

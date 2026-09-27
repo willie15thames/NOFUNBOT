@@ -21,7 +21,7 @@ const { EmbedBuilder } = require('discord.js');
 const { makeLogger } = require('../utils/logger');
 const { isITMember } = require('../utils/helpers');
 const { COMM_ROLE, COMMISSIONER_IDS, IT_ROLE, IT_IDS } = require('../config/env');
-const { prismaSafe, isPrismaAvailable } = require('../storage/prisma');
+const { probePrisma } = require('../storage/prisma');
 const { aiCall, MODELS, getAIStatus, RAILWAY_TIMEOUT_MS } = require('../services/ai/anthropicService');
 const conversationCtx = require('../services/conversationContextService');
 const log = makeLogger('itAI');
@@ -96,16 +96,19 @@ function collectStateDiagnostics(state) {
 }
 
 async function collectDbDiagnostics() {
-  const result = { prismaAvailable: isPrismaAvailable(), pgPool: false, botKvRecords: 0 };
-  if (result.prismaAvailable) {
-    const count = await prismaSafe(async p => {
-      const r = await p.$queryRaw`SELECT COUNT(*)::int as cnt FROM "BotKv"`;
-      return r?.[0]?.cnt || 0;
-    }, 0);
-    result.botKvRecords = count;
-    result.pgPool = true;
-  }
-  return result;
+  const h = await probePrisma({ checkSchema: true });
+  return {
+    prismaAvailable: !!h.clientInitialized,
+    pgPool: h.reachable === true,
+    schemaReady: h.schemaReady,
+    circuitState: h.circuitState,
+    consecutiveFailures: h.consecutiveFailures || 0,
+    lastSuccessAt: h.lastSuccessAt || null,
+    lastFailureAt: h.lastFailureAt || null,
+    lastErrorCode: h.lastErrorCode || null,
+    lastError: h.lastError || null,
+    serverConfigs: h.serverConfigs ?? null,
+  };
 }
 
 function collectChannelDiagnostics(guild, getCh) {

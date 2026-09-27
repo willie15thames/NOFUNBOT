@@ -10,6 +10,8 @@
 
 'use strict';
 
+const { validateRuntimeEnvironment } = require('../src/config/runtimeValidation');
+
 const checks = [
   { key: 'DISCORD_TOKEN', required: true, note: 'required for bot login' },
   { key: 'CLIENT_ID', required: true, note: 'required for slash command registration' },
@@ -64,6 +66,15 @@ if (!databaseUrl) {
 
 if (!redisUrl) {
   console.log('[infra-check] WARN Queue worker is disabled; long jobs run in fallback mode.');
+}
+
+
+
+const runtimeValidation = validateRuntimeEnvironment(process.env);
+for (const issue of runtimeValidation.issues) {
+  const label = issue.severity === 'error' ? 'FAIL' : 'WARN';
+  console.log(`[infra-check] ${label} ${issue.key} — ${issue.message}`);
+  if (issue.severity === 'error') hardFail = true;
 }
 
 if (hardFail) {

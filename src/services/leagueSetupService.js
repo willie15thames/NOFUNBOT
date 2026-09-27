@@ -29,6 +29,9 @@ const stateRef                           = require('../state');
 const { resolveServerName }             = require('./serverBrandService');
 const log = makeLogger('leagueSetup');
 const { getStaffRoles: getConfiguredStaffRoles } = require('./accessPolicyService');
+const { LEAGUE_RULE_PRESETS }             = require('../config/rules');
+const { leagueChannelName, leaguePrefixCode } = require('./leagueNamingService');
+const { execute: executeLeagueBuild } = require('../league/build/leagueBuildService');
 
 // ── Shared rules that apply to ALL leagues (adapted per sport) ─
 const SHARED_RULES = {
@@ -604,74 +607,54 @@ Write it like a real sports article — hype the winner a little, acknowledge th
   }
 }
 
+// Compile the existing definitions without changing their names, permissions or team model.
+async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, categories) {
+  const def = LEAGUE_TYPES[leagueTypeId];
+  const code = leaguePrefixCode(leagueName, def.label);
+  const active = activeLeagueService.listActiveLeagues();
+  const sameLeague = active.find(l => l.leagueTypeId === leagueTypeId && l.leagueName === leagueName);
+  // The historical two-character naming contract would reuse another league's channels.
+  if (active.some(l => l.id !== 'current' && leaguePrefixCode(l.leagueName, LEAGUE_TYPES[l.leagueTypeId]?.label) === code && l.leagueName !== leagueName)) {
+    throw new Error(`League code ${code} is already in use. Choose a name with a different two-character prefix.`);
+  }
+  const plan = {
+    leagueTypeId,
+    categories: categories.map(cat => ({
+      name: sharedCategoryNameFor(def.game, cat), adminOnly: !!cat.adminOnly,
+      channels: cat.channels.map(key => ({ key, name: leagueChannelName(leagueName, key, def.label) })),
+    })),
+  };
+  const result = await executeLeagueBuild({
+    guild, plan,
+    createCategory: cat => require('./baseInitService').findOrCreateCategory(guild, cat.name, buildStaffOverwrites(guild, commRoleId, cat.adminOnly)),
+    createChannel: (channel, category, cat) => {
+      const topic = CHANNEL_TOPICS[channel.key] || '';
+      return guild.channels.create({
+        name: channel.name, type: ChannelType.GuildText, parent: category.id,
+        topic: topic ? `[${leagueName || def.label}] ${topic}` : `[${leagueName || def.label}]`,
+        permissionOverwrites: channelPermsForKey(guild, commRoleId, channel.key, cat.adminOnly),
+      });
+    },
+    commit: async ({ builtCategoryIds, builtChannelIds }) => {
+      const activeLeague = activeLeagueService.upsertLeague({
+        id: sameLeague?.id || `${code}-${Date.now()}`, leagueTypeId, leagueName, game: def.game,
+        builtCategoryIds, builtChannelIds, isCustom: !!def.isCustom, createdAt: Date.now(),
+      });
+      const seeded = seedLeagueTeams(stateRef, def, activeLeague);
+      try { require('./openTeamsService').refreshOpenTeamsBoard(guild).catch(e => log.warn(`Open team refresh failed: ${e.message}`)); }
+      catch (e) { log.warn(`Open team refresh unavailable: ${e.message}`); }
+      return { def, activeLeague, seeded };
+    },
+  });
+  log.info(`Built ${def.label} (${leagueName || def.label}) — ${result.createdCount} channels. Seeded ${result.seeded?.seeded || 0} team slots.`);
+  return result;
+}
+
 // ── Channel builder ───────────────────────────────────────────
 async function buildLeagueStructure(guild, leagueTypeId, commRoleId, leagueName) {
   const def = LEAGUE_TYPES[leagueTypeId];
   if (!def) throw new Error(`Unknown league type: ${leagueTypeId}`);
-
-  const rulesText = SHARED_RULES[def.game] || SHARED_RULES.madden;
-
-  let createdCount = 0;
-  const builtChannels = {};
-  const builtCategoryIds = [];
-  const builtChannelIds = [];
-
-  for (const cat of def.categories) {
-    const catName = sharedCategoryNameFor(def.game, cat);
-
-    // V198 FIX: Use findOrCreateCategory instead of raw guild.channels.create
-    const { findOrCreateCategory: _findOrCreateCat } = require('./baseInitService');
-    const overwrites = buildStaffOverwrites(guild, commRoleId, !!cat.adminOnly);
-    const category = await _findOrCreateCat(guild, catName, overwrites);
-    builtCategoryIds.push(category.id);
-
-    for (const chKey of cat.channels) {
-      const topic = CHANNEL_TOPICS[chKey] || '';
-      const isAdmin = !!cat.adminOnly;
-      const channelName = leagueChannelName(leagueName, chKey, def.label);
-      const overwrites = channelPermsForKey(guild, commRoleId, chKey, isAdmin);
-
-      const existing = guild.channels.cache.find(c =>
-        c.isTextBased?.() && c.parentId === category.id && c.name === channelName
-      );
-      if (existing) {
-        builtChannels[chKey] = existing;
-        builtChannelIds.push(existing.id);
-        continue;
-      }
-
-      const created = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: category.id,
-        topic: topic ? `[${leagueName || def.label}] ${topic}` : `[${leagueName || def.label}]`,
-        permissionOverwrites: overwrites,
-      }).catch(e => { log.error(`Failed to create ${channelName}:`, e.message); return null; });
-
-      if (created) {
-        builtChannels[chKey] = created;
-        builtChannelIds.push(created.id);
-        createdCount++;
-      }
-    }
-  }
-
-  const activeLeague = activeLeagueService.upsertLeague({
-    id: `${leaguePrefixCode(leagueName, def.label)}-${Date.now()}`,
-    leagueTypeId,
-    leagueName: leagueName,
-    game: def.game,
-    builtCategoryIds,
-    builtChannelIds,
-    isCustom: !!def.isCustom,
-    createdAt: Date.now(),
-  });
-
-  const seeded = seedLeagueTeams(stateRef, def, activeLeague);
-  try { require('./openTeamsService').refreshOpenTeamsBoard(guild).catch(() => null); } catch {}
-
-  log.info(`Built ${def.label}${leagueName ? ` (${leagueName})` : ''} — ${createdCount} channels in shared categories. Seeded ${seeded.seeded || 0} team slots.`);
-  return { def, createdCount, builtChannels, builtCategoryIds, builtChannelIds, activeLeague, seeded };
+  return buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, def.categories);
 }
 
 // ── Smart reset league structure (only essential categories) ─────────
@@ -689,63 +672,8 @@ async function buildSimplifiedLeagueStructure(guild, leagueTypeId, commRoleId, l
     { name: '🧠 STAFF HQ', channels: ['commissioner-ai', 'admin-hq', 'commish-hub', 'scoresheets'], adminOnly: true },
   ];
 
-  let createdCount = 0;
-  const builtChannels = {};
-  const builtCategoryIds = [];
-  const builtChannelIds = [];
+  return buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, simplifiedCategories);
 
-  for (const cat of simplifiedCategories) {
-    // V198 FIX: Use findOrCreateCategory instead of raw guild.channels.create
-    const { findOrCreateCategory: _findOrCreateCat2 } = require('./baseInitService');
-    const overwrites = buildStaffOverwrites(guild, commRoleId, !!cat.adminOnly);
-    const category = await _findOrCreateCat2(guild, cat.name, overwrites);
-    builtCategoryIds.push(category.id);
-
-    for (const chKey of cat.channels) {
-      const topic = CHANNEL_TOPICS[chKey] || '';
-      const isAdmin = !!cat.adminOnly;
-      const channelName = leagueChannelName(leagueName, chKey, def.label);
-      const overwrites = channelPermsForKey(guild, commRoleId, chKey, isAdmin);
-
-      const existing = guild.channels.cache.find(c => c.isTextBased?.() && c.parentId === category.id && c.name === channelName);
-      if (existing) {
-        builtChannels[chKey] = existing;
-        builtChannelIds.push(existing.id);
-        continue;
-      }
-
-      const created = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: category.id,
-        topic: topic ? `[${leagueName}] ${topic}` : `[${leagueName}]`,
-        permissionOverwrites: overwrites,
-      }).catch(e => { log.error(`Failed to create ${channelName}:`, e.message); return null; });
-
-      if (created) {
-        builtChannels[chKey] = created;
-        builtChannelIds.push(created.id);
-        createdCount++;
-      }
-    }
-  }
-
-  const activeLeague = activeLeagueService.upsertLeague({
-    id: `${leaguePrefixCode(leagueName, def.label)}-${Date.now()}`,
-    leagueTypeId,
-    leagueName: leagueName,
-    game: def.game,
-    builtCategoryIds,
-    builtChannelIds,
-    isCustom: !!def.isCustom,
-    createdAt: Date.now(),
-  });
-
-  const seeded = seedLeagueTeams(stateRef, def, activeLeague);
-  try { require('./openTeamsService').refreshOpenTeamsBoard(guild).catch(() => null); } catch {}
-
-  log.info(`Reset to ${def.label} (${leagueName}) — ${createdCount} channels created/reset in shared categories. Seeded ${seeded.seeded || 0} team slots.`);
-  return { def, createdCount, builtChannels, builtCategoryIds, builtChannelIds, activeLeague, seeded };
 }
 
 // ── Delete every channel and category that was built for a league ──────────────

@@ -15,7 +15,8 @@ test('league category permissions: only adminOnly categories deny @everyone (BUG
   const src = require('fs').readFileSync(require.resolve('../src/services/leagueSetupService'), 'utf8');
   assert(!/adminOnly\s*\|\|\s*true/.test(src), 'no forced || true');
   assert(!/buildStaffOverwrites\(guild, commRoleId, true\)/.test(src), 'no literal true in category builders');
-  eq((src.match(/buildStaffOverwrites\(guild, commRoleId, !!cat\.adminOnly\)/g) || []).length, 2, 'both builders use cat.adminOnly');
+  assert(src.includes('adminOnly: !!cat.adminOnly'), 'shared plan preserves category adminOnly');
+  assert(src.includes('buildStaffOverwrites(guild, commRoleId, cat.adminOnly)'), 'shared builder uses category policy');
 });
 test('schedule timer: double start leaves exactly one pending timer; stale generation is a no-op (BUG-002)', () => {
   resetFiles(['weeklyAutomation.json']);

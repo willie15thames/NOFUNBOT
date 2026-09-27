@@ -16,6 +16,7 @@ const { EmbedBuilder, ChannelType, PermissionFlagsBits } = require('discord.js')
 const ledger = require('./memberLedgerService');
 const { makeLogger } = require('../utils/logger');
 const { ACTIVE_CHECK } = require('../config/constants');
+const { leagueChannelName, legacyTwoCharChannelName } = require('./leagueNamingService');
 const log = makeLogger('leagueFeatures');
 
 const FILE = 'leagueFeatures.json';
@@ -50,11 +51,10 @@ function setLeague(id, patch) {
 // ── Channel provisioning ────────────────────────────────────────
 
 async function ensureLeagueActiveCheckChannel(guild, league) {
+  const desiredName = leagueChannelName(league.leagueName, 'active-check', league.leagueName || 'league');
+  const legacyName = legacyTwoCharChannelName(league.leagueName, 'active-check');
   const existing = guild.channels.cache.get(getLeague(league.id).channelId || '')
-    || guild.channels.cache.find(c =>
-      c.isTextBased?.() &&
-      c.name === `${String(league.leagueName || 'lg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 2) || 'lg'}.active-check`
-    );
+    || guild.channels.cache.find(c => c.isTextBased?.() && (c.name === desiredName || c.name === legacyName));
   if (existing) return existing;
 
   let parent = null;
@@ -72,9 +72,8 @@ async function ensureLeagueActiveCheckChannel(guild, league) {
     allow: [PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
   });
 
-  const prefix = String(league.leagueName || 'lg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 2) || 'lg';
   const ch = await guild.channels.create({
-    name: `${prefix}.active-check`,
+    name: desiredName,
     type: ChannelType.GuildText,
     parent: parent?.id,
     topic: `${league.leagueName} active check channel`,

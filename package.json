@@ -1,6 +1,6 @@
 {
   "name": "nofunleague-bot",
-  "version": "21.9.0",
+  "version": "21.9.2",
   "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
   "main": "index.js",
   "scripts": {
@@ -24,14 +24,16 @@
     "repair:deps": "rm -rf node_modules package-lock.json && npm install && npm install discord.js",
     "start:railway": "sh scripts/railway-start.sh",
     "start:health": "node health-server.js",
-    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js",
+    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && npm test",
     "deploy:preflight": "node scripts/predeploy-check.js",
     "deploy:context": "node scripts/release-context.js",
     "infra:check": "node scripts/check-infra.js",
     "precommit:run": "node scripts/pre-commit-check.js",
     "hooks:install": "node scripts/install-git-hooks.js",
     "process:audit": "node scripts/pre-commit-check.js",
-    "test": "node tests/run-all.js"
+    "test": "node tests/run-all.js",
+    "static:undefined": "node scripts/check-undefined-identifiers.js",
+    "command:contract": "node scripts/command-contract-check.js"
   },
   "engines": {
     "node": ">=18.0.0"

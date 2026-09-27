@@ -130,7 +130,7 @@ function _guardBotKilledCommand(interaction) {
   if (status !== 'killed') return false;
   if (new Set(['ignite-bot','bot-status','kill-bot','trash-the-bot']).has(cmd)) return false;
   interaction.reply({
-    content: '🛑 Bot is currently killed. Only `/ignite-bot`, `/bot-status`, `/kill-bot`, and `/trash-the-bot` are available right now.',
+    content: '🛑 Bot is currently killed. Only `/workflow bot ignite`, `/workflow bot status`, `/workflow bot kill`, and `/trash-the-bot` are available right now.',
     flags:64,
   }).catch(() => null);
   return true;
@@ -3033,6 +3033,7 @@ case 'post-component': {
 case 'initialize-server': {
   if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
   if (!interaction.deferred && !interaction.replied) await safeDeferred(interaction, { flags:64 }).catch(() => null);
+  const ackMode = interaction.deferred ? 'deferred' : interaction.replied ? 'replied' : 'reply';
   const lastTrashAt = Number(wizardStateService.getState().lastTrashAt || 0);
   if (lastTrashAt && (Date.now() - lastTrashAt) < 90_000) {
     return _updateLongInteraction(interaction, ackMode, { content: '⏳ A full reboot just ran moments ago. Wait a little and use the refreshed setup guide instead of firing another reboot.', flags:64 }).catch(() => null);
@@ -3190,7 +3191,7 @@ Applied now: **${applied.ok ? 'yes' : 'no'}**${applied.reason ? `\nReason: **${a
 case 'kill-bot': {
   if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
   serverSettings.setBotStatus('killed');
-  return interaction.reply({ content:'🛑 Bot status set to **KILLED**. Normal commands are now offline until `/ignite-bot` is used.', flags:64 });
+  return interaction.reply({ content:'🛑 Bot status set to **KILLED**. Normal commands are now offline until `/workflow bot ignite` is used.', flags:64 });
 }
 
 case 'ignite-bot': {
@@ -4301,18 +4302,24 @@ If they rejoin, the bot will still flag them as a returning member with history.
       await interaction.deferReply({ flags:64 }).catch(() => null);
       try {
         const { runStartupHealthCheck } = require('../services/startupHealthCheckService');
-        const { results } = await runStartupHealthCheck();
+        const health = await runStartupHealthCheck();
+        const { results } = health;
         const lines = results.map(r => {
-          const icon = r.ok ? '✅' : '⚠️';
+          const icon = r.ok ? '✅' : r.blocking ? '❌' : '⚠️';
+          const impact = !r.ok ? `\n> **Impact:** ${r.blocking ? 'Blocks authoritative automation/readiness' : 'Non-blocking warning'}` : '';
           const fixLine = r.fix ? `\n> **Fix:** ${r.fix}` : '';
-          return `${icon} **${r.name}**\n> ${r.value}${fixLine}`;
+          return `${icon} **${r.name}**\n> ${r.value}${impact}${fixLine}`;
         });
-        const allOk = results.every(r => r.ok);
+        const title = health.ok
+          ? '✅ System Health — All Operational'
+          : health.ready
+            ? `⚠️ System Health — Ready with ${health.warnings} Warning(s)`
+            : `❌ System Health — Readiness Blocked (${health.blockingFailures})`;
         return interaction.editReply({ embeds: [new EmbedBuilder()
-          .setColor(allOk ? 0x2ecc71 : 0xffa500)
-          .setTitle(`${allOk ? '✅' : '⚠️'} System Health — ${allOk ? 'All Operational' : `${results.filter(r => !r.ok).length} Issue(s)`}`)
-          .setDescription(lines.join('\n\n'))
-          .setFooter({ text: 'Run /health-status anytime to recheck. Fix items showing ⚠️ to reach full operation.' })
+          .setColor(health.ok ? 0x2ecc71 : health.ready ? 0xffa500 : 0xe74c3c)
+          .setTitle(title)
+          .setDescription(lines.join('\n\n').slice(0, 4096))
+          .setFooter({ text: 'Health separates blocking dependencies from optional/degraded features.' })
           .setTimestamp()] });
       } catch (err) {
         return interaction.editReply({ content: `❌ Health check failed: ${err.message}` });

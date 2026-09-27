@@ -27,35 +27,24 @@ if (missingFiles.length) {
   console.log('[boot-preflight] OK   all required files present');
 }
 
-// ── Phase 2: Environment / infra checks (from check-infra.js) ───────────────
-const envChecks = [
-  { key: 'DISCORD_TOKEN', required: true },
-  { key: 'CLIENT_ID', required: true },
-  { key: 'GUILD_ID', required: true },
-  { key: 'COMMISSIONER_ROLE_ID', required: false },
-  { key: 'BOT_DATA_DIR', required: false },
-  { key: 'DATABASE_URL', required: false },
-  { key: 'REDIS_URL', required: false },
-];
-for (const item of envChecks) {
-  if (process.env[item.key]) {
-    console.log(`[boot-preflight] OK   ${item.key}`);
-  } else if (item.required) {
-    console.error(`[boot-preflight] FAIL ${item.key} is required`);
-    exitCode = 1;
-  } else {
-    console.log(`[boot-preflight] WARN ${item.key} not set`);
-  }
+// ── Phase 2: Environment / infra checks ───────────────────────────────
+const flags = getFeatureFlags(process.env);
+const { validateRuntimeEnvironment } = require('../src/config/runtimeValidation');
+const validation = validateRuntimeEnvironment(process.env, {
+  enableQueueWorker: flags.enableQueueWorker,
+  runPrismaMigrationsOnBoot: flags.runPrismaMigrationsOnBoot,
+  runDbBootstrapOnBoot: flags.runDbBootstrapOnBoot,
+});
+for (const issue of validation.issues) {
+  const fn = issue.severity === 'error' ? console.error : console.warn;
+  fn(`[boot-preflight] ${issue.severity === 'error' ? 'FAIL' : 'WARN'} ${issue.key} — ${issue.message}`);
 }
-
-const dbUrl = String(process.env.DATABASE_URL || '').trim();
-if (dbUrl && !/^postgres(ql)?:\/\//.test(dbUrl)) {
-  console.error('[boot-preflight] FAIL DATABASE_URL must start with postgres:// or postgresql://');
-  exitCode = 1;
+if (!validation.ok) exitCode = 1;
+for (const key of ['DISCORD_TOKEN','CLIENT_ID','GUILD_ID','COMMISSIONER_ROLE_ID','BOT_DATA_DIR','DATABASE_URL','REDIS_URL']) {
+  if (process.env[key] && !validation.issues.some(i => i.key === key && i.severity === 'error')) console.log(`[boot-preflight] OK   ${key}`);
 }
 
 // ── Phase 3: Release context (from release-context.js) ──────────────────────
-const flags = getFeatureFlags(process.env);
 console.log('[boot-preflight] release-context: ' + JSON.stringify({
   appEnv: flags.appEnv,
   releaseChannel: flags.releaseChannel,

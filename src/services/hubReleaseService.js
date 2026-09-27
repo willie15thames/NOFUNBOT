@@ -178,10 +178,10 @@ async function postScheduleEmbed(guild, state, getCh, getTeamEmoji) {
 // makes an old callback a no-op if a newer generation was started while it was pending; a single-flight
 // guard prevents an overlapping post if Discord is slow. Timers are wake-ups only — schedule authority is
 // state.scheduleState (hydrated from scheduleRegistry) and the advance engine, never these handles.
-const _scheduleTimers = new Map(); // guildId → { generation, initialTimerId, intervalId, inFlight }
+const _scheduleTimers = new Map(); // guildId → { generation, initialTimerId, intervalId, inFlight, authority }
 
 function _scheduleEntry(guildId) {
-  if (!_scheduleTimers.has(guildId)) _scheduleTimers.set(guildId, { generation: 0, initialTimerId: null, intervalId: null, inFlight: false });
+  if (!_scheduleTimers.has(guildId)) _scheduleTimers.set(guildId, { generation: 0, initialTimerId: null, intervalId: null, inFlight: false, authority: 'legacy-schedule-timer' });
   return _scheduleTimers.get(guildId);
 }
 
@@ -197,7 +197,7 @@ function stopScheduleTimer(guild, state) {
 function getScheduleTimerStatus(guild) {
   const entry = _scheduleTimers.get(guild?.id || 'default');
   if (!entry) return { active: false, generation: 0, phase: 'idle' };
-  return { active: !!(entry.initialTimerId || entry.intervalId), generation: entry.generation, phase: entry.intervalId ? 'recurring' : entry.initialTimerId ? 'pending-first-fire' : 'idle', inFlight: entry.inFlight };
+  return { active: !!(entry.initialTimerId || entry.intervalId), generation: entry.generation, phase: entry.intervalId ? 'recurring' : entry.initialTimerId ? 'pending-first-fire' : 'idle', inFlight: entry.inFlight, authority: entry.authority || 'legacy-schedule-timer' };
 }
 
 function startScheduleTimer(guild, state, getCh, getTeamEmoji) {
@@ -206,9 +206,25 @@ function startScheduleTimer(guild, state, getCh, getTeamEmoji) {
   const entry = _scheduleEntry(guildId);
   const weekly = getWeeklySettings();
   if (weekly.mode !== 'automatic') {
+    entry.authority = 'manual';
     log.info(`Schedule timer: manual mode enabled — no recurring repost timer started.`);
-    return { started: false, generation };
+    return { started: false, generation, reason: 'manual-mode' };
   }
+
+  // When the V202 advance policy has been explicitly configured, the advance engine owns the clock.
+  // Week projection already posts the schedule after a provider-verified transition, so a second 48h
+  // repost interval would create two independent clocks. Legacy mode is retained until a policy file exists.
+  try {
+    const policy = require('../league/automationPolicyService').getPolicy();
+    if (policy?.source === 'policy-file' && policy.enabled) {
+      entry.authority = 'advance-engine';
+      log.info('Schedule timer: advance engine is authoritative — legacy recurring repost timer not armed.');
+      return { started: false, generation, reason: 'advance-engine-authoritative', authority: 'advance-engine' };
+    }
+  } catch (err) {
+    log.warn(`Schedule timer authority check failed; retaining legacy behavior: ${err.message}`);
+  }
+  entry.authority = 'legacy-schedule-timer';
   const tick = async () => {
     if (entry.generation !== generation) return;          // stale generation — a newer start superseded us
     if (entry.inFlight) { log.warn('Schedule timer: previous post still in flight — skipping this tick'); return; }

@@ -64,3 +64,15 @@ PHASE 6 - RELEASE GATE
 48. Keep compatibility flags until the new path passes the trial run.
 49. Preserve rollback by retaining the previous provider/path behind a feature flag until cutover is complete.
 50. A release is complete only when code, state migration, documentation, tests and operational recovery are all aligned.
+
+V203.1 STABILIZATION ADDENDUM - REQUIRED
+51. The documented league channel naming contract from patch v18 is authoritative: first two alphanumeric league-name characters + '.' + channel key (example: no.rules). Do not change this format without a migration plan for discovery, permissions, rules lookup, and existing servers.
+52. leagueChannelName() and leaguePrefixCode() are owned by src/services/leagueNamingService.js. Do not duplicate inline naming logic in setup/feature services.
+53. A PrismaClient object existing does not mean PostgreSQL is healthy. Operational checks must use probePrisma()/getPrismaHealth() and distinguish clientInitialized, reachable, and schemaReady.
+54. Production Railway configuration must not use localhost for separate PostgreSQL/Redis services. Deployment validation must reject known placeholder credentials/secrets before boot.
+55. The advance engine is the deadline authority once an explicit automation policy exists. Do not introduce a second recurring 48-hour timer in a Discord presentation service.
+56. Router-only command cases must be classified in docs/COMMAND_HANDLER_MANIFEST.md and scripts/command-contract-check.js. Public command visibility must not silently regress.
+57. Before packaging, run the unresolved-identifier guard. node --check only proves syntax and cannot detect missing runtime identifiers.
+58. Legacy JSON, PostgreSQL and Redis must never be treated as equal business-state authorities. Follow data/JSON_OWNERSHIP_MAP.md and document any cutover before changing read authority.
+59. Dedicated queue-worker readiness requires both Redis and PostgreSQL. Do not restore an unref'd retry loop that claims to keep the process alive.
+60. Do not convert broad best-effort catch behavior in one sweep. Replace silent catches only where the operation is classified, tested, and the caller can handle the new error/result contract.

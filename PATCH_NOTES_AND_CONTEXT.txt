@@ -2846,3 +2846,18 @@ DO NOT REGRESS
 CRITICAL RAILWAY CONFIG REQUIRED:
 The bot's Data Dir is /tmp/nofunleague-data (EPHEMERAL). Every Railway restart wipes wizardState.json, serverSettings.json, and all state → bot resets to install mode → rebuilds channels on top of existing ones → creates duplicates.
 FIX: In Railway dashboard → Service → Settings → Volumes → add a volume mounted at /app/data. Then set BOT_DATA_DIR=/app/data in environment variables. This makes state persist across restarts.
+
+
+[V203.1] FULL AUDIT STABILIZATION APPLIED | 2026-09-26 | package 21.9.1
+- Source basis: the fresh v203 codebase audit, not the earlier product architecture specification.
+- P0 setup crash: fixed both unresolved helpers in leagueSetupService (`leagueChannelName`, `leaguePrefixCode`) through one deterministic naming service that preserves the v18 two-character dot-prefix format. Do not inline, duplicate, or silently change this contract.
+- Additional unresolved runtime paths caught by the new static guard: league rules publishing now imports `LEAGUE_RULE_PRESETS`; initialize-server now defines `ackMode` before the recent-reboot branch can call `_updateLongInteraction`.
+- Production config: runtimeValidation is the shared authority for deployment URL/placeholder checks. Railway must use service references, not localhost, for Postgres/Redis.
+- DB health: `isPrismaAvailable()` is compatibility-only and means client constructable. Operational health must use `probePrisma()` / `getPrismaHealth()`.
+- Health status: startup/health checks label failures as blocking vs non-blocking. AI unavailability and commissioner-role fallback are warnings; required storage/DB/Redis failures block readiness/authoritative automation.
+- DB circuit: three connectivity failures open a 15s circuit. Do not bypass it with direct background Prisma loops for ordinary best-effort persistence.
+- Queue worker: dedicated worker is fail-fast/readiness-driven. Do not restore the old unref'd idle retry comment/loop.
+- Scheduling authority: advanceEngine/runtime nextAdvanceAt is authoritative once automationPolicy is explicitly configured. hubReleaseService may project/repost but must not create a second policy clock.
+- Commands: lifecycle compatibility is `/workflow bot kill|ignite|status`; guide republish is `/workflow guide republish`. Legacy router handlers remain the executor target through commandAliasService.
+- CI: run `npm install` (this package does not currently include a lockfile), Prisma generate, `npm run release:verify`, and deploy preflight. `release:verify` now checks command contracts and unresolved executable identifiers.
+- Deliberately deferred: interactionRouter decomposition, wholesale silent-catch cleanup, and JSON-to-Postgres read-authority cutover. Those are larger P2/migration changes and were not bundled into this stabilization patch because doing so would raise regression risk.

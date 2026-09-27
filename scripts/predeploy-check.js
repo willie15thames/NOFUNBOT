@@ -30,6 +30,7 @@ if (missingFiles.length) {
 }
 
 const flags = getFeatureFlags(process.env);
+const { validateRuntimeEnvironment } = require('../src/config/runtimeValidation');
 console.log('[predeploy-check] Required files present ✅');
 console.log(`[predeploy-check] appEnv=${flags.appEnv} channel=${flags.releaseChannel} version=${flags.releaseVersion}`);
 console.log(`[predeploy-check] migrations=${flags.runPrismaMigrationsOnBoot} bootstrap=${flags.runDbBootstrapOnBoot} jsonMigration=${flags.runJsonMigrationOnBoot} worker=${flags.enableQueueWorker}`);
@@ -46,3 +47,14 @@ if (!process.env.REDIS_URL && flags.enableQueueWorker) {
 if (flags.runJsonMigrationOnBoot) {
   console.warn('[predeploy-check] WARN RUN_JSON_MIGRATION_ON_BOOT=true. Keep this enabled only for intentional one-time migrations.');
 }
+
+const runtimeValidation = validateRuntimeEnvironment(process.env, {
+  enableQueueWorker: flags.enableQueueWorker,
+  runPrismaMigrationsOnBoot: flags.runPrismaMigrationsOnBoot,
+  runDbBootstrapOnBoot: flags.runDbBootstrapOnBoot,
+});
+for (const issue of runtimeValidation.issues) {
+  const fn = issue.severity === 'error' ? console.error : console.warn;
+  fn(`[predeploy-check] ${issue.severity.toUpperCase()} ${issue.key}: ${issue.message}`);
+}
+if (!runtimeValidation.ok) process.exitCode = 1;

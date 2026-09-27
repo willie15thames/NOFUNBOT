@@ -41,11 +41,11 @@ const MANUAL = {
           name: 'Manual Sections',
           value:
             '`/manual` - full index + PDF\n' +
-            '`/manual-server` - base server setup, rules, bot identity, install/reset\n' +
-            '`/manual-setup` - installation and reboot flow\n' +
-            '`/manual-league` - league creation, league rules, teams, schedules, automation\n' +
-            '`/manual-commands` - commissioner command reference\n' +
-            '`/manual-actions` - what the bot can do for you automatically',
+            '`/manual section:server` - base server setup, rules, bot identity, install/reset\n' +
+            '`/manual section:setup` - installation and reboot flow\n' +
+            '`/manual section:league` - league creation, league rules, teams, schedules, automation\n' +
+            '`/manual section:commands` - commissioner command reference\n' +
+            '`/manual section:actions` - what the bot can do for you automatically',
         },
         {
           name: 'Quick Start',
@@ -236,7 +236,7 @@ const MANUAL = {
             ['/player-of-the-week', 'award or update the player-of-the-week board'],
             ['/refresh-rewards', 'rebuild reward and progression boards'],
             ['/retract-score', 'pull back an incorrect score report'],
-            ['/post-server-guide', 'republish the server guide'],
+            ['/workflow guide republish', 'republish the server guide'],
             ['/send-welcome', 'send the welcome DM to a user manually'],
             ['/create-poll', 'post a managed poll to the polls lane'],
           ]),
@@ -274,11 +274,11 @@ const MANUAL = {
           name: 'Manual Sections',
           value:
             '`/manual` - full index + PDF\n' +
-            '`/manual-server` - how the base server works\n' +
-            '`/manual-setup` - what members need to know about setup\n' +
-            '`/manual-league` - how to join and operate inside a league\n' +
-            '`/manual-commands` - your usable commands\n' +
-            '`/manual-actions` - what you can do in channels',
+            '`/manual section:server` - how the base server works\n' +
+            '`/manual section:setup` - what members need to know about setup\n' +
+            '`/manual section:league` - how to join and operate inside a league\n' +
+            '`/manual section:commands` - your usable commands\n' +
+            '`/manual section:actions` - what you can do in channels',
         },
         {
           name: 'Fastest Path',

@@ -1,3 +1,22 @@
+[V203.1] Audit stabilization and production-safety patch | 2026-09-26 | package 21.9.1
+
+- FIX: Restored the missing documented v18 league naming contract used by both Standard and Fantasy Draft setup. `leagueChannelName()` and `leaguePrefixCode()` now live in `src/services/leagueNamingService.js` and preserve `<2-char-prefix>.<channel-key>` names (for example `no.rules`).
+- FIX: Static stabilization also caught and repaired two additional runtime ReferenceError paths: `LEAGUE_RULE_PRESETS` is explicitly imported in league setup rules publishing, and `initialize-server` now defines `ackMode` before the recent-reboot response path uses it.
+- FIX: Production environment validation rejects localhost PostgreSQL/Redis endpoints and placeholder Discord/Anthropic secrets when those services are required. Railway preflight, deploy preflight, and infra checks now share one validation contract.
+- FIX: Prisma health no longer equates PrismaClient construction with a live database. Reachability, schema readiness, failure state, last success/failure, and circuit state are tracked separately; repeated connection failures open a short circuit instead of hammering a dead DB.
+- FIX: Queue worker startup is deterministic. Required Redis/Postgres configuration and real startup pings are mandatory; the old contradictory unref'd retry timer was removed; SIGINT/SIGTERM close Worker/Redis/Postgres cleanly.
+- FIX: Railway migrations/bootstrap are no longer silently ignored when explicitly enabled. A requested boot migration that fails now fails the deployment instead of allowing a misleading partially-ready bot.
+- FIX: Legacy hub schedule timer no longer becomes a second 48-hour authority after the persisted advance policy is configured. The advance engine owns the deadline; Discord schedule projection remains derived behavior. Legacy timer behavior remains for pre-policy servers.
+- FIX: AI readiness rejects known placeholder Anthropic keys and reports the actual configuration reason rather than attempting a guaranteed 401 request.
+- FIX: `/health-status` now separates blocking readiness failures from non-blocking warnings, so optional AI/auth warnings do not falsely report the entire bot as dead while persistence/queue failures can clearly block authoritative automation.
+- FIX: Lifecycle/guide router handlers that existed but were unreachable now have grouped compatibility paths under `/workflow bot ...` and `/workflow guide republish`, with existing handler and permission behavior preserved. Dead manual references were replaced by the real grouped/manual paths.
+- GUARD: New command contract checker classifies every router-only command and fails CI for an unhandled registration/handler mismatch.
+- GUARD: New unresolved-identifier check uses the existing TypeScript devDependency in checkJs mode and fails on executable TS2304 diagnostics, catching the exact class of runtime ReferenceError that broke league setup.
+- GUARD: changelog-guard now checks the current package version instead of the stale hard-coded `v141` marker.
+- DOCS: JSON authority/cutover rules and command handler classifications are explicit. New stabilization notes document what changed, what intentionally did not change, and the required verification sequence.
+- NO-REGRESSION: No existing public top-level command is renamed. The interaction router is not broadly rewritten. Provider control capabilities are not fabricated. JSON/PostgreSQL authority is not silently flipped. Destructive/advance state-machine behavior remains guarded.
+- VALIDATION IN THIS PACKAGE: 196 JavaScript files pass `node --check`; command-contract checker passes; pure naming/runtime-validation checks pass; production preflight accepts Railway-style service URLs and rejects localhost endpoints. Full `npm test` requires installed project dependencies (`npm install` for this package because no lockfile is committed).
+
 v203 - All 112 commands reachable (0 trimmed) via grouped aliases; top-level set unchanged
 
 - 12 previously cut admin commands now live under /game-channels (hub, schedule, live-sync), /streams restore and /workflow.
@@ -330,3 +349,8 @@ What changed
 - Added missing initialize-server guild lock release in finally block
 - Added process-level fatal guards for uncaught exceptions and unhandled rejections
 - Replaced direct URL parsing in key services with safe URL handling
+[V203.2] League build validation and rollback | 2026-09-26 | package 21.9.2
+
+- League setup now journals category/channel creation and validates required resources before active registration. Failed builds roll back only resources created by that attempt and retain the error and build ID for diagnosis.
+- Standard and simplified setup share the same builder; an exact rerun reuses the active league ID and channels. Two league names with the same two-character code are blocked before mutation.
+- Added failure, reuse, and rollback tests. Release verification passes with 11 test files. A package lock is included for clean `npm ci` installs.

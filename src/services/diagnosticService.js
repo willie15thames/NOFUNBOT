@@ -76,12 +76,15 @@ function collectState(state) {
 
 async function collectDb() {
   try {
-    const { isPrismaAvailable, prismaSafe } = require('../storage/prisma');
-    if (!isPrismaAvailable()) return { status: '❌ Prisma unavailable' };
-    const count = await prismaSafe(p => p.serverConfig.count(), 0);
-    return { status: '✅ Connected', serverConfigs: count };
+    const { probePrisma } = require('../storage/prisma');
+    const h = await probePrisma({ checkSchema: true });
+    if (!h.configured) return { status: '❌ DATABASE_URL not configured', ...h };
+    if (!h.clientInitialized) return { status: '❌ Prisma client unavailable', ...h };
+    if (h.reachable !== true) return { status: `❌ Database unreachable${h.lastErrorCode ? ` (${h.lastErrorCode})` : ''}`, ...h };
+    if (h.schemaReady === false) return { status: '⚠️ Database reachable, schema not ready', ...h };
+    return { status: '✅ Connected', ...h, serverConfigs: h.serverConfigs ?? null };
   } catch (e) {
-    return { status: `❌ ${e.message}` };
+    return { status: `❌ ${e.message}`, reachable: false, lastError: e.message };
   }
 }
 
@@ -223,8 +226,10 @@ function collectDuplicates(guild) {
  * @returns {{ sections: Object, issues: string[], score: string }}
  */
 async function runFullDiagnosis(guild, getCh, state, client) {
+  const runtimeValidation = require('../config/runtimeValidation').validateRuntimeEnvironment(process.env);
   const sections = {
     env: collectEnv(),
+    configValidation: runtimeValidation,
     runtime: collectRuntime(state, client),
     settings: collectSettings(),
     state: collectState(state),
@@ -246,6 +251,14 @@ async function runFullDiagnosis(guild, getCh, state, client) {
   if (!process.env.DATABASE_URL) issues.push('WARNING: DATABASE_URL not set — no Postgres persistence');
   if (!process.env.REDIS_URL) issues.push('WARNING: REDIS_URL not set — no distributed locks or queue');
   if (!process.env.BOT_DATA_DIR || process.env.BOT_DATA_DIR.startsWith('/tmp')) issues.push('WARNING: BOT_DATA_DIR is ephemeral — state lost on restart');
+  for (const item of runtimeValidation.issues) {
+    const prefix = item.severity === 'error' ? 'CRITICAL' : 'WARNING';
+    const msg = `${prefix}: ${item.key} — ${item.message}`;
+    if (!issues.includes(msg)) issues.push(msg);
+  }
+  if (sections.db?.reachable === false) issues.push(`CRITICAL: PostgreSQL unreachable${sections.db.lastErrorCode ? ` (${sections.db.lastErrorCode})` : ''}`);
+  if (sections.db?.reachable === true && sections.db?.schemaReady === false) issues.push('CRITICAL: PostgreSQL reachable but Prisma schema is not ready');
+  if (sections.db?.circuitState === 'open') issues.push('WARNING: PostgreSQL circuit breaker is open — DB operations are temporarily suppressed');
 
   // Settings issues
   if (!sections.settings.serverInitialized) issues.push('INFO: Server not initialized — run /setup-wizard');
@@ -332,7 +345,7 @@ function buildDiagnosticEmbed(diagnosis) {
   const env = sections.env;
   embed.addFields({
     name: '🏗️ Infrastructure',
-    value: `DB: ${env.DATABASE_URL} | Redis: ${env.REDIS_URL} | AI: ${env.ANTHROPIC_API_KEY} | Data: ${sections.env.BOT_DATA_DIR}`,
+    value: `DB config: ${env.DATABASE_URL} | DB runtime: ${sections.db.status} | Redis config: ${env.REDIS_URL} | AI config: ${env.ANTHROPIC_API_KEY} | Data: ${sections.env.BOT_DATA_DIR}`.slice(0, 1024),
     inline: false,
   });
 

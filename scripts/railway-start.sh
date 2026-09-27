@@ -69,7 +69,7 @@ if [ -f "$PRISMA_CLIENT_DTS" ]; then
   echo "[railway-start] Prisma client already present. Skipping runtime generate."
 elif [ -w "node_modules" ] || [ -w "node_modules/.prisma" ] || [ ! -d "node_modules/.prisma" ]; then
   echo "[railway-start] Running Prisma generate..."
-  npx prisma generate || echo "[railway-start] prisma generate skipped"
+  npx prisma generate
 else
   echo "[railway-start] node_modules is read-only at runtime. Skipping Prisma generate."
 fi
@@ -78,21 +78,21 @@ fi
 if [ -n "$DATABASE_URL" ]; then
   if [ "$RUN_PRISMA_MIGRATIONS_ON_BOOT" = "true" ]; then
     echo "[railway-start] Running Prisma migrations..."
-    npx prisma migrate deploy || echo "[railway-start] prisma migrate deploy skipped (non-fatal)"
+    npx prisma migrate deploy
   else
     echo "[railway-start] Skipping Prisma migrations (RUN_PRISMA_MIGRATIONS_ON_BOOT=$RUN_PRISMA_MIGRATIONS_ON_BOOT)"
   fi
 
   if [ "$RUN_DB_BOOTSTRAP_ON_BOOT" = "true" ]; then
     echo "[railway-start] Running DB bootstrap..."
-    node scripts/db-bootstrap.js || echo "[railway-start] db-bootstrap skipped"
+    node scripts/db-bootstrap.js
   else
     echo "[railway-start] Skipping DB bootstrap (RUN_DB_BOOTSTRAP_ON_BOOT=$RUN_DB_BOOTSTRAP_ON_BOOT)"
   fi
 
   if [ "$RUN_JSON_MIGRATION_ON_BOOT" = "true" ]; then
     echo "[railway-start] Running JSON migration..."
-    node scripts/migrate-json-to-postgres.js || echo "[railway-start] migrate-json skipped"
+    node scripts/migrate-json-to-postgres.js
   else
     echo "[railway-start] Skipping JSON migration (RUN_JSON_MIGRATION_ON_BOOT=$RUN_JSON_MIGRATION_ON_BOOT)"
   fi
@@ -104,13 +104,13 @@ fi
 echo "[railway-start] Health server stays alive as sidecar on PORT=${PORT:-3000}"
 
 echo "[railway-start] Starting bot..."
-if [ "$ENABLE_QUEUE_WORKER" = "true" ] && [ -n "$REDIS_URL" ]; then
+if [ "$ENABLE_QUEUE_WORKER" = "true" ] && [ -n "$REDIS_URL" ] && [ -n "$DATABASE_URL" ]; then
   echo "[railway-start] Starting BullMQ worker..."
   node src/queue/worker.js &
   WORKER_PID=$!
   trap 'kill $WORKER_PID 2>/dev/null || true' EXIT INT TERM
 else
-  echo "[railway-start] Queue worker disabled or REDIS_URL missing."
+  echo "[railway-start] Queue worker disabled or REDIS_URL/DATABASE_URL missing."
 fi
 
 exec node index.js

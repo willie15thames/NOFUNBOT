@@ -2,53 +2,22 @@
  * NAVIGATION HEADER
  * FILE: src/queue/worker.js
  * LAYER: Queue/background execution layer
- * PURPOSE: Supports this part of the system; review exported functions/classes below for the exact execution path.
- * LOOK HERE FIRST WHEN DEBUGGING: Search this file for exported functions, top-level listeners, and state writes.
- * RELATED FLOW: See nearby files in the same folder for related behavior.
- * NOTE: Keep comments in sync when adding new processes, handlers, or state transitions.
+ * PURPOSE: Durable storage-sync worker backed by Redis/BullMQ and PostgreSQL.
+ * LOOK HERE FIRST WHEN DEBUGGING: main(), startWorker(), shutdown().
+ * RELATED FLOW: scripts/railway-start.sh, BullMQ storage-sync queue, BotKv/QueueAudit tables.
+ * NOTE: This is a dedicated worker process. Missing required infrastructure is fatal so Railway can restart/alert it.
  */
 
 'use strict';
+
 const fs = require('fs');
 const { Worker } = require('bullmq');
 const { Pool } = require('pg');
+const IORedis = require('ioredis');
 const { createHash } = require('crypto');
 
-const redisUrl = process.env.REDIS_URL;
-const databaseUrl = process.env.DATABASE_URL;
-
-// FIX: Graceful degradation instead of hard process.exit(1).
-// The worker runs as a background process — crashing it silently leaves the bot
-// without queue processing and no recovery mechanism.
-if (!redisUrl) {
-  console.warn('[worker] REDIS_URL is not set — worker entering idle mode. Will retry every 30s.');
-}
-if (!databaseUrl) {
-  console.warn('[worker] DATABASE_URL is not set — worker entering idle mode. Will retry every 30s.');
-}
-
-if (!redisUrl || !databaseUrl) {
-  // Poll until both become available (Railway may inject vars after process start)
-  const _retryInterval = setInterval(() => {
-    const r = process.env.REDIS_URL;
-    const d = process.env.DATABASE_URL;
-    if (r && d) {
-      console.log('[worker] REDIS_URL and DATABASE_URL now available — restarting worker.');
-      clearInterval(_retryInterval);
-      startWorker(r, d);
-    }
-  }, 30_000);
-  if (typeof _retryInterval.unref === 'function') _retryInterval.unref();
-  // Keep process alive
-  _retryInterval.unref?.();
-} else {
-  startWorker(redisUrl, databaseUrl);
-}
-
-function startWorker(redis, database) {
-
 function getPgSslConfig() {
-  if (process.env.NODE_ENV !== 'production') return undefined;
+  if (process.env.NODE_ENV !== 'production' && process.env.APP_ENV !== 'production') return undefined;
   const certPath = process.env.RAILWAY_SSL_CERT_PATH;
   if (!certPath) return undefined;
   try {
@@ -59,22 +28,34 @@ function getPgSslConfig() {
   }
 }
 
-const pool = new Pool({ connectionString: database, ssl: getPgSslConfig() });
-
 function checksum(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-async function audit(status, jobName, payload, result, error) {
-  await pool.query(
-    'INSERT INTO "QueueAudit" ("queueName","jobName","status","payload","result","error") VALUES ($1,$2,$3,$4,$5,$6)',
-    ['storage-sync', jobName, status, payload || null, result || null, error || null]
-  ).catch(() => null);
-}
+async function startWorker(redisUrl, databaseUrl) {
+  const connection = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+    connectTimeout: 5000,
+  });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: getPgSslConfig() });
 
-(async () => {
+  async function audit(status, jobName, payload, result, error) {
+    try {
+      await pool.query(
+        'INSERT INTO "QueueAudit" ("queueName","jobName","status","payload","result","error") VALUES ($1,$2,$3,$4,$5,$6)',
+        ['storage-sync', jobName, status, payload || null, result || null, error || null]
+      );
+    } catch (err) {
+      console.warn(`[worker] queue audit write failed: ${err.message}`);
+    }
+  }
+
+  await Promise.all([connection.ping(), pool.query('SELECT 1')]);
+
   const worker = new Worker('storage-sync', async job => {
     const { filename, data } = job.data || {};
+    if (!filename) throw new Error('storage-sync job missing filename');
     const sum = checksum(data);
     await pool.query(
       `INSERT INTO "BotKv" ("key","value","source","checksum","updatedAt")
@@ -84,13 +65,49 @@ async function audit(status, jobName, payload, result, error) {
     );
     await audit('completed', job.name, job.data, { filename, checksum: sum }, null);
     return { filename, checksum: sum };
-  }, { connection: { url: redis } });
+  }, { connection });
 
   worker.on('ready', () => console.log('[worker] storage-sync ready'));
+  worker.on('error', err => console.error('[worker] error:', err?.message || err));
   worker.on('failed', async (job, err) => {
     console.error('[worker] failed:', job?.name, err?.message);
     await audit('failed', job?.name || 'unknown', job?.data || null, null, err?.message || 'unknown error');
   });
-})();
 
-} // end startWorker
+  let closing = false;
+  async function shutdown(signal) {
+    if (closing) return;
+    closing = true;
+    console.log(`[worker] shutdown requested (${signal})`);
+    try { await worker.close(); } catch {}
+    try { await connection.quit(); } catch { try { connection.disconnect(); } catch {} }
+    try { await pool.end(); } catch {}
+  }
+  process.once('SIGTERM', () => shutdown('SIGTERM').finally(() => process.exit(0)));
+  process.once('SIGINT', () => shutdown('SIGINT').finally(() => process.exit(0)));
+
+  return { worker, connection, pool, shutdown };
+}
+
+async function main() {
+  const redisUrl = String(process.env.REDIS_URL || '').trim();
+  const databaseUrl = String(process.env.DATABASE_URL || '').trim();
+  const missing = [];
+  if (!redisUrl) missing.push('REDIS_URL');
+  if (!databaseUrl) missing.push('DATABASE_URL');
+  if (missing.length) {
+    console.error(`[worker] fatal: missing ${missing.join(', ')}. Dedicated queue worker cannot run safely.`);
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    await startWorker(redisUrl, databaseUrl);
+  } catch (err) {
+    console.error(`[worker] fatal startup failure: ${err?.message || err}`);
+    process.exitCode = 1;
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = { startWorker, main, checksum };
