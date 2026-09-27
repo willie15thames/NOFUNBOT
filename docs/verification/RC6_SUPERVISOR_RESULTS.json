@@ -1,0 +1,17 @@
+[
+  {
+    "case": "worker-fails",
+    "exit": 1,
+    "childrenStopped": true
+  },
+  {
+    "case": "bot-fails",
+    "exit": 1,
+    "childrenStopped": true
+  },
+  {
+    "case": "shutdown",
+    "exit": 0,
+    "childrenStopped": true
+  }
+]

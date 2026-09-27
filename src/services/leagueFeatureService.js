@@ -16,7 +16,7 @@ const { EmbedBuilder, ChannelType, PermissionFlagsBits } = require('discord.js')
 const ledger = require('./memberLedgerService');
 const { makeLogger } = require('../utils/logger');
 const { ACTIVE_CHECK } = require('../config/constants');
-const { leagueChannelName, legacyTwoCharChannelName } = require('./leagueNamingService');
+const { leagueChannelName, matchesLeagueChannelKey } = require('./leagueNamingService');
 const log = makeLogger('leagueFeatures');
 
 const FILE = 'leagueFeatures.json';
@@ -52,20 +52,28 @@ function setLeague(id, patch) {
 
 async function ensureLeagueActiveCheckChannel(guild, league) {
   const desiredName = leagueChannelName(league.leagueName, 'active-check', league.leagueName || 'league');
-  const legacyName = legacyTwoCharChannelName(league.leagueName, 'active-check');
-  const existing = guild.channels.cache.get(getLeague(league.id).channelId || '')
-    || guild.channels.cache.find(c => c.isTextBased?.() && (c.name === desiredName || c.name === legacyName));
-  if (existing) return existing;
+  const ownedCategories = new Set((league.builtCategoryIds || []).map(String));
+  const stored = guild.channels.cache.get(getLeague(league.id).channelId || '');
+  const existing = (stored && ownedCategories.has(String(stored.parentId)) ? stored : null)
+    || guild.channels.cache.find(c => c.isTextBased?.() && ownedCategories.has(String(c.parentId)) && matchesLeagueChannelKey(c.name,'active-check'));
+  if (existing) {
+    if (!league.memberRoleId) throw new Error('League member role is missing; repair private access before enabling active checks');
+    await existing.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false });
+    await existing.permissionOverwrites.edit(league.memberRoleId, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+    return existing;
+  }
 
   let parent = null;
   for (const id of league.builtCategoryIds || []) {
     const ch = guild.channels.cache.get(id);
     if (ch?.type === ChannelType.GuildCategory && /gameplay|league/i.test(String(ch.name || ''))) { parent = ch; break; }
   }
-  if (!parent) parent = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && /gameplay|league/i.test(String(c.name || ''))) || null;
+  if (!parent) parent = (league.builtCategoryIds || []).map(id => guild.channels.cache.get(id)).find(c => c?.type === ChannelType.GuildCategory) || null;
+  if (!parent || !league.memberRoleId) throw new Error('This league needs its private category and member role repaired before active checks can be enabled');
 
   const overwrites = [
-    { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: league.memberRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
   ];
   if (guild.members?.me?.id) overwrites.push({
     id: guild.members.me.id,
@@ -78,7 +86,11 @@ async function ensureLeagueActiveCheckChannel(guild, league) {
     parent: parent?.id,
     topic: `${league.leagueName} active check channel`,
     permissionOverwrites: overwrites,
-  }).catch(() => null);
+  });
+  const builtChannelIds = [...new Set([...(league.builtChannelIds || []), ch.id])];
+  require('./activeLeagueService').upsertLeague({ ...league, builtChannelIds });
+  const managed = await require('./managedSpaceService').list(guild.id);
+  if (managed.some(s => s.id === league.id)) await require('./managedSpaceService').transition(guild.id, league.id, 'ACTIVE', { builtChannelIds });
   return ch;
 }
 
@@ -152,15 +164,20 @@ async function _processDueActiveChecksOnce(guild, state) {
   const leagues = activeLeagueService.listActiveLeagues();
   const now = Date.now();
 
+  const outcome={errors:[],processed:[]};
   for (const league of leagues) {
+    try {
     const cfg = getLeague(league.id);
     if (!cfg.activeCheckEnabled || !cfg.channelId) continue;
     const ch = guild.channels.cache.get(cfg.channelId);
     if (!ch) continue;
 
-    const members = (state.openTeamRegistry || [])
+    const removalJournal=await require('../storage/criticalStore').read(`v204:active-removals:${guild.id}:${league.id}`,{pending:[]});
+    const pending=[...new Set([...(cfg.pendingRemovals||[]),...removalJournal.pending])];
+    if(pending.length){const retried=await executeDurableRemovals(guild,state,league,pending,cfg.consecutiveMisses||{});setLeague(league.id,{pendingRemovals:retried.failed,consecutiveMisses:cfg.consecutiveMisses});}
+    const teamEntries = (state.openTeamRegistry || [])
       .filter(t => String(t.leagueId || '') === String(league.id) && t.ownerId)
-      .map(t => String(t.ownerId));
+    const members = [...new Set(teamEntries.map(t => String(t.ownerId)))];
     if (!members.length) continue;
 
     const intervalMs = (cfg.intervalDays || ACTIVE_CHECK.INTERVAL_DAYS) * 24 * 60 * 60 * 1000;
@@ -168,28 +185,35 @@ async function _processDueActiveChecksOnce(guild, state) {
 
     // ── Post new active check if interval elapsed and no window open ──
     if (!cfg.windowEndsAt && (!cfg.lastPostedAt || now - cfg.lastPostedAt >= intervalMs)) {
-      const mentions = members.map(id => `<@${id}>`).join(' ');
+      const roleTag = league.memberRoleId ? `<@&${league.memberRoleId}>` : '';
+      const names = members.map(id => {
+        const team = require('./nicknamePolicyService').getDisplayForLeague(state, id, league.id);
+        return `<@${id}>${team ? ` — ${team}` : ''}`;
+      });
+      const mentions = [roleTag, ...names].filter(Boolean).join('\n').slice(0, 1900);
       await ch.send({
         content: mentions,
         embeds: [new EmbedBuilder()
           .setColor(0xf1c40f)
           .setTitle('✅ Active Check')
           .setDescription(
-            'League roll call. Reply in this channel within **48 hours** or risk an inactivity warning.\n\n' +
-            `**${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive misses = automatic removal from the server.**`
+            `League roll call. Reply in this channel within **${cfg.responseWindowHours || ACTIVE_CHECK.RESPONSE_WINDOW_HOURS} hours** or risk an inactivity warning.\n\n` +
+            `**${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive misses = removal from this league only. Other memberships remain.**`
           )
           .setFooter({ text: `This active check repeats every ${cfg.intervalDays || ACTIVE_CHECK.INTERVAL_DAYS} days while enabled.` })
           .setTimestamp()],
-        allowedMentions: { users: members, parse: [] },
-      }).catch(() => null);
-      setLeague(league.id, { lastPostedAt: now, windowEndsAt: now + windowMs, respondedUserIds: [] });
+        // One role ping reaches this league. Member labels provide context
+        // without giving a member a channel-dependent Discord nickname.
+        allowedMentions: roleTag ? { roles: [league.memberRoleId], parse: [] } : { users: members, parse: [] },
+      });
+      setLeague(league.id, { lastPostedAt: now, windowEndsAt: now + windowMs, respondedUserIds: [], notifiedUserIds: members });
       continue;
     }
 
     // ── Process window expiration ──
     if (cfg.windowEndsAt && now >= cfg.windowEndsAt) {
       const responded = new Set((cfg.respondedUserIds || []).map(String));
-      const misses = members.filter(id => !responded.has(String(id)));
+      const misses = (cfg.notifiedUserIds || []).filter(id => members.includes(String(id)) && !responded.has(String(id))); // Legacy windows without an audience snapshot cannot charge absences.
       const consecutiveMisses = { ...(cfg.consecutiveMisses || {}) };
 
       // Reset counter for people who responded
@@ -213,10 +237,10 @@ async function _processDueActiveChecksOnce(guild, state) {
       }
 
       // Save updated miss counters
-      setLeague(league.id, { windowEndsAt: null, respondedUserIds: [], consecutiveMisses });
+      setLeague(league.id, { windowEndsAt: null, respondedUserIds: [], consecutiveMisses, pendingRemovals: [...new Set([...(cfg.pendingRemovals||[]),...bootList])] });
 
       // ── Post missed check warning to warnings-log ──
-      const warnCh = guild.channels.cache.find(c => c.isTextBased?.() && c.name === 'warnings-log');
+      const warnCh = guild.channels.cache.find(c => c.isTextBased?.() && c.name === 'warnings-log' && (league.builtCategoryIds||[]).includes(c.parentId));
       if (misses.length && warnCh) {
         const lines = misses.map(id => {
           const count = consecutiveMisses[id] || 0;
@@ -248,9 +272,9 @@ async function _processDueActiveChecksOnce(guild, state) {
       }
 
       // ── Auto-boot members at 5 consecutive misses ──
-      if (bootList.length) {
-        await _executeAutoBoots(guild, state, league, bootList, consecutiveMisses);
-      }
+      let bootResult={succeeded:[],failed:[]};
+      if (bootList.length) bootResult=await executeDurableRemovals(guild, state, league, bootList, consecutiveMisses);
+      setLeague(league.id,{consecutiveMisses,pendingRemovals:bootResult.failed});
 
       // ── Observability ──
       try {
@@ -259,46 +283,56 @@ async function _processDueActiveChecksOnce(guild, state) {
           leagueId: league.id,
           responded: responded.size,
           missed: misses.length,
-          booted: bootList.length,
+          booted: bootResult.succeeded.length,
           warned: warnList.length,
         });
       } catch {}
     }
+    outcome.processed.push(league.id);
+    }catch(err){outcome.errors.push({leagueId:league.id,error:err.message});log.error(`Active check failed for ${league.id}: ${err.message}`);}
   }
+  return outcome;
 }
 
 // ── Auto-boot execution ─────────────────────────────────────────
 
-async function _executeAutoBoots(guild, state, league, bootList, consecutiveMisses) {
-  const bootCh = guild.channels.cache.find(c => c.isTextBased?.() && c.name === 'boot-log');
+async function executeDurableRemovals(guild,state,league,ids,misses){
+  const store=require('../storage/criticalStore'),key=`v204:active-removals:${guild.id}:${league.id}`;
+  const pending=await store.transact(key,{pending:[]},data=>{data.pending=[...new Set([...data.pending,...ids])];return data.pending;});
+  const result=await _executeAutoBoots(guild,state,league,pending,misses);
+  await store.transact(key,{pending:[]},data=>{data.pending=data.pending.filter(id=>!result.succeeded.includes(id));});
+  return result;
+}
 
+async function _executeAutoBoots(guild, state, league, bootList, consecutiveMisses) {
+  const bootCh = require('./channelTopologyService').findConfiguredChannel(guild, 'bootLog', { textOnly: true });
+
+  const result={succeeded:[],failed:[]};
   for (const userId of bootList) {
     const member = await guild.members.fetch(userId).catch(() => null);
     const tag = member?.user?.tag || member?.user?.username || userId;
 
-    // Release team
-    const teamEntry = (state.openTeamRegistry || []).find(t => String(t.ownerId) === String(userId));
-    if (teamEntry) {
-      teamEntry.ownerId = null;
-      teamEntry.isOpen = true;
-      ledger.recordTeamRelease(userId);
+    // Remove only this league's membership. Kicking from the guild also
+    // removes access to other leagues and events and is never appropriate
+    // for one league's inactivity policy.
+    let teamEntry;
+    try {
+      teamEntry = await require('./openTeamsService').releaseByUserId(guild, userId, league.id);
+      if (!teamEntry) await require('./leagueVisibilityService').revokeMemberAccess(guild, userId, league.id);
+      if (teamEntry) ledger.recordTeamRelease(userId, league.id);
+    } catch (err) {
+      result.failed.push(userId);
+      log.error(`League inactivity removal failed for ${tag}: ${err.message}`);
+      continue;
     }
-
-    // Record in ledger
-    ledger.recordLeave(
-      { id: userId, user: { id: userId, tag } },
-      'kick',
-      `Auto-booted: ${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive active check misses`,
-      guild.members?.me?.id || 'bot'
-    );
 
     // Post to boot log
     if (bootCh) {
       await bootCh.send({
         embeds: [new EmbedBuilder()
           .setColor(0xff0000)
-          .setTitle('🥾 Auto-Boot — Inactivity')
-          .setDescription(`**${tag}** has been removed for missing **${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT}** consecutive active checks.`)
+          .setTitle('🥾 League Removal — Inactivity')
+          .setDescription(`**${tag}** has been removed from **${league.leagueName}** for missing **${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT}** consecutive active checks. Other memberships remain.`)
           .addFields(
             { name: 'League', value: league.leagueName || 'Unknown', inline: true },
             { name: 'Consecutive Misses', value: String(consecutiveMisses[userId] || ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT), inline: true },
@@ -309,16 +343,10 @@ async function _executeAutoBoots(guild, state, league, bootList, consecutiveMiss
       }).catch(() => null);
     }
 
-    // Kick from server
-    if (member) {
-      await member.kick(`Auto-booted: ${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive active check misses`).catch(e => {
-        log.error(`Auto-boot kick failed for ${tag}: ${e.message}`);
-      });
-    }
-
+    result.succeeded.push(userId);
     // Reset their miss counter
     consecutiveMisses[userId] = 0;
-    log.info(`Auto-booted ${tag} from ${league.leagueName} — ${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive misses`);
+    log.info(`Removed ${tag} from ${league.leagueName} — ${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive misses`);
   }
 
   // Escalate to commissioner
@@ -326,10 +354,11 @@ async function _executeAutoBoots(guild, state, league, bootList, consecutiveMiss
     const escalation = require('./escalationService');
     await escalation.escalate('active-check-boot', {
       guild,
-      message: `${bootList.length} member(s) auto-booted from **${league.leagueName || 'League'}** for ${ACTIVE_CHECK.CONSECUTIVE_MISS_BOOT} consecutive active check misses.`,
+      message: `${bootList.length} member(s) reached the inactivity removal threshold in **${league.leagueName || 'League'}**. Verify the league-only removal log; other memberships remain.`,
       force: true,
     });
   } catch {}
+  return result;
 }
 
 // ── Status query ────────────────────────────────────────────────
@@ -356,4 +385,5 @@ module.exports = {
   recordActiveCheckResponse,
   getConsecutiveMisses,
   getActiveCheckStatus,
+  _internals: { executeAutoBoots: _executeAutoBoots },
 };

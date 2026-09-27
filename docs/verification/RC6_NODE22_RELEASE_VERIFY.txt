@@ -1,0 +1,197 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+v22.23.3
+(node:28) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nofunleague-bot@21.10.0-rc.6 verify:local
+> node scripts/verify-local.js
+
+(node:49) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nofunleague-bot@21.10.0-rc.6 tsc
+> tsc --noEmit
+
+(node:70) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nofunleague-bot@21.10.0-rc.6 release:verify
+> node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && npm test
+
+[changelog-guard] PASS changelog.txt contains package 21.10.0-rc.6.
+(node:83) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✅ discord.js installed
+✅ @anthropic-ai/sdk installed
+
+[ENV] ⚠️  Optional but recommended: COMMISSIONER_ROLE_ID is not set.
+[ENV]    Commissioner role detection falls back to Discord Administrator permission. Set this to your commissioner role ID for reliable access control.
+
+
+[ENV] ⚠️  Optional but recommended: DATABASE_URL is not set.
+[ENV]    PostgreSQL is unavailable. Critical production writes are blocked; local test records use BOT_DATA_DIR.
+
+
+[ENV] ⚠️  Optional but recommended: REDIS_URL is not set.
+[ENV]    BullMQ queue worker will not start — background jobs and storage sync are inert.
+
+✅ Environment loader OK
+
+Bot dependency check passed.
+(node:91) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[command-contract] PASS — 116 command definitions, 129 router cases, 13 classified legacy/internal cases.
+(node:99) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[undefined-check] PASS — no unresolved executable identifiers found.
+(node:115) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nofunleague-bot@21.10.0-rc.6 test
+> node tests/run-all.js
+
+  ✔ 48h deadline with a provider that cannot control Madden → AWAITING_SOURCE_ADVANCE, nothing published (rule 21/26)
+  ✔ timer tick again while awaiting → no second cycle, no publish (advance twice = no-op)
+  ✔ source verified → import → validate → publish exactly once; new deadline armed
+  ✔ source reports new week but import missing → no publish, RETRY then RECOVERY (partial import)
+  ✔ import with unknown team → RECOVERY_REQUIRED, not published, alert (missing team)
+  ✔ active game in progress → HOLD with reason; resume re-checks
+  ✔ shadow mode → records WOULD decision, no advance, re-arms deadline
+  ✔ automation disabled → deadline does nothing; manual advance-now still works
+  ✔ manual provider attestation accepted only above expected week; labelled as commissioner-attested
+  ✔ provider WITH control: advanceWeek requested exactly once per cycle, publish only after read-back
+  ✔ crash during PUBLISHING (restart) → publish completes once, idempotent commit
+  ✔ concurrent ticks → one runs, the other is a no-op (single-flight / lock)
+  ✔ /advance-week compatibility: manual week recorded, open cycle closed, deadline re-armed
+  ✔ enabling automation never fires a stale past deadline
+  ✔ illegal state transitions are rejected
+advanceEngine.test.js: 15 passed, 0 failed
+  ✔ unknown action → structured unsupported_action, no side effect
+  ✔ delete without confirmation is blocked by the application; plan is atomic
+  ✔ post_message: mentions never pinged, unknown field (ping) rejected
+  ✔ output contract: prose → zero actions; mixed → invalid; thoughts/confidence ignored
+  ✔ ban_list reply never exposes numeric member IDs
+  ✔ prompt is generated from the catalog: every action listed, no phantom/obsolete controls
+  ✔ every catalog action declares the full contract (rule 29/30)
+  ✔ confirmation map is bounded (TTL + max size)
+aiActions.test.js: 8 passed, 0 failed
+  ✔ registry import exposes methods without a circular partial export
+  ✔ three combined slots are reserved atomically and reject a fourth concurrent request
+  ✔ league builds have exclusive private categories and preserve staff-only access
+  ✔ runtime and policy storage stay isolated through overlapping async contexts
+  ✔ scoped state stores independent schedule and history and preserves global team registry
+  ✔ two identical team names claim independently and failed access rolls back ownership
+  ✔ lifetime results and honors survive leave return archive and replay without duplicate credit
+  ✔ erasing A preserves B resources and A lifetime honors
+  ✔ legacy awards without member identity remain unresolved and import is idempotent
+  ✔ custom stats correct by source ID and remain separated by game
+  ✔ unknown league cannot trigger fuzzy deletion
+  ✔ event occupies a shared slot and grants only its dedicated member role
+  ✔ league runtime A cannot change B policy or channel resolver
+auditV204.test.js: 13 passed, 0 failed
+  ✔ every defined command is registered — zero trimmed (was 12 cut in v201/V202)
+  ✔ top-level command set is byte-identical to V202 (no user-facing command renamed or removed)
+  ✔ containers stay within Discord limits and keep the legacy permission level
+  ✔ flat legacy command inside a subcommand group resolves; its options stay readable
+  ✔ flat legacy command as a direct subcommand, including autocomplete
+  ✔ legacy command with its own subcommands becomes a group; inner getSubcommand() unchanged
+  ✔ non-aliased subcommands of the same containers are untouched
+  ✔ every alias target still has its original router case (handler reused, not duplicated)
+  ✔ build-time guards: permission mismatch, collision and wrong kind are rejected
+  ✔ member-facing guides and manual show the real grouped paths (no dead command names)
+  ✔ fail-closed: an unresolved aliased path is recognised so containers never run a different subcommand
+commandRegistry.test.js: 11 passed, 0 failed
+  ✔ build the same game 10 times → exactly one managed channel (BUG-003)
+  ✔ parallel creation race → one channel survives
+  ✔ missing owner → structured HOLD, no channel, legacy wrapper returns null (BUG-004)
+  ✔ weekly projection is idempotent; re-run creates and deletes nothing (BUG-001)
+  ✔ restart with active game → session, responses and deadline intent restored
+  ✔ single delete refuses non-game channels; update grants resolved owner access
+gameChannels.test.js: 6 passed, 0 failed
+  ✔ failed channel creation rolls back new resources without committing
+  ✔ rerun reuses existing channels and never deletes them on failure
+  ✔ successful build commits after validation and rerun creates no channels
+leagueBuild.test.js: 3 passed, 0 failed
+  ✔ new league channels use plain names inside league-owned categories
+  ✔ league prefix uses first two alphanumeric characters with fallback
+  ✔ legacy prefix remains recognizable without using it for new channels
+leagueNaming.test.js: 3 passed, 0 failed
+  ✔ command registry: ≤100 registered, identical top-level set, /game-channels has advance/sync subcommands (BUG-012 guard)
+  ✔ schedule timer: double start leaves exactly one pending timer; stale generation is a no-op (BUG-002)
+  ✔ state hydration after store warm-up fills schedule, leagueConfig, hub, rewards without clobbering (BUG-007)
+  ✔ persist loop serialises hub data without timer handles (no circular JSON)
+  ✔ dedup sweep: same-name categories not built this run are report-only; scoped categories never touched (BUG-009)
+  ✔ no raw external fetch remains outside the intake layer (BUG-010)
+  ✔ only one active-check scheduler owner (BUG-008)
+  ✔ provider HTTP receiver is off by default (zero behavior change)
+platform.test.js: 8 passed, 0 failed
+  ✔ Companion gateway: wrong token 404, oversize 413, bad content-type 415
+  ✔ Companion gateway: durable receipt, duplicate payload not re-imported, parse → validated snapshot
+  ✔ Companion gateway: malformed JSON fails the import run, never throws
+  ✔ NeonSportz webhook: auth, event filter, delivery-id dedupe (retries are idempotent)
+  ✔ unsupported control is structured, never faked; unconfigured provider reports missing config
+providersIngestion.test.js: 5 passed, 0 failed
+  ✔ F01 preserve renamed moved and retopiced manifest channels and untracked lookalikes
+  ✔ F02 final membership commit failure compensates newly granted role
+  ✔ F02 failed compensation is durably repairable and restart recovery revokes access
+  ✔ F03 three scoped player records use canonical keys without double prefixes
+  ✔ F04 archive failure leaves no active event or created resources
+  ✔ F05 concurrent result retries count once in standings and lifetime authority
+  ✔ F06 failure inside transaction changes neither standings nor lifetime; retries retract once
+  ✔ committed score projections rebuild from durable authority after cache loss
+  ✔ F07 different destructive commands contend for one guild lock
+  ✔ F08 normalized private IPv6 and mapped forms are blocked
+  ✔ F08 connection DNS rejects mixed private answers and pins validated addresses
+  ✔ F09 normal YouTube watch live and short URLs remain supported
+  ✔ F10 active check failure is isolated and late joiners are not charged
+  ✔ F11 intentional team-like nickname without provenance is preserved
+  ✔ F12 reward rollover retains cooldown and durable duplicate identity
+  ✔ F13 failed community deletion reports failure and retry uses recorded IDs
+  ✔ manual stream adjustments are durable, retry-safe and preserve earned history/cooldown
+  ✔ readiness checks current dependencies, disconnection during probe, and stale heartbeat
+  ✔ membership recovery removes pending personal overwrites even after a member leaves
+rc6Faults.test.js: 19 passed, 0 failed
+  ✔ submit same result twice → one standings update (BUG-006)
+  ✔ corrected score supersedes: old reversed, new applied (no double count)
+  ✔ retract reverses standings and clears legacy projection
+  ✔ invalid input rejected with a reason; unmapped league still recorded without standings
+results.test.js: 4 passed, 0 failed
+  ✔ production rejects localhost database/redis endpoints
+  ✔ enabled AI rejects placeholder key
+  ✔ valid Railway-style production references pass hard validation
+  ✔ production rejects placeholder URL credentials and malformed Discord IDs
+runtimeValidation.test.js: 4 passed, 0 failed
+  ✔ explicit BOT_DATA_DIR does not silently fall back when unavailable
+  ✔ explicit writable BOT_DATA_DIR remains the selected directory
+storageDataDir.test.js: 2 passed, 0 failed
+  ✔ rules lookup stays inside the selected league and accepts old and new names
+  ✔ rules preset keeps the prior bot post if the replacement send fails
+  ✔ team identity is league-specific while native guild nicknames remain untouched
+  ✔ legacy bot team nickname resets to Discord profile while commissioner hierarchy failure is explicit
+  ✔ template option switch deletes identifiable old assets and preserves manual channels
+  ✔ same-named template channels remain in their separate categories
+  ✔ empty former template category is removed after its last managed channel
+  ✔ two active leagues can share a display prefix because space IDs isolate them
+  ✔ active-check fallback stays in its private league category
+  ✔ base policy refresh does not expose a private league rules channel
+  ✔ base permission failure is visible to template build caller
+  ✔ membership roles are readable unique and taggable without elevated permissions
+  ✔ active check failed post cannot start a response timer or count members absent
+  ✔ inactivity removal targets only its league and never kicks the member from the server
+  ✔ community role failure is visible and a pending league is excluded from community overwrites
+templateFallbacks.test.js: 15 passed, 0 failed
+  ✔ CSV: quoted commas, escaped quotes, embedded newline (BUG-011)
+  ✔ scheduleRegistry.parseCsv uses the RFC 4180 parser
+  ✔ httpIntake rejects private destinations, http, credentials, non-allowlisted hosts (BUG-010)
+  ✔ httpIntake enforces timeout (fails fast, structured)
+  ✔ httpIntake enforces size cap, content-type, no redirects
+  ✔ matchupKey is order-independent and stable
+utils.test.js: 6 passed, 0 failed
+
+15 test files, 0 failed
+(node:41) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+(Use `node --trace-warnings ...` to show where the warning was created)

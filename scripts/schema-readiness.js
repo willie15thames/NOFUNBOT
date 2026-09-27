@@ -3,7 +3,7 @@
 const {Pool}=require('pg');
 async function main(){
  if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for stable production state');
- const pool=new Pool({connectionString:process.env.DATABASE_URL});
+ const pool=new Pool({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:10000,query_timeout:15000});
  try{
   for(const table of ['bot_kv','queue_audit','server_config','guild_locks','member_ledger','member_profiles']){
    const r=await pool.query('SELECT to_regclass($1) AS name',[`public."${table}"`]);

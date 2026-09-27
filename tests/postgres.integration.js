@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const {execFileSync}=require('node:child_process');
 const { PrismaClient } = require('@prisma/client');
 const store = require('../src/storage/criticalStore');
 
@@ -12,6 +13,8 @@ async function main() {
   if (!process.env.DATABASE_URL) throw new Error('Set a disposable DATABASE_URL for this integration test');
   if (process.env.NODE_ENV === 'production') throw new Error('Do not run database integration fixtures in production');
   const key = `v204-ci:${randomUUID()}`;
+  const scoreGuild=`rc6-ci-${randomUUID()}`;
+  const scoreKey=`v204:lifetime:${scoreGuild}`;
   const jsonKey = `v204-ci-${randomUUID()}.json`;
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const prisma = new PrismaClient();
@@ -32,6 +35,29 @@ async function main() {
     assert.deepEqual(await store.read(jsonKey), { value: 42 });
     assert.deepEqual((await prisma.botKv.findUnique({ where: { key: jsonKey } })).value, { value: 42 });
     console.log('PASS JSON compatibility writes use the same canonical table');
+
+    const contender=()=>JSON.parse(execFileSync(process.execPath,['-e',
+      `const s=require('./src/storage/criticalStore');s.withExclusive(process.env.CI_LOCK_KEY,async()=>true).then(async r=>{console.log(JSON.stringify(r));await s.close();}).catch(e=>{console.error(e.message);process.exit(1)});`
+    ],{cwd:path.join(__dirname,'..'),env:{...process.env,CI_LOCK_KEY:key},encoding:'utf8',timeout:15000}));
+    await store.withExclusive(key,async()=>assert.equal(contender().acquired,false));
+    assert.equal(contender().acquired,true);
+    console.log('PASS session structural lock excludes another process and releases after completion');
+
+    const history=require('../src/services/lifetimeHistoryService');
+    const results=require('../src/league/gameResultService');
+    process.env.GUILD_ID=scoreGuild;
+    const state={leagueConfig:{game:'madden',proAm:{[scoreGuild]:{id:scoreGuild,teams:['Bears','Lions']}}},scheduleState:{},ocrGameResults:[],openTeamRegistry:[{leagueId:scoreGuild,baseTeam:'Bears',ownerId:'winner'},{leagueId:scoreGuild,baseTeam:'Lions',ownerId:'loser'}],games:new Map()};
+    const input={homeTeam:'Bears',awayTeam:'Lions',homeScore:21,awayScore:14,week:1,leagueId:scoreGuild};
+    const submitted=await Promise.all(Array.from({length:10},()=>results.submitGameResult(input,{state})));
+    assert.equal(submitted.filter(x=>!x.deduped).length,1);
+    assert.equal((await history.career(scoreGuild,'winner')).wins,1);
+    const retracted=await Promise.all(Array.from({length:5},()=>results.retractGameResult({week:1,team1:'Bears',team2:'Lions',leagueId:scoreGuild},{state})));
+    assert.equal(retracted.reduce((n,x)=>n+x.removed,0),1);
+    assert.equal((await history.career(scoreGuild,'winner')).wins,0);
+    await store.close();
+    assert.equal(Object.values((await history.snapshot(scoreGuild)).results)[0].status,'RETRACTED');
+    console.log('PASS concurrent score submissions/retractions and lifetime state after connection reopen');
+
 
     const client = await pool.connect();
     try {
@@ -59,7 +85,8 @@ async function main() {
       client.release();
     }
   } finally {
-    await pool.query('DELETE FROM public.bot_kv WHERE key = ANY($1::text[])', [[key, jsonKey]]);
+    await pool.query('DELETE FROM public.bot_kv WHERE key = ANY($1::text[])', [[key, jsonKey,scoreKey]]);
+    await require('../src/storage/jsonStore').closeStore();
     await prisma.$disconnect();
     await pool.end();
     await store.close();

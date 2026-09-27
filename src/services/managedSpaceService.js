@@ -13,7 +13,7 @@ async function reserve(guildId, input = {}) {
       if (!data.spaces[old.id]) data.spaces[old.id] = { ...old, name: old.leagueName, guildId, kind: old.kind || 'league', status: 'ACTIVE' };
     }
     const spaces = Object.values(data.spaces);
-    if (input.code && spaces.some(s=>counted.has(s.status) && s.code===input.code)) throw new Error('League prefix already reserved');
+    // The space ID scopes categories; a short display code may repeat.
     if (spaces.filter(s => counted.has(s.status)).length >= 3) throw new Error('This server already has three active or pending leagues/events. Erase or archive one first.');
     if (spaces.some(s => counted.has(s.status) && s.name.toLowerCase() === input.name.trim().toLowerCase())) throw new Error('An active space already uses this name');
     const item = { id: randomUUID(), guildId, kind: input.kind || 'league', name: input.name.trim(), status: 'PREPARING', createdAt: Date.now(), ...input };

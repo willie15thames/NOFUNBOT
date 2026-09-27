@@ -1,14 +1,19 @@
 {
-  "version": "21.10.0-rc.3",
+  "version": "21.10.0-rc.5",
   "base_git_commit": "6178d125469612630f749b15971993ac2623c021",
   "hotfix_files": [
+    ".env.railway.example",
     "PATCH_NOTES_AND_CONTEXT.txt",
     "START_HERE.md",
     "changelog.txt",
     "docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx",
+    "docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md",
     "docs/V204_DATABASE_HOTFIX.md",
+    "docs/V204_FILE_MANIFEST.json",
     "docs/V204_RELEASE_NOTES.md",
+    "docs/V204_TEMPLATE_AND_FALLBACK_AUDIT.md",
     "docs/VERIFICATION.md",
+    "index.js",
     "package-lock.json",
     "package.json",
     "prisma/migrations/20260927030000_v204_kv_table_alignment/migration.sql",
@@ -17,11 +22,32 @@
     "scripts/export-postgres-to-json.js",
     "scripts/migrate-json-to-postgres.js",
     "scripts/schema-readiness.js",
+    "src/handlers/itHandler.js",
     "src/queue/worker.js",
+    "src/services/baseInitService.js",
+    "src/services/channelTopologyService.js",
+    "src/services/channels/channelResolver.js",
+    "src/services/communityAccessService.js",
+    "src/services/eventSpaceService.js",
+    "src/services/hierarchyEnforcementService.js",
+    "src/services/leagueFeatureService.js",
+    "src/services/leagueNamingService.js",
+    "src/services/leagueSetupService.js",
+    "src/services/managedSpaceService.js",
+    "src/services/memberLedgerService.js",
+    "src/services/nicknamePolicyService.js",
+    "src/services/openTeamsService.js",
+    "src/services/spaceRoleService.js",
+    "src/services/statLeaderService.js",
+    "src/services/templateReconciliationService.js",
+    "src/services/timezoneGateService.js",
     "src/storage/criticalStore.js",
     "src/storage/jsonStore.js",
+    "tests/auditV204.test.js",
+    "tests/leagueNaming.test.js",
     "tests/postgres.integration.js",
-    "tests/storageDataDir.test.js"
+    "tests/storageDataDir.test.js",
+    "tests/templateFallbacks.test.js"
   ],
   "files": [
     {
@@ -46,7 +72,7 @@
     },
     {
       "path": ".env.railway.example",
-      "sha256": "106bbb8388a296c6b597e8b9ae9a827ddc0a9426d9f47a39641197158b4eed90"
+      "sha256": "28b35975bf850c611d8b5a8ff4ba5f7a2ed3098ea0d7d08e80ed6c15bc988f96"
     },
     {
       "path": ".env.stack.example",
@@ -98,7 +124,7 @@
     },
     {
       "path": "PATCH_NOTES_AND_CONTEXT.txt",
-      "sha256": "62290cad484f7864e3ddb81934bbd3ad1ec6e7f5513e68d7fba0cabc3e75b6f3"
+      "sha256": "d058859f3edfb49548192fe7c3c9aba0edf8e2ef21d3183d20a5e52e29ec9f8f"
     },
     {
       "path": "PATCH_V184_RELIABILITY_HARDENING.md",
@@ -106,11 +132,11 @@
     },
     {
       "path": "START_HERE.md",
-      "sha256": "f0531f77385b9bd6162c18f45a2b587178ba064785169f45d34b509659604e53"
+      "sha256": "51128ff3a51b654aef88e38bec9b297474fe0d96f97bc14dfa14edcbaf634ded"
     },
     {
       "path": "changelog.txt",
-      "sha256": "5b49b6192e9176f8938ed6b5cb8c18c39147cf548a5557db5134aa6ddff855b8"
+      "sha256": "b8884385d11c54496b115f6d4f1ffc4f6362b79ee1cb29b85f32aad5b2abc6f0"
     },
     {
       "path": "data/JSON_OWNERSHIP_MAP.md",
@@ -138,7 +164,7 @@
     },
     {
       "path": "docs/NOFUNBOT_Audit_And_Stability_Plan_Updated.docx",
-      "sha256": "0bc0c2f676782b707c59ea2ac12aa47c71f245ebdabcb5588335962612458649"
+      "sha256": "0a0cbc73f43b07759fbabe139dc230860ffc5e372493621cec5b2e204b2e0b28"
     },
     {
       "path": "docs/NOFUNLEAGUE_v203_Full_Codebase_Audit_New.docx",
@@ -165,8 +191,12 @@
       "sha256": "02d58aebbf6b49b7c507403a2b729fe482a0c2c5853713c45e20bec8bda67987"
     },
     {
+      "path": "docs/V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md",
+      "sha256": "221a305793cf4823c63d089e750e4133f5bf32f52af1e6f21f69c9924b810433"
+    },
+    {
       "path": "docs/V204_DATABASE_HOTFIX.md",
-      "sha256": "1e0a20c501dc652cef5da191d023b8c8b3d9facfc35f6fbc7e6f0186b6de3b0e"
+      "sha256": "317029df3c784f9d61c7b6f267eabb73a61a688347bb89c0c2a037fbdbe601a0"
     },
     {
       "path": "docs/V204_DEPENDENCY_MAP.md",
@@ -174,11 +204,15 @@
     },
     {
       "path": "docs/V204_RELEASE_NOTES.md",
-      "sha256": "e3e794e111e323b1fabf9fa014207e297febba9447bcac3311d99e8b12f550a2"
+      "sha256": "24293e58cb78f116badd67ee0f06150313874d6df54bd1616f529d1dced39ed7"
+    },
+    {
+      "path": "docs/V204_TEMPLATE_AND_FALLBACK_AUDIT.md",
+      "sha256": "ad875e297a066aa98a3a6f658c53993a66fca17d9ed84e782936a4e7c7d14bb1"
     },
     {
       "path": "docs/VERIFICATION.md",
-      "sha256": "9dfcb2545f8320837334a33efb62949d048b8db19d6fecf6e954cd5af4dc3a7e"
+      "sha256": "095108a9708ab2ec0b9573ff248d8b0db3950f120292a920664cedd8a831aed8"
     },
     {
       "path": "docs/ai/NOFUNLEAGUE_COMMISSIONER_AI_RUNTIME_v2.txt",
@@ -190,15 +224,15 @@
     },
     {
       "path": "index.js",
-      "sha256": "36f98c4da017a45a11470c2f04c6d06e628a610f8dc50f3ca431c373f45563ae"
+      "sha256": "a49059da9bb61a4a3f2610b89e6e4613e5afc2e08af87fe05ce4bfbda235840d"
     },
     {
       "path": "package-lock.json",
-      "sha256": "08e1133f07b1311f918a5f60db368b4b14d6e4050d99862a3f40c42459325646"
+      "sha256": "4b814e308aebe057b28a6e86997ce088ce19df44862233b3a3cc3e432046f7ff"
     },
     {
       "path": "package.json",
-      "sha256": "b6df5a78d779e4c92d8d4018965c6ee77209135971df74601e4ab566c890dbdc"
+      "sha256": "b4bccdb5eed9ede6277a7a799c965b3bf93d1c79e4051b6f51067df6287de1e5"
     },
     {
       "path": "prisma/migrations/0001_init/migration.sql",
@@ -378,7 +412,7 @@
     },
     {
       "path": "src/handlers/itHandler.js",
-      "sha256": "69555355141113e95f6db2ab780eb70791c4b43f56fb287508cc507e07bc255f"
+      "sha256": "0dc85773853a68dbbbfbbe02925a6d9be20e23a4343d5f6f7bba48d0ef0faec5"
     },
     {
       "path": "src/handlers/memberMentionHandler.js",
@@ -562,7 +596,7 @@
     },
     {
       "path": "src/services/baseInitService.js",
-      "sha256": "bb2dc907384a45ddf244d3e92387818698008d7f10296a3e8420aba6009ec86f"
+      "sha256": "e50c38eddd053e3a4b56e54bb9d56d835eca3672425881699f258f7a4419c90f"
     },
     {
       "path": "src/services/boardManagerService.js",
@@ -590,11 +624,11 @@
     },
     {
       "path": "src/services/channelTopologyService.js",
-      "sha256": "64a1c0dcd403f7249918ef52304bfe805c55f607293a391f9bae5d5c9946f762"
+      "sha256": "9aaddb6eefef7995a2df56d95d56f7e5f20930e3d8d3843ca270a579dd042d6f"
     },
     {
       "path": "src/services/channels/channelResolver.js",
-      "sha256": "98a3aa765aeb0f65f01f3def60e4aa248f79ebdc8dafce19c114c23b2fbd78c1"
+      "sha256": "b93970705948de1b39bc51d5e99dfaeda36454221ad7274a94b8246b68547de3"
     },
     {
       "path": "src/services/commandAliasService.js",
@@ -606,7 +640,7 @@
     },
     {
       "path": "src/services/communityAccessService.js",
-      "sha256": "1c0a09236e714dc7192aaddf18ea8e15d17dd5b2ee3b679a181be626ed87381a"
+      "sha256": "06c2258e9c0024878c9f6b30c384bc26d7cbc1d89a40414f6e3ccbb5e5b4856e"
     },
     {
       "path": "src/services/communityPackService.js",
@@ -650,7 +684,7 @@
     },
     {
       "path": "src/services/eventSpaceService.js",
-      "sha256": "9093e368a65771fd9a3a93cac8e937889aa7e82a9f03e46152187cbe2cfe7c36"
+      "sha256": "2621a4deee3f597e1971659e4b98b4c155f089a457b1d4b4fba7b20f571cbcf4"
     },
     {
       "path": "src/services/fileIntakeService.js",
@@ -682,7 +716,7 @@
     },
     {
       "path": "src/services/hierarchyEnforcementService.js",
-      "sha256": "dce2f273a71c5a41556841c5795047fa45885f87f22faf38ddbf1158cd08312f"
+      "sha256": "04a866b1ed34a97ded761b9757e5d8387da15d3c4fa9baf68908d9b329eafb4f"
     },
     {
       "path": "src/services/hubReleaseService.js",
@@ -702,15 +736,15 @@
     },
     {
       "path": "src/services/leagueFeatureService.js",
-      "sha256": "fee4d46b31fcb28d18f52afd29c207201ea6d2ab701f9f2d7275ffff366b989a"
+      "sha256": "fd515ee3eb422dca394d006146dd1cef20033771b83017ab76b2ab2a0d704f91"
     },
     {
       "path": "src/services/leagueNamingService.js",
-      "sha256": "d067667e3394f4f432906945e4680e56e4aff5e9b4f3d34c08052c8f87f6fa04"
+      "sha256": "e410df991d0bd0a031aad63973506df6f887f509effb2925b2b8878494a51988"
     },
     {
       "path": "src/services/leagueSetupService.js",
-      "sha256": "98b146f25bbb38032a331d1d610813f9df78ce48baa31bddeca63a27cb3f68ac"
+      "sha256": "800d88961ff8479a562ae7060f68889ab6eba32c67c5a41483d71f49498269c4"
     },
     {
       "path": "src/services/leagueSyncService.js",
@@ -734,7 +768,7 @@
     },
     {
       "path": "src/services/managedSpaceService.js",
-      "sha256": "62f01ed6e7a857b64d1b35a0a9f2dfb99506a7e84a8df1b9f097c66348e888dc"
+      "sha256": "1af5982f6891116225eb1dc145b8ef3e2c6b1a4c701b825e55456af0f0e2e7f3"
     },
     {
       "path": "src/services/manualService.js",
@@ -742,7 +776,7 @@
     },
     {
       "path": "src/services/memberLedgerService.js",
-      "sha256": "f380e34dfb92097b44d6ca1f092d7669b897d43b92708cc65f61614990c8ad6e"
+      "sha256": "fc5b2126ab3b6d58df66afb4c18d1b42d46dd5a5684c0c6ca40c851d34805270"
     },
     {
       "path": "src/services/memberProfileService.js",
@@ -754,7 +788,7 @@
     },
     {
       "path": "src/services/nicknamePolicyService.js",
-      "sha256": "59bd5d233fc41a9891a72ffdc6455e62db7f369f4d873ae6583957947aa78b0e"
+      "sha256": "00560465d146808887459e34b6d350b86f9c751bbe4b6120e1969cf0a557b02a"
     },
     {
       "path": "src/services/observabilityService.js",
@@ -770,7 +804,7 @@
     },
     {
       "path": "src/services/openTeamsService.js",
-      "sha256": "9e88152893b8f04551aaff96287c6004f05d22147f09b3faee47714e8bfdcffc"
+      "sha256": "b92ca4d954bdf4866fead9bb2c381c981a81b1ed0b005ce9e7a2a24748940340"
     },
     {
       "path": "src/services/patchNotesService.js",
@@ -877,6 +911,10 @@
       "sha256": "302d75acfb569cd0c38c9d242c6b8ec5764ae681ae727959c14470e2592f0208"
     },
     {
+      "path": "src/services/spaceRoleService.js",
+      "sha256": "5c2f589651d782c5bd497d35805b10f5a38744f537420df694c7c6bf24874ef0"
+    },
+    {
       "path": "src/services/spamService.js",
       "sha256": "467519460e47f31295f69860110ffa16033a63823017661aa129ab1412374a3b"
     },
@@ -894,7 +932,7 @@
     },
     {
       "path": "src/services/statLeaderService.js",
-      "sha256": "2a936d08121e785b48324e926f316e4e6b34c1c3efe6abc92fcdf8b75c1d447e"
+      "sha256": "525b61b5bee6ff3418dfcfaea02a9a9ddf90969a0b7ae6a66664e26330c1b9e7"
     },
     {
       "path": "src/services/stateEngineService.js",
@@ -941,6 +979,10 @@
       "sha256": "fb66880159df324af78346ee2652e793f23dfb94dfff1287805a01f7039948b1"
     },
     {
+      "path": "src/services/templateReconciliationService.js",
+      "sha256": "3200f84e76945d6fb2326799dfb0d71f6ff4fb65b744b3c329acb82f29d16f16"
+    },
+    {
       "path": "src/services/templateRegistryService.js",
       "sha256": "54a9d7c6a8d5c24247b57440d4ec0f2bde2f6c513e9e07da8307e3246ef40c48"
     },
@@ -950,7 +992,7 @@
     },
     {
       "path": "src/services/timezoneGateService.js",
-      "sha256": "ffdaa87e3dc718b2421d8469e004acc49d3b500899d300e628da05676ee5da9e"
+      "sha256": "4f20410e56ecc0ca6d38d044439ad1a024f1f7b26730d6e257766313f0abdee1"
     },
     {
       "path": "src/services/timezoneService.js",
@@ -1050,7 +1092,7 @@
     },
     {
       "path": "tests/auditV204.test.js",
-      "sha256": "a485cee8c2c78dbebc38dd81bb5dc7873e3918e31b5f3a8d4e17ecac2a11c5dc"
+      "sha256": "61200ffdb3113f27d39ef343992aa8a984d5443f86863fb235d86ecb75044229"
     },
     {
       "path": "tests/commandRegistry.test.js",
@@ -1066,7 +1108,7 @@
     },
     {
       "path": "tests/leagueNaming.test.js",
-      "sha256": "4043ff53120e8b0e85fc9fbe8cd80e90dad40eef46f9338f3e050e5c3d0d030e"
+      "sha256": "265477933d6a7a0657552bb35aaf6d0e07cb1ff6cdf7c4f1882a9f0e8212e97a"
     },
     {
       "path": "tests/platform.test.js",
@@ -1097,6 +1139,10 @@
       "sha256": "9347bbfc36286d3f62434ae93366f1843e97f36bfa7a9b5412b6493e544ac825"
     },
     {
+      "path": "tests/templateFallbacks.test.js",
+      "sha256": "62ca9c641362ea3999b7b2ba77053bc4634dac3f11c14b4f41bddb5f59ea2ea2"
+    },
+    {
       "path": "tests/utils.test.js",
       "sha256": "5e327f6da98313732b45a982431772fe49c1bb98bb24173ae06b800a0499b052"
     },
@@ -1104,6 +1150,5 @@
       "path": "tsconfig.json",
       "sha256": "e6f85e88fb6f9e52cb2cc322ada67e3da929e77b3ed499e32e8e3bb57b392c3e"
     }
-  ],
-  "note": "Full RC1 source, RC2 database correction and RC3 configured-storage guard. Includes the data ownership document; excludes tracked sample JSON, live state, installed dependencies and its own manifest checksum. RC3 has not been remotely pushed or deployed."
+  ]
 }

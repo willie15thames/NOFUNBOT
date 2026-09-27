@@ -616,15 +616,13 @@ async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, 
   const code = leaguePrefixCode(leagueName, def.label);
   const active = activeLeagueService.listActiveLeagues();
   const sameLeague = active.find(l => l.leagueTypeId === leagueTypeId && l.leagueName === leagueName);
-  // The historical two-character naming contract would reuse another league's channels.
-  if (active.some(l => l.id !== 'current' && leaguePrefixCode(l.leagueName, LEAGUE_TYPES[l.leagueTypeId]?.label) === code && l.leagueName !== leagueName)) {
-    throw new Error(`League code ${code} is already in use. Choose a name with a different two-character prefix.`);
-  }
+  // Categories include the reserved space ID, so identical two-letter labels
+  // cannot cause channels from different leagues to be reused.
   if (sameLeague) throw new Error('This league already exists. Select it explicitly for reset.');
   const spaces = require('./managedSpaceService');
   const reserved = await spaces.reserve(guild.id, { name: leagueName, code, kind: 'league', leagueTypeId });
   let memberRole;
-  try { memberRole = await guild.roles.create({ name: `League ${code} ${reserved.id.slice(0,8)}`, reason: 'Private league membership' }); }
+  try { memberRole = await guild.roles.create(require('./spaceRoleService').membershipRoleOptions('league', leagueName, reserved.id)); }
   catch (err) { await spaces.transition(guild.id, reserved.id, 'ARCHIVED', { error: err.message }); throw err; }
   const plan = {
     leagueTypeId,
@@ -890,25 +888,29 @@ async function finalizeProAmSetup(interaction, state, aiCall, MODELS) {
 }
 
 async function getLeagueRulesChannel(guild, league) {
-  const ids = new Set(league?.builtChannelIds || []);
-  let ch = [...ids].map(id => guild.channels.cache.get(id)).find(c => c?.isTextBased?.() && /(^|\.)rules$/i.test(c.name || '')) || null;
-  if (ch) return ch;
-  const lname = String(league?.leagueName || '').toLowerCase();
-  return guild.channels.cache.find(c => c?.isTextBased?.() && /(^|\.)rules$/i.test(c.name || '') && String(c.topic || '').toLowerCase().includes(lname)) || null;
+  const ownedCategories = new Set((league?.builtCategoryIds || []).map(String));
+  const ownedChannels = new Set((league?.builtChannelIds || []).map(String));
+  const matches = c => c?.isTextBased?.() && /^(?:rules|[a-z0-9]{2}[.-]?rules)$/i.test(String(c.name || ''));
+  const byId = [...ownedChannels].map(id => guild.channels.cache.get(id))
+    .find(c => matches(c) && ownedCategories.has(String(c.parentId)));
+  if (byId) return byId;
+  // Legacy records can lack channel IDs. A recorded category ID is still a
+  // safe boundary; never select the server's base #rules or another league.
+  return guild.channels.cache.find(c => matches(c) && ownedCategories.has(String(c.parentId))) || null;
 }
 
 async function publishLeagueRulesForPreset(guild, league, presetKey) {
   const preset = LEAGUE_RULE_PRESETS[presetKey] || LEAGUE_RULE_PRESETS.competitive_default;
   const rulesCh = await getLeagueRulesChannel(guild, league);
-  if (!rulesCh) throw new Error('League rules channel not found.');
+  if (!rulesCh) throw new Error(`League rules channel not found inside this league's recorded categories (${league.id}). Repair its category mapping before selecting a preset.`);
   const recent = await rulesCh.messages.fetch({ limit: 25 }).catch(() => null);
+  await rulesCh.send({ embeds: [new EmbedBuilder().setColor(0x00b4d8).setTitle(`📖 ${league.leagueName} — ${preset.label} Rules`).setDescription(preset.text).setTimestamp()], allowedMentions:{parse:[]} });
   for (const m of (recent ? [...recent.values()] : [])) {
-    if (m.author?.id === guild.members.me?.id) await m.delete().catch(() => null);
+    if (m.author?.id === guild.members.me?.id && m.embeds?.some(e => String(e.title || '').startsWith(`📖 ${league.leagueName} — `))) {
+      await m.delete().catch(() => null);
+    }
   }
-  await rulesCh.send({ embeds: [new EmbedBuilder().setColor(0x00b4d8).setTitle(`📖 ${league.leagueName} — ${preset.label} Rules`).setDescription(preset.text).setTimestamp()], allowedMentions:{parse:[]} }).catch(() => null);
-  stateRef.leagueConfig.rulesText = preset.text;
-  stateRef.leagueConfig.rulesUpdatedAt = Date.now();
-  saveJsonDebounced('leagueConfig.json', stateRef.leagueConfig);
+  activeLeagueService.upsertLeague({ ...league, rulesPresetKey: presetKey, rulesText: preset.text, rulesUpdatedAt: Date.now() });
   return preset;
 }
 
@@ -959,7 +961,9 @@ async function handleSetupInteraction(interaction, state) {
     const league = activeLeagueService.getLeague(leagueId);
     if (!league) return interaction.update({ content: '❌ League not found for rule setup.', components: [], embeds: [] });
     const presetKey = interaction.values[0];
-    const preset = await publishLeagueRulesForPreset(interaction.guild, league, presetKey);
+    let preset;
+    try { preset = await publishLeagueRulesForPreset(interaction.guild, league, presetKey); }
+    catch (err) { return interaction.update({ content: `⚠️ ${err.message}`, components: [], embeds: [] }); }
     return interaction.update({
       embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ League Rules Equipped').setDescription(`**${league.leagueName}** now uses the **${preset.label}** ruleset.`).setTimestamp()],
       components: [],
@@ -1344,4 +1348,5 @@ module.exports = {
   releaseCPUTeams,
   saveConfigDefaults,
   resetToDefaults,
+  _internals: { getLeagueRulesChannel, publishLeagueRulesForPreset },
 };

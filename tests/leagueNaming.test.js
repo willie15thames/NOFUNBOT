@@ -2,11 +2,11 @@
 const { test, run, assert, eq } = require('./_harness');
 const { leagueChannelName, leaguePrefixCode, legacyTwoCharChannelName } = require('../src/services/leagueNamingService');
 
-test('league naming preserves the documented v18 two-character dot contract', () => {
-  eq(leagueChannelName('NOFUN League', 'standings'), 'no.standings', 'expected v18 scoped name');
+test('new league channels use plain names inside league-owned categories', () => {
+  eq(leagueChannelName('NOFUN League', 'standings'), 'standings', 'category scopes channel');
   eq(leagueChannelName('NOFUN League', 'standings'), leagueChannelName('NOFUN League', 'standings'), 'deterministic');
   assert(leagueChannelName('🔥 Mý League!!!', 'Weekly Schedule').length <= 100, 'within Discord limit');
-  assert(/^[a-z0-9]{2}\.[a-z0-9-]+$/.test(leagueChannelName('🔥 Mý League!!!', 'Weekly Schedule')), 'safe v18 format');
+  eq(leagueChannelName('🔥 Mý League!!!', 'Weekly Schedule'), 'weekly-schedule', 'safe readable name');
 });
 
 test('league prefix uses first two alphanumeric characters with fallback', () => {
@@ -15,9 +15,9 @@ test('league prefix uses first two alphanumeric characters with fallback', () =>
   eq(leaguePrefixCode('A'), 'a', 'single-character names preserve the existing inline contract');
 });
 
-test('legacy active-check helper matches canonical v18 path', () => {
+test('legacy prefix remains recognizable without using it for new channels', () => {
   eq(legacyTwoCharChannelName('NOFUNLEAGUE', 'active-check'), 'no.active-check', 'legacy path');
-  eq(legacyTwoCharChannelName('NOFUNLEAGUE', 'active-check'), leagueChannelName('NOFUNLEAGUE', 'active-check'), 'compatibility path is stable');
+  eq(leagueChannelName('NOFUNLEAGUE', 'active-check'), 'active-check', 'new path');
 });
 
 run('leagueNaming.test.js');

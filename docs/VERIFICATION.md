@@ -1,3 +1,37 @@
+# RC6 verification record
+
+Package 21.10.0-rc.6. Verified on 27 September 2026. Read this section before the historical records below.
+
+| Check | Result |
+| --- | --- |
+| Fresh npm ci and clean archive extraction | PASS, Prisma 6.19.3 client generated; full Node 22 verification also passed from extracted ZIP |
+| Node 22.23.3 release gate and type/config check | PASS |
+| Tests | 122 assertions across 15 test files, zero failures; includes 19 RC6 cases |
+| Command contract | 116 definitions, 129 router cases, 13 classified internal/legacy cases |
+| JavaScript syntax and literal relative requires | 216 files; 1,184 literal relative imports; no syntax failures or missing targets |
+| Unresolved executable identifier guard | PASS |
+| Shell syntax and supervisor fixture | PASS; worker failure, bot failure and SIGTERM all stop required children with expected exit status |
+| npm audit --omit=dev | Zero reported vulnerabilities; point-in-time dependency report, not a security certification |
+| Word audit | 20 rendered pages; all pages visually inspected |
+| PostgreSQL integration | Added/expanded in CI; not run against a networked PostgreSQL server here |
+| Redis and live Discord | Not run; staging required |
+
+The supervisor fixture uses stub child processes; it does not prove Redis job delivery or Railway restart behavior. Readiness tests stub dependency probes. Critical-store failure tests use isolated on-disk records; PostgreSQL semantics require the CI integration gate. Ordinary best-effort catches are inventoried, not all declared defects: 526 catch-to-null sites and 169 empty catches remain in the scanned JavaScript. Broadly replacing them would risk regressions; prioritized critical owners were repaired.
+
+The implementation review read all 60 AI_READ_FIRST rules, pre-commit instructions, the navigation guide, deduplication architecture and JSON ownership map. Recent RC1–RC5 notes and relevant older V18/V19/V195/V202/V203 sections were traced. This is not a claim that every historical patch-note line was reread.
+
+Evidence is in docs/verification. Clean archive extraction is verified separately during packaging. No production credentials, server mutations, GitHub push or Railway deployment were used for these checks. The current deployment and rollback contract is docs/RC6_STABILITY_AND_DEPLOYMENT.md.
+
+---
+
+# RC5 community identity and wiring verification
+
+Package 21.10.0-rc.5: static module graph resolved 1,041 literal relative imports across 195 JavaScript files, zero unresolved. Command contract: 116 definitions and 129 router cases. Local tests include 15 focused template/identity checks, plus league/event role creation, and all prior scope/provider/advance suites. `npm run release:verify`, `npm run tsc`, shipped JavaScript syntax and `git diff --check` must pass for this source revision. The Word audit is rendered to 30 pages. This is offline validation with placeholder Discord identifiers; production credentials and live services were not used. See `V204_COMMUNITY_IDENTITY_AND_WIRING_RC5.md` for the precise connection matrix and staging boundaries.
+
+# RC4 template and fallback verification
+
+Package 21.10.0-rc.4: full local suite passed across 14 test files, 0 failures; `npm run tsc` passed. Ten focused template fallback tests include rules scoping and send failure, stable nicknames, template cleanup, category/name collisions, private active checks, base overwrite isolation and visible permission failure. `npm run release:verify` and syntax checks were run offline with placeholder Discord identifiers and no live services. The 30-page Word audit was rendered and its changed final page inspected. Real Discord permission, Railway startup, PostgreSQL and existing-channel reconciliation remain staging gates. See `V204_TEMPLATE_AND_FALLBACK_AUDIT.md` for the wider scan and residual risk.
+
 # RC3 storage guard verification
 
 Package 21.10.0-rc.3 adds a configured-directory startup guard. Local suite: 88 checks across 13 files, 0 failures. `npm run tsc` and changed-file syntax checks pass. RC3 has not run on networked PostgreSQL, GitHub CI, Docker or Railway. The RC2 checks below remain the database correction baseline.

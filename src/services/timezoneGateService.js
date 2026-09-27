@@ -196,15 +196,11 @@ async function hideGateChannel(guild) {
 
 async function clearAllTimezoneDataAndNicknames(guild, state) {
   if (!guild) return null;
-  const store = memberProfiles.getStore();
-  const profiles = store.profiles || {};
   for (const member of guild.members.cache.values()) {
     if (!member || member.user?.bot) continue;
-    const current = profiles[String(member.id)] || null;
-    const baseName = nicknamePolicy.stripTimezoneSuffix(current?.lastSeenDisplayName || member.displayName || member.user?.username || 'member');
-    if (member.manageable) {
-      await member.setNickname(baseName.slice(0, 32), 'Timezone gate disabled').catch(() => null);
-    }
+    // Only revert a nickname that matches the old bot-owned team/timezone
+    // format. A commissioner or member's chosen server nickname is theirs.
+    await nicknamePolicy.syncMemberNickname(member, state).catch(() => null);
     await releaseMemberFromTimezoneGate(member).catch(() => null);
   }
   memberProfiles.clearAllTimezones();
