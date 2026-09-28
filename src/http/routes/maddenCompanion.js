@@ -11,7 +11,7 @@
 
 const gateway = require('../../providers/madden/companion/exportGateway');
 
-const ROUTE = /^\/v1\/providers\/madden\/companion\/export\/([A-Za-z0-9_-]{16,128})\/?$/;
+const ROUTE = /^(?:\/v1\/providers\/madden\/companion\/export|\/x)\/([A-Za-z0-9_-]{16,128})\/?$/;
 
 function match(method, pathname) {
   if (method !== 'POST') return null;

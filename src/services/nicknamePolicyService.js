@@ -59,27 +59,66 @@ function getDisplayForLeague(state, memberId, leagueId) {
 }
 
 function buildDesiredNickname(member, state, opts = {}) {
-  // Discord has one nickname per guild, not per channel/category. A team's
-  // display name belongs in league posts and roles, not on the guild member.
-  return null;
+  const profile = memberProfiles.getProfile(member?.id);
+  const label = profile?.timezoneLabel || timezoneLabel(profile?.timezone);
+  if (!label) return null;
+  const assignment = profile?.botNicknameAssignment;
+  const original = assignment?.status === 'ASSIGNED'
+    ? assignment.originalNickname
+    : (String(member?.nickname || '').trim() || null);
+  const base = stripTimezoneSuffix(original || profile?.lastSeenDisplayName || member?.user?.globalName || member?.user?.username || 'Member');
+  const suffix = ` (${String(label).toUpperCase()})`;
+  const maxBase = Math.max(1, 32 - suffix.length);
+  return `${base.slice(0, maxBase).trim()}${suffix}`.slice(0,32);
 }
 
 async function syncMemberNickname(member, state, opts = {}) {
-  const current = String(member?.nickname || '').trim();
-  if (!current) return { ok: true, skipped: true, reason: 'profile-name-preserved' };
-  const profile = memberProfiles.getProfile(member.id);
-  const assignment = profile?.botNicknameAssignment;
-  const proven = assignment && String(assignment.guildId) === String(member.guild?.id)
-    && assignment.value === current && assignment.status === 'ASSIGNED';
-  if (!proven) return { ok:true, skipped:true, reason:'custom-nickname-preserved' };
-  if (!member.manageable) return { ok: false, reason: 'not-manageable', action: 'clear legacy team nickname through a server admin with a higher role' };
-  try {
-    await member.setNickname(null, 'Restore profile name from legacy team nickname');
-    memberProfiles.upsertProfile(member.id,{botNicknameAssignment:{...assignment,status:'RESTORED',restoredAt:Date.now()}});
-    return { ok: true, restored: true };
-  } catch (err) {
-    return { ok: false, reason: err.message };
+  if (!member) return { ok:false, reason:'missing-member' };
+  const current = String(member.nickname || '').trim();
+  const profile = memberProfiles.getProfile(member.id) || {};
+  const assignment = profile.botNicknameAssignment;
+  const timezone = profile.timezone;
+
+  // Clearing timezone restores only a nickname the bot can prove it owns.
+  if (!timezone) {
+    const proven = assignment && String(assignment.guildId) === String(member.guild?.id)
+      && assignment.value === current && assignment.status === 'ASSIGNED';
+    if (!proven) return { ok:true, skipped:true, reason:'custom-nickname-preserved' };
+    if (!member.manageable) return { ok:false, reason:'not-manageable', action:'restore nickname through a server admin with a higher role' };
+    try {
+      await member.setNickname(assignment.originalNickname || null, 'Restore nickname after timezone removal');
+      memberProfiles.upsertProfile(member.id,{ botNicknameAssignment:{...assignment,status:'RESTORED',restoredAt:Date.now()} });
+      return { ok:true, restored:true };
+    } catch (err) { return { ok:false, reason:err.message }; }
   }
+
+  const desired = buildDesiredNickname(member, state, opts);
+  if (!desired) return { ok:true, skipped:true, reason:'no-timezone-label' };
+  if (current === desired) return { ok:true, skipped:true, reason:'already-synced', value:desired };
+
+  // If the bot previously assigned a nickname but the member/staff changed it manually,
+  // do not clobber that manual choice. A fresh onboarding assignment is allowed when
+  // there is no active bot-owned assignment.
+  if (assignment?.status === 'ASSIGNED' && assignment.value !== current) {
+    return { ok:true, skipped:true, reason:'manual-nickname-change-preserved' };
+  }
+  if (!member.manageable) return { ok:false, reason:'not-manageable', action:'move the bot role above the member role or let staff set the suffix manually' };
+
+  const originalNickname = assignment?.status === 'ASSIGNED' ? assignment.originalNickname : (current || null);
+  try {
+    await member.setNickname(desired, opts.reason || 'Timezone onboarding sync');
+    memberProfiles.upsertProfile(member.id, {
+      botNicknameAssignment:{
+        guildId:String(member.guild?.id || ''),
+        value:desired,
+        originalNickname,
+        status:'ASSIGNED',
+        assignedAt:Date.now(),
+        reason:opts.reason || 'timezone-sync',
+      },
+    });
+    return { ok:true, assigned:true, value:desired, originalNickname };
+  } catch (err) { return { ok:false, reason:err.message }; }
 }
 
 async function syncGuildNicknames(guild, state) {

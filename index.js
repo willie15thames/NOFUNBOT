@@ -453,14 +453,17 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
     if (await handleCommishHubScreenshot(message,{getCh,state,aiCall,MODELS,isAdminMember:(m)=>isAdminMember(m,COMM_ROLE,dynamicCommissioners(state)),COMM_ROLE}).catch(()=>false)) return;
 
     const intakeEligibleChannel = ['commish-hub','scoresheets'].includes(String(message.channel?.name || '').toLowerCase());
-    if (message.attachments.size > 0 && isAdminMember(message.member, COMM_ROLE, COMMISSIONER_IDS) && (intakeEligibleChannel || message.mentions.users?.has(client.user.id))) {
-      const fileIntakeService = require('./src/services/fileIntakeService');
+    const fileIntakeService = require('./src/services/fileIntakeService');
+    const explicitLeagueDataIntent = fileIntakeService.hasLeagueDataIntent(message);
+    if (message.attachments.size > 0 && isAdminMember(message.member, COMM_ROLE, COMMISSIONER_IDS) &&
+        (intakeEligibleChannel || (message.mentions.users?.has(client.user.id) && explicitLeagueDataIntent))) {
       if (await fileIntakeService.tryHandleLeagueDataIntakeMessage(message, { aiCall, MODELS, state }).catch(()=>false)) return;
     }
 
-    // Commissioner @mentions bot with an image outside of #commish-hub → try schedule OCR
+    // Outside the operational intake channels, screenshot OCR only runs when the commissioner explicitly asks
+    // about a schedule. Ordinary memes/images/GIFs must continue to conversational multimodal routing.
     if (message.attachments.size > 0 && isAdminMember(message.member, COMM_ROLE, COMMISSIONER_IDS) &&
-        message.mentions.users?.has(client.user.id)) {
+        message.mentions.users?.has(client.user.id) && fileIntakeService.hasScheduleIntent(message)) {
       if (await handleAnywhereSchedule(message,{getCh,state,aiCall,MODELS,isAdminMember:(m)=>isAdminMember(m,COMM_ROLE,dynamicCommissioners(state)),COMM_ROLE}).catch(()=>false)) return;
     }
 

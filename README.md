@@ -54,6 +54,32 @@ Sam: Their secondary is carrying them.
 
 Only the final message invokes AI. The earlier messages are untrusted context, not instructions.
 
+
+## Multimodal media context
+
+Normal bot conversation can interpret supported Discord-hosted visual media when the bot is explicitly engaged. The media path is separate from the league-data screenshot importer so a meme is not accidentally treated as Madden standings.
+
+Supported conversational media:
+
+- JPEG, PNG, and WebP images and memes;
+- animated GIF attachments and Discord-proxied GIF embeds;
+- PNG/APNG/GIF stickers when Discord exposes a raster media URL;
+- short MP4, MOV, WebM, and M4V clips through representative frame sampling;
+- media on the message being replied to, when Discord still exposes that referenced message.
+
+Behavior and safety:
+
+- Raw media is fetched only from approved Discord CDN/proxy hosts and is not persisted.
+- Animated GIFs and videos are sampled into bounded image frames with `ffmpeg`; the Railway Docker image installs `ffmpeg`.
+- Only a concise semantic description enters short-lived conversation memory so later turns can understand what was posted without storing the media itself.
+- Text visible inside media is treated as untrusted content to describe, never as bot instructions.
+- Commissioner actions still require typed text authorization. Visual content alone cannot authorize a warning, ban, reset, deletion, or other mutation.
+- The bot does not identify real people from visual media or infer sensitive personal traits.
+- Video support is visual-frame context only. Audio is not transcribed, so the bot must not claim to know spoken dialogue unless the text conversation provides it.
+- Passive channel observation does not run vision on every image by default. This avoids surprise AI cost/privacy impact. Media is analyzed when the bot is engaged on that message or a reply referencing it.
+
+Production tuning variables are documented in `.env.example`; the primary switch is `MEDIA_CONTEXT_ENABLED=true`.
+
 ## Natural-language actions
 
 The deterministic planner is an adapter into existing domain services. It does not own duplicate league state.

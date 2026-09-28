@@ -207,7 +207,7 @@ new SlashCommandBuilder()
 new SlashCommandBuilder()
   .setName('select-team').setDescription('Claim an open team as your own')
     .addStringOption(o => o.setName('team').setDescription('Team name you want to claim').setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName('timezone').setDescription('Your timezone, e.g. America/Los_Angeles or EST').setRequired(true)),
+    .addStringOption(o => o.setName('timezone').setDescription('Optional if you already saved a timezone during onboarding').setRequired(false)),
   new SlashCommandBuilder()
     .setName('release-team').setDescription('Release a team back to open status (Commissioner only)')
     .addStringOption(o => o.setName('team').setDescription('Team name to release').setRequired(true).setAutocomplete(true))
@@ -720,9 +720,10 @@ new SlashCommandBuilder()
 
   // ── Member management ──
   new SlashCommandBuilder()
-    .setName('add-member-to-league').setDescription('Add a member to a league and grant channel access (Commissioner only)')
+    .setName('add-member-to-league').setDescription('Add a member to a specific league and start onboarding (Commissioner only)')
     .addUserOption(o => o.setName('user').setDescription('Member to add').setRequired(true))
-    .addStringOption(o => o.setName('team').setDescription('Team to assign them (optional — assigns team + access)').setAutocomplete(true))
+    .addStringOption(o => o.setName('league').setDescription('League to add the member to').setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName('team').setDescription('Optional team to assign inside that league').setAutocomplete(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('audit-emojis').setDescription('Show all mapped and unmapped custom emojis in this server')
@@ -789,10 +790,17 @@ new SlashCommandBuilder()
     .setName('dashboard').setDescription('Show league sync export team and channel status (Commissioner only)')
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
-    .setName('league-export').setDescription('Export current or stored league schedule data (Commissioner only)')
+    .setName('league-export').setDescription('Export league data or create a temporary inbound export URL (Commissioner only)')
     .addSubcommand(sc => sc.setName('current').setDescription('Export the current week schedule'))
     .addSubcommand(sc => sc.setName('week').setDescription('Export one stored week').addIntegerOption(o => o.setName('week').setDescription('Week number to export').setRequired(true)))
     .addSubcommand(sc => sc.setName('all-weeks').setDescription('Export all stored weeks'))
+    .addSubcommand(sc => sc.setName('receiver-url').setDescription('Create a temporary URL for an external app to export league data into the bot')
+      .addStringOption(o => o.setName('league').setDescription('Exact active league that will receive the export').setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName('provider').setDescription('Export source').setRequired(true).addChoices(
+        { name: 'Madden Companion export', value: 'companion_export' },
+        { name: 'NeonSportz webhook', value: 'neonsportz' },
+      ))
+      .addIntegerOption(o => o.setName('minutes').setDescription('How long the URL stays valid (default 60)').setMinValue(5).setMaxValue(10080)))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('game-channels').setDescription('Configure or manage weekly game channels (Commissioner only)')

@@ -98,6 +98,15 @@ module.exports = {
   ANTHROPIC_MODEL_FAST: process.env.ANTHROPIC_MODEL_FAST || 'claude-haiku-4-5-20251001',
   ANTHROPIC_MODEL_SMART: process.env.ANTHROPIC_MODEL_SMART || 'claude-sonnet-4-6',
   AI_TIMEOUT_MS: Number(process.env.AI_TIMEOUT_MS || 22000),
+  // General conversational media context. Raw files are fetched only from Discord CDN/proxy hosts and are never persisted.
+  MEDIA_CONTEXT_ENABLED: envBool(process.env.MEDIA_CONTEXT_ENABLED, true),
+  MEDIA_CONTEXT_MAX_BYTES: Number(process.env.MEDIA_CONTEXT_MAX_BYTES || 20 * 1024 * 1024),
+  MEDIA_CONTEXT_MAX_ITEMS: Number(process.env.MEDIA_CONTEXT_MAX_ITEMS || 3),
+  MEDIA_CONTEXT_MAX_FRAMES: Number(process.env.MEDIA_CONTEXT_MAX_FRAMES || 4),
+  MEDIA_CONTEXT_VIDEO_SECONDS: Number(process.env.MEDIA_CONTEXT_VIDEO_SECONDS || 12),
+  MEDIA_CONTEXT_CACHE_MS: Number(process.env.MEDIA_CONTEXT_CACHE_MS || 5 * 60 * 1000),
+  MEDIA_CONTEXT_MAX_STATIC_API_BYTES: Number(process.env.MEDIA_CONTEXT_MAX_STATIC_API_BYTES || 4 * 1024 * 1024),
+  FFMPEG_PATH: process.env.FFMPEG_PATH || null,
   COMMISSIONER_IDS: new Set((process.env.COMMISSIONER_IDS || '').split(',').map(s => s.trim()).filter(Boolean)),
   IT_IDS: new Set((process.env.IT_IDS || '').split(',').map(s => s.trim()).filter(Boolean)),
 };

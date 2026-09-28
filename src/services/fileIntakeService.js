@@ -225,6 +225,17 @@ async function parseAttachment(attachment, { aiCall, MODELS } = {}) {
   return { filename, ...summarizeTextType(text, filename) };
 }
 
+
+function hasLeagueDataIntent(messageOrText = '') {
+  const text = typeof messageOrText === 'string' ? messageOrText : String(messageOrText?.content || '');
+  return /\b(import|upload|ingest|sync|franchise\s+data|league\s+data|schedule|standings|stats?|records?|scores?|scoresheet|rosters?|weekly\s+data|madden\s+data)\b/i.test(text);
+}
+
+function hasScheduleIntent(messageOrText = '') {
+  const text = typeof messageOrText === 'string' ? messageOrText : String(messageOrText?.content || '');
+  return /\b(schedule|weekly\s+schedule|matchups?|week\s*\d+|who\s+plays|game\s+schedule)\b/i.test(text);
+}
+
 function classifyTarget(input = 'auto') {
   const val = String(input || 'auto').toLowerCase();
   return ['auto', 'schedule', 'standings', 'stats', 'records', 'notes'].includes(val) ? val : 'auto';
@@ -333,6 +344,8 @@ module.exports = {
   getStore,
   saveStore,
   isSupportedFile,
+  hasLeagueDataIntent,
+  hasScheduleIntent,
   parseAttachment,
   importLeagueDataFromAttachment,
   tryHandleLeagueDataIntakeMessage,

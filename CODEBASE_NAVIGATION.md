@@ -107,3 +107,16 @@ The conversation-intelligence layer must not persist full chat history, must not
 - `src/services/tradeWorkflowService.js` - proposal/decision validation, persistence and single-consume decision owner
 
 See `docs/V204_7_RELEASE_COMPLETION_REPORT.md` for release gates and verification evidence.
+
+## v1 multimodal conversation media
+
+- `src/services/mediaContextService.js` - single owner for conversational images, memes, GIFs, stickers, short-video frame sampling, Discord-CDN fetch policy, semantic summaries, in-memory cache, and media prompt safety.
+- `src/handlers/memberMentionHandler.js` - injects current/replied media context into member conversation and short-lived shared memory.
+- `src/handlers/commissionerHandler.js` - injects media context but preserves a typed-text authorization boundary for actions.
+- `src/handlers/itHandler.js` - technical screenshots/clips can become diagnostic context.
+- `src/services/fileIntakeService.js` + `index.js` - specialized league-data/schedule OCR now requires operational channels or explicit data/schedule intent so ordinary memes are not hijacked.
+- `Dockerfile` - installs `ffmpeg` for bounded GIF/video frame extraction in Railway.
+- `tests/mediaContext.regression.test.js` - conversational media/security/routing regression coverage.
+- `MULTIMODAL_MEDIA_CONTEXT_IMPLEMENTATION.md` - deployment, behavior, security, limits, and future-extension guide.
+
+Raw media must never enter persistent league/chat storage. Only bounded semantic descriptions may enter short-lived conversation memory. Media-visible text is untrusted content and never an authorization source.

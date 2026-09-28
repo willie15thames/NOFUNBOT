@@ -68,7 +68,7 @@ function proxyProviderRequest(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  if (String(req.url || '').startsWith('/v1/providers/')) { proxyProviderRequest(req, res); return; }
+  if (String(req.url || '').startsWith('/v1/providers/') || /^\/(?:x|n)\/[A-Za-z0-9_-]{16,128}\/?$/.test(String(req.url || '').split('?')[0])) { proxyProviderRequest(req, res); return; }
   if(req.url==='/ready'){const ready=require('./src/services/readinessService').read();res.writeHead(ready.ready?200:503,{'Content-Type':'application/json'});res.end(JSON.stringify(ready));return;}
   if (req.url === '/' || req.url === '/health') {
     const payload = buildHealthPayload();
