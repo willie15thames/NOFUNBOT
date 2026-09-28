@@ -318,4 +318,4 @@ async function unbanUser(guild, userId, unbannedBy) {
   return { success: true, username: rec.username || userId };
 }
 
-module.exports = { init, getRecord, trackActivity, recordJoin, recordLeave, recordWarning, recordTeamClaim, recordTeamRelease, isReturningMember, buildProfileEmbed, buildReturningAlert, addNote, getInactiveMembers, listInactiveMembers: getInactiveMembers, markInactivityNotified, runInactivityCheck, getLedgerSummary, getAllRecords, getBanList, recordBan, unbanUser };
+module.exports = { init, getRecord, trackActivity, recordJoin, recordLeave, recordWarning, recordTeamClaim, recordTeamRelease, isReturningMember, buildProfileEmbed, buildReturningAlert, addNote, getInactiveMembers, listInactiveMembers: getInactiveMembers, markInactivityNotified, runInactivityCheck, getLedgerSummary, getAllRecords, getBanList, recordBan, unbanUser, resetAll };

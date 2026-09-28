@@ -8,7 +8,7 @@ const log = makeLogger('cleanSlateReset');
 function jsonLeagueIdsForGuild(guildId) {
   const gid = String(guildId || '');
   try {
-    return require('./activeLeagueService').listActiveLeagues()
+    return require('./activeLeagueService').listLeagueRecords()
       .filter(row => String(row?.guildId || '') === gid || !row?.guildId)
       .map(row => String(row.id || '').trim())
       .filter(Boolean);
@@ -120,15 +120,21 @@ async function resetGuild(guildId, state) {
   summary.directConversation = require('./conversationContextService').clearGuild(guildId);
   summary.ambientConversation = require('./ambientConversationService').clearGuild(guildId);
   summary.mediaContext = require('./mediaContextService').clearGuild(guildId);
+  summary.componentSessions = require('./componentSessionService').clearGuild(guildId);
   summary.activeLeagues = require('./activeLeagueService').clearGuild(guildId, { includeLegacyUnscoped: true });
   await require('./managedSpaceService').clearGuild(guildId); summary.managedSpaces = true;
   await require('./lifetimeHistoryService').clearGuild(guildId); summary.lifetimeHistory = true;
-  try { require('./memberLedgerService').resetAll(); summary.memberLedger = true; } catch { summary.memberLedger = false; }
-  try { require('./memberProfileService').resetAll(); summary.memberProfiles = true; } catch { summary.memberProfiles = false; }
-  try { require('./serverSettingsService').resetInstallationDefaults(); summary.serverSettings = true; } catch { summary.serverSettings = false; }
-  try { require('./serverRulesService').resetProfile(); summary.serverRules = true; } catch { summary.serverRules = false; }
-  try { require('./wizardPreferencesService').resetPrefs(); summary.wizardPrefs = true; } catch { summary.wizardPrefs = false; }
-  try { require('./wizardStateService').resetState({ installationMode: true, currentStep: 'mode' }); summary.wizardState = true; } catch { summary.wizardState = false; }
+  const resetFailures = [];
+  const criticalReset = (name, fn) => {
+    try { fn(); summary[name] = true; }
+    catch (err) { summary[name] = false; resetFailures.push({ name, error:String(err?.message || err) }); }
+  };
+  criticalReset('memberLedger', () => require('./memberLedgerService').resetAll());
+  criticalReset('memberProfiles', () => require('./memberProfileService').resetAll());
+  criticalReset('serverSettings', () => require('./serverSettingsService').resetInstallationDefaults());
+  criticalReset('serverRules', () => require('./serverRulesService').resetProfile());
+  criticalReset('wizardPrefs', () => require('./wizardPreferencesService').resetPrefs());
+  criticalReset('wizardState', () => require('./wizardStateService').resetState({ installationMode: true, currentStep: 'mode' }));
 
   // Clear remaining file-backed bot memory that can resurrect old setup/league decisions.
   for (const [file, value] of Object.entries({
@@ -142,13 +148,24 @@ async function resetGuild(guildId, state) {
     'pendingAttrBoosts.json': {},
     'pendingOffenses.json': {},
     'pendingTrades.json': {},
+    'polls.json': { polls:{} },
+    'communities.json': {},
+    'waitlist.json': {},
+    'suggestions.json': {},
     'scheduleStateRuntime.json': {},
     'spaceState.json': {},
   })) {
-    try { saveJson(file, value); } catch {}
+    try { saveJson(file, value); } catch (err) { resetFailures.push({ name:`file:${file}`, error:String(err?.message || err) }); }
   }
 
   summary.database = await resetDatabaseGuild(guildId, knownLeagueIds);
+  if (!summary.database) resetFailures.push({ name:'database', error:'database reset did not confirm success' });
+  if (resetFailures.length) {
+    const err = new Error(`Clean-slate reset incomplete: ${resetFailures.map(x => x.name).join(', ')}`);
+    err.code = 'CLEAN_SLATE_INCOMPLETE';
+    err.failures = resetFailures;
+    throw err;
+  }
   return summary;
 }
 

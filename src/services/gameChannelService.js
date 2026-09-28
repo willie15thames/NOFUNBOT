@@ -413,7 +413,7 @@ async function deleteAllGameChannels(guild, reason, opts = {}) {
       const owner = game || gameSessions.findByChannelId(ch.id);
       const targetLeague = opts.leagueId || require('../league/spaceContext').current();
       if (targetLeague && String(owner?.leagueId) !== String(targetLeague)) continue;
-      if (!targetLeague && require('./activeLeagueService').listActiveLeagues().length > 1) throw new Error('Select a league before deleting game channels');
+      if (!targetLeague && require('./activeLeagueService').listOperationalLeagues().length > 1) throw new Error('Select a league before deleting game channels');
       if (keepWeek != null) {
         const week = game ? Number(game.week) : Number(gameSessions.findByChannelId(ch.id)?.week ?? NaN);
         if (week === keepWeek) continue;

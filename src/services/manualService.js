@@ -301,7 +301,7 @@ const MANUAL = {
         },
         {
           name: 'How Base Channels Work',
-          value: 'Info channels are read-only. Use #general-chat for regular conversation. Use #polls for picklist voting only. If you are not in a league yet, `/join-league` is the correct path.',
+          value: 'Info channels are read-only. Use #general-chat for regular conversation. Use #polls for button voting only. If you are not in a league yet, `/join-league` is the correct path.',
         },
         {
           name: 'Server Behavior',
@@ -383,7 +383,7 @@ const MANUAL = {
         },
         {
           name: 'Polls / Voting',
-          value: 'Use poll picklists in #polls. That channel should not be used like normal chat.',
+          value: 'Use poll buttons in #polls. That channel should not be used like normal chat.',
         },
       ],
     },

@@ -161,7 +161,7 @@ async function processDueActiveChecks(guild, state) {
 async function _processDueActiveChecksOnce(guild, state) {
   const activeLeagueService = require('./activeLeagueService');
   const all = getAll();
-  const leagues = activeLeagueService.listActiveLeagues();
+  const leagues = activeLeagueService.listOperationalLeagues();
   const now = Date.now();
 
   const outcome={errors:[],processed:[]};

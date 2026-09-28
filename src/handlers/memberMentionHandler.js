@@ -253,17 +253,17 @@ function shouldHandleMemberAI(message, client, state = null) {
   if (!message.guild || message.author?.bot) return false;
   const activeCommissionerIds = getActiveCommissionerIds(state);
   const senderIsAdmin = isAdminMember(message.member, COMM_ROLE, activeCommissionerIds);
-  if (senderIsAdmin) return false;
-  // Explicit commissioner role or commissioner-id users never route to memberAI.
-  if (COMM_ROLE && message.member?.roles?.cache?.has(COMM_ROLE)) return false;
-  if (activeCommissionerIds.has(String(message.author?.id || ''))) return false;
-  // IT role users route to itAI or commAI, never memberAI
   const { IT_ROLE: _itRole, IT_IDS: _itIds } = require('../config/env');
-  if (_itRole && message.member?.roles?.cache?.has(_itRole)) return false;
-  if (_itIds && _itIds.has(String(message.author?.id || ''))) return false;
+  const elevated = senderIsAdmin || !!(COMM_ROLE && message.member?.roles?.cache?.has(COMM_ROLE)) || activeCommissionerIds.has(String(message.author?.id || '')) || !!(_itRole && message.member?.roles?.cache?.has(_itRole)) || !!(_itIds && _itIds.has(String(message.author?.id || '')));
   const botMentioned = isExplicitBotMention(message, client);
-  // V204.7 hard speech gate: even when the bot has recent passive context, only an explicit @mention starts a reply.
-  return botMentioned;
+  // Elevated users keep commissioner/IT behavior for explicit requests. Ambient R-mode Open House may still
+  // route them to the non-mutating member persona so commissioners can participate in league banter naturally.
+  if (elevated && botMentioned) return false;
+  if (botMentioned) return true;
+  // R-mode Open House is conversational only. It may invite the member persona into high-signal banter
+  // in approved social channels, but never authorizes commissioner/domain actions.
+  const openHouse = require('../services/trashTalkEngagementPolicyService').shouldEngage(message, client, { consume:true });
+  return !!openHouse.eligible;
 }
 
 async function sendQuiet(message, payload) {

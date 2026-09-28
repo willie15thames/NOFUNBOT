@@ -24,7 +24,7 @@
     "repair:deps": "npm ci",
     "start:railway": "sh scripts/railway-start.sh",
     "start:health": "node health-server.js",
-    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && npm test",
+    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && node scripts/contract-v8-static-check.js && npm test",
     "deploy:preflight": "node scripts/predeploy-check.js",
     "deploy:context": "node scripts/release-context.js",
     "infra:check": "node scripts/check-infra.js",
@@ -37,7 +37,8 @@
     "schema:check": "node scripts/schema-readiness.js",
     "test:postgres": "node tests/postgres.integration.js",
     "verify:local": "node scripts/verify-local.js",
-    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh"
+    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh",
+    "contract:v8:static": "node scripts/contract-v8-static-check.js"
   },
   "engines": {
     "node": ">=20.18.1"

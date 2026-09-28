@@ -14,7 +14,7 @@
 
 'use strict';
 
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { loadJson, saveJsonDebounced, saveJson } = require('../storage/jsonStore');
 const { makeLogger } = require('../utils/logger');
 const log = makeLogger('components');
@@ -45,7 +45,7 @@ const COMPONENT_CATALOG = {
   'mvp-voting': {
     id: 'mvp-voting',
     name: 'MVP Voting',
-    description: 'Weekly MVP vote. Members select their pick via dropdown. Results tallied automatically.',
+    description: 'Weekly MVP vote. Members select their pick with buttons. Results tallied automatically.',
     channelName: 'mvp-voting',
     category: 'league',
     defaultEnabled: false,
@@ -69,7 +69,7 @@ const COMPONENT_CATALOG = {
   'trade-block': {
     id: 'trade-block',
     name: 'Trade Block',
-    description: 'Members post players they want to trade via select menu. Auto-updates the board.',
+    description: 'Members post players they want to trade with buttons. Auto-updates the board.',
     channelName: 'trade-block',
     category: 'league',
     defaultEnabled: false,
@@ -85,7 +85,7 @@ const COMPONENT_CATALOG = {
   'predictions': {
     id: 'predictions',
     name: 'Weekly Predictions',
-    description: 'Members predict game outcomes each week via select menu. Leaderboard tracked.',
+    description: 'Members predict game outcomes each week with buttons. Leaderboard tracked.',
     channelName: 'predictions',
     category: 'league',
     defaultEnabled: false,
@@ -400,7 +400,7 @@ function buildMvpVotingEmbed(week, players) {
   const results = getMvpResults(week);
   const lines = results.length
     ? results.slice(0, 10).map((r, i) => `**${i + 1}.** <@${r.userId}> — ${r.count} vote${r.count !== 1 ? 's' : ''}`)
-    : ['No votes yet. Use the dropdown below to cast your vote.'];
+    : ['No votes yet. Use the buttons below to cast your vote.'];
   return new EmbedBuilder()
     .setColor(0xffd700)
     .setTitle(`🏆 MVP Vote — Week ${week}`)
@@ -444,7 +444,7 @@ function buildPredictionBoard(week, predictions, matchups) {
   return new EmbedBuilder()
     .setColor(0x9b59b6)
     .setTitle(`🔮 Predictions — Week ${week}`)
-    .setDescription(totalVoters ? `**${totalVoters}** member${totalVoters !== 1 ? 's' : ''} have submitted predictions.` : 'No predictions yet. Use the dropdown below to pick winners.')
+    .setDescription(totalVoters ? `**${totalVoters}** member${totalVoters !== 1 ? 's' : ''} have submitted predictions.` : 'No predictions yet. Use the buttons below to pick winners.')
     .setFooter({ text: 'Predictions lock when the week advances.' })
     .setTimestamp();
 }

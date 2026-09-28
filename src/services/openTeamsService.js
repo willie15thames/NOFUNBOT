@@ -145,10 +145,10 @@ function buildOpenTeamsEmbeds(guild, leagueId) {
 let _boardMsgId = null, _boardChId = null;
 
 async function refreshOpenTeamsBoard(guild) {
-  const hasActiveLeague = activeLeagueService.listActiveLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
+  const hasActiveLeague = activeLeagueService.listOperationalLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
   const hasConfiguredTeams = Array.isArray(_state.openTeamRegistry) && _state.openTeamRegistry.length > 0;
   if (!hasActiveLeague || !hasConfiguredTeams) return { skipped: true, reason: 'no-active-league' };
-  for (const league of activeLeagueService.listActiveLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
+  for (const league of activeLeagueService.listOperationalLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
     const ch = (league.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && require('./leagueNamingService').matchesLeagueChannelKey(c.name,'open-teams'));
     if (!ch) continue;
     await upsertBoardMessage({boardKey:`openTeams:${guild.id}:${league.id}`,channel:ch,payload:{embeds:buildOpenTeamsEmbeds(guild,league.id),allowedMentions:{parse:[]}}});
@@ -206,7 +206,7 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
   if (!entry) {
     // Team not found — provide helpful suggestions
     const suggestions = allOpen.slice(0, 5).map(t => t.displayTeam).join(', ');
-    return { success: false, reason: `Team **${teamNameInput}** not found in any league registry.\n\nAvailable teams include: ${suggestions}${allOpen.length > 5 ? '...' : ''}\nUse the autocomplete dropdown to see all options.` };
+    return { success: false, reason: `Team **${teamNameInput}** not found in any league registry.\n\nAvailable teams include: ${suggestions}${allOpen.length > 5 ? '...' : ''}\nUse the league-scoped team buttons or type the exact team name.` };
   }
   if (!entry.isOpen) {
     return { success: false, reason: `**${entry.displayTeam}** is already claimed${entry.ownerId ? ` by <@${entry.ownerId}>` : ''}. Try another team.` };
@@ -272,7 +272,7 @@ async function releaseByUserId(guild, userId, leagueId = null) {
 async function releaseByName(guild, teamNameInput, options = {}) {
   const [name, encodedLeague] = String(teamNameInput || '').split('::');
   const selected = encodedLeague || options.leagueId || require('../league/spaceContext').current();
-  if (!selected && activeLeagueService.listActiveLeagues().length > 1) throw new Error('Select the league for team release');
+  if (!selected && activeLeagueService.listOperationalLeagues().length > 1) throw new Error('Select the league for team release');
   const entry = _findEntry(name, selected || undefined);
   if (!entry) return null;
   const prevOwner = entry.ownerId;

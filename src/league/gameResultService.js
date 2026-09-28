@@ -241,7 +241,7 @@ async function submitGameResult(input = {}, ctx = {}) {
 async function retractGameResult({ week, team1, team2, leagueId = null }, ctx = {}) {
   const state = ctx.state || require('../state');
   leagueId = leagueId || require('./spaceContext').current();
-  if (!leagueId && require('../services/activeLeagueService').listActiveLeagues().length > 1) return {ok:false,reason:'Select the league for score retraction'};
+  if (!leagueId && require('../services/activeLeagueService').listOperationalLeagues().length > 1) return {ok:false,reason:'Select the league for score retraction'};
   const w = _int(week);
   const a = normalizeTeam(team1), b = normalizeTeam(team2);
   if (w == null || !a || !b) return { ok: false, reason: 'invalid-input' };

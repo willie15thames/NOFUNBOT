@@ -7,7 +7,7 @@ const critical=require('../storage/criticalStore');
 const connections=require('./providerConnectionService');
 const providerService=require('./providerService');
 const activeLeagueService=require('./activeLeagueService');
-function resolveLeagueId(){try{const x=require('../league/spaceContext').current();if(x)return String(x);}catch{}const rows=activeLeagueService.listActiveLeagues().filter(x=>x.kind!=='event');return rows.length===1?String(rows[0].id):null;}
+function resolveLeagueId(){try{const x=require('../league/spaceContext').current();if(x)return String(x);}catch{}const rows=activeLeagueService.listProviderTargets();return rows.length===1?String(rows[0].id):null;}
 function publicBase(){return String(process.env.PUBLIC_BASE_URL||(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:'')).replace(/\/$/,'');}
 function receiverPath(provider,token,{short=true}={}){if(provider==='companion_export')return short?`/x/${token}`:`/v1/providers/madden/companion/export/${token}`;if(provider==='neonsportz')return short?`/n/${token}`:`/v1/providers/neonsportz/import-completed/${token}`;return null;}
 async function withConnectionLock(leagueId,provider,work){

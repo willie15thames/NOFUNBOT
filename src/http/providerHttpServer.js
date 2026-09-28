@@ -47,7 +47,7 @@ async function _handle(req, res) {
     if (!params) continue;
     try {
       const body = await _readBody(req, route.maxBytes);
-      const leagues=require('../services/activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');
+      const leagues=require('../services/activeLeagueService').listProviderTargets();
       const routeSpace = typeof route.resolveSpace === 'function' ? route.resolveSpace(params, req) : null;
       const selected=routeSpace || process.env.PROVIDER_HTTP_SPACE_ID || (leagues.length===1?leagues[0].id:null);
       if(leagues.length>1 && !selected)return _send(res,409,{ok:false,reason:'receiver-route-is-ambiguous'});

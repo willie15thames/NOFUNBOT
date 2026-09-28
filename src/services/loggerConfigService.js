@@ -11,6 +11,7 @@
 'use strict';
 
 const { loadJson, saveJsonDebounced } = require('../storage/jsonStore');
+const { redactString } = require('../utils/redact');
 const FILE = 'loggerConfig.json';
 const DEFAULTS = {
   enabled: false,
@@ -33,7 +34,7 @@ async function logToConfiguredChannel(guild, text) {
   if (!cfg.enabled || !cfg.channelId || !guild) return false;
   const ch = guild.channels.cache.get(cfg.channelId) || await guild.channels.fetch(cfg.channelId).catch(() => null);
   if (!ch?.isTextBased?.()) return false;
-  await ch.send(String(text).slice(0, 1900)).catch(() => null);
+  await ch.send(redactString(text, 1900)).catch(() => null);
   return true;
 }
 

@@ -26,9 +26,9 @@ const nicknamePolicy = require('../services/nicknamePolicyService');
 const mediaContextService = require('../services/mediaContextService');
 const { extractTimezoneFromText } = require('../services/timezoneService');
 
-// ── V202: AI-executable actions come ONLY from the registered Action Catalog ──
-// src/actions/actionCatalog.js is the single source of truth for the prompt, validator and executor.
-// Unregistered types are rejected with a structured unsupported_action result (never silently dropped).
+// ── AI model tool-actions are constrained by the registered Action Catalog. ──
+// Natural language, buttons and slash commands are separate transport adapters but must converge on the same application use cases before mutation.
+// Unregistered model action types are rejected with a structured unsupported_action result (never silently dropped).
 const actionValidator = require('../actions/actionValidator');
 const actionExecutor  = require('../actions/actionExecutor');
 const { buildCommissionerPrompt } = require('../ai/commissionerPrompt');
@@ -295,7 +295,6 @@ if (/^(?:reset|wipe|delete\s+all\s+leagues|reset\s+league|wipe\s+league)\b/i.tes
         const router = require('../routing/interactionRouter');
         if (String(wizardStateService.getCurrentStep() || 'flow') === 'timezone') {
           wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
-          wizardStateService.patch({ currentStep: 'mode', lastAdvancedAt: Date.now() });
           wizardPrefs.savePrefs({ lastTimezoneAt: Date.now() });
           await router.postSetupWizardMessage(message.guild, 'Commissioner timezone saved. Setup core is unlocked now.', { stage: 'mode' }).catch(() => null);
         }
@@ -602,7 +601,7 @@ function _buildSystemPrompt(settings, teamList, openList, activeGames, pendingTr
       langBlock = `\nAUDIENCE RATING: ${audience.toUpperCase()} — keep it clean.`;
     }
 
-    const activePersonas = isR ? effectiveTones.filter(t => PERSONA_VOICE_MAP_SHORT[t]) : effectiveTones.filter(t => PERSONA_VOICE_MAP_SHORT[t]);
+    const activePersonas = effectiveTones.filter(t => PERSONA_VOICE_MAP_SHORT[t]);
     let personaBlock = '';
     if (activePersonas.length) {
       personaBlock = `\n\nACTIVE PERSONA — TALK LIKE THIS:\n` + activePersonas.map(p => `• ${PERSONA_VOICE_MAP_SHORT[p]}`).join('\n');

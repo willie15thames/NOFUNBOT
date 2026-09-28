@@ -18,6 +18,7 @@ const { spawn } = require('child_process');
 const { fetchExternal, DISCORD_CDN_HOSTS } = require('../utils/httpIntake');
 const { safeUrl } = require('../utils/safeUrl');
 const env = require('../config/env');
+const { Semaphore } = require('../utils/semaphore');
 
 const ALLOWED_MEDIA_HOSTS = new Set(DISCORD_CDN_HOSTS);
 const STATIC_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -27,6 +28,8 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const GIF_EXTS = new Set(['.gif']);
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 const ANALYSIS_CACHE = new Map();
+const GLOBAL_MEDIA_SEMAPHORE = new Semaphore(Number(process.env.MEDIA_CONTEXT_GLOBAL_CONCURRENCY || 3));
+const GUILD_MEDIA_SEMAPHORES = new Map();
 
 function _num(value, fallback, min, max) {
   const n = Number(value);
@@ -44,6 +47,8 @@ function mediaConfig() {
     cacheMs: _num(env.MEDIA_CONTEXT_CACHE_MS, 5 * 60 * 1000, 10000, 30 * 60 * 1000),
     maxStaticApiBytes: _num(env.MEDIA_CONTEXT_MAX_STATIC_API_BYTES, 4 * 1024 * 1024, 512 * 1024, 5 * 1024 * 1024),
     ffmpegPath: String(env.FFMPEG_PATH || process.env.FFMPEG_PATH || 'ffmpeg').trim() || 'ffmpeg',
+    queueWaitMs: _num(process.env.MEDIA_CONTEXT_QUEUE_WAIT_MS, 8000, 1000, 30000),
+    perGuildConcurrency: _num(process.env.MEDIA_CONTEXT_PER_GUILD_CONCURRENCY, 1, 1, 3),
   };
 }
 
@@ -330,6 +335,24 @@ function _sweepCache(now = Date.now()) {
   for (const [key, entry] of ANALYSIS_CACHE.entries()) if (!entry || entry.expiresAt <= now) ANALYSIS_CACHE.delete(key);
 }
 
+function _guildSemaphore(guildId, limit) {
+  const key=String(guildId || 'dm');
+  const existing=GUILD_MEDIA_SEMAPHORES.get(key);
+  if(existing && existing.limit===limit)return existing;
+  const sem=new Semaphore(limit); GUILD_MEDIA_SEMAPHORES.set(key,sem); return sem;
+}
+async function _withMediaCapacity(message, cfg, fn) {
+  const releaseGlobal=await GLOBAL_MEDIA_SEMAPHORE.acquire(cfg.queueWaitMs);
+  let releaseGuild=null;
+  try {
+    releaseGuild=await _guildSemaphore(message?.guild?.id || 'dm',cfg.perGuildConcurrency).acquire(cfg.queueWaitMs);
+    return await fn();
+  } finally {
+    try{releaseGuild?.();}catch{}
+    try{releaseGlobal?.();}catch{}
+  }
+}
+
 async function analyzeMessageMedia(message, deps = {}) {
   const cfg = mediaConfig();
   if (!cfg.enabled) return { hasMedia: false, analyzed: false, summary: '', limitations: ['Media context is disabled.'], items: [] };
@@ -347,102 +370,111 @@ async function analyzeMessageMedia(message, deps = {}) {
     return { hasMedia: true, analyzed: false, summary: '', limitations: ['Vision AI is unavailable.'], items };
   }
 
-  const blocks = [];
-  const limitations = [];
-  let visualCount = 0;
-  const resolvedItems = [];
-
-  for (const [index, item] of items.entries()) {
-    let fetched;
-    try { fetched = await _fetchItem(item, deps); }
-    catch (err) {
-      limitations.push(`${item.name || `media ${index + 1}`}: ${String(err.message || err).slice(0, 120)}`);
-      continue;
-    }
-    const actualType = _cleanContentType(fetched.contentType || item.contentType);
-    blocks.push({ type: 'text', text: `Media item ${index + 1}: ${item.kind}, source=${item.origin}/${item.source}, name=${item.name || 'unnamed'}.` });
-
-    if (item.kind === 'image') {
-      let mediaType = _staticMediaType(item, actualType);
-      let imageBuffer = fetched.buffer;
-      const directTypeSafe = STATIC_IMAGE_TYPES.has(actualType) || STATIC_IMAGE_TYPES.has(_cleanContentType(item.contentType)) || IMAGE_EXTS.has(_ext(item.name, item.url));
-      if (!directTypeSafe || imageBuffer.length > cfg.maxStaticApiBytes) {
-        try {
-          const extractor = typeof deps.extractFrames === 'function' ? deps.extractFrames : _extractFramesWithFfmpeg;
-          const normalized = await extractor({ ...item, kind: 'image' }, imageBuffer, { maxFrames: 1, videoSeconds: 1, ffmpegPath: deps.ffmpegPath || cfg.ffmpegPath });
-          if (normalized?.[0]) { imageBuffer = normalized[0]; mediaType = 'image/png'; }
-        } catch (err) {
-          limitations.push(`${item.name || 'image'} could not be normalized (${String(err.message || err).slice(0, 100)}).`);
-        }
-      }
-      if (imageBuffer.length > cfg.maxStaticApiBytes) {
-        limitations.push(`${item.name || 'image'} exceeded the direct vision size budget and was skipped.`);
-        continue;
-      }
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBuffer.toString('base64') } });
-      visualCount += 1;
-      resolvedItems.push({ ...item, contentType: mediaType, frames: 1 });
-      continue;
-    }
-
-    if (item.kind === 'gif' || item.kind === 'video') {
-      let frames = [];
-      try {
-        const extractor = typeof deps.extractFrames === 'function' ? deps.extractFrames : _extractFramesWithFfmpeg;
-        frames = await extractor(item, fetched.buffer, { maxFrames: cfg.maxFrames, videoSeconds: cfg.videoSeconds, ffmpegPath: deps.ffmpegPath || cfg.ffmpegPath });
-      } catch (err) {
-        limitations.push(`${item.name || item.kind}: frame extraction unavailable (${String(err.message || err).slice(0, 100)}).`);
-      }
-      if (frames.length) {
-        for (let i = 0; i < frames.length; i += 1) {
-          blocks.push({ type: 'text', text: `${item.kind.toUpperCase()} sampled frame ${i + 1} of ${frames.length}.` });
-          blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: frames[i].toString('base64') } });
-          visualCount += 1;
-        }
-        resolvedItems.push({ ...item, contentType: actualType || item.contentType, frames: frames.length });
-      } else if (item.kind === 'gif' && fetched.buffer.length <= cfg.maxStaticApiBytes) {
-        const isTrueGif = actualType === 'image/gif' || _ext(item.name, item.url) === '.gif';
-        const fallbackType = isTrueGif ? 'image/gif' : _staticMediaType(item, actualType);
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: fallbackType, data: fetched.buffer.toString('base64') } });
-        visualCount += 1;
-        limitations.push(`${item.name || 'animated image'} was sent without sampled frames because frame extraction was unavailable; motion interpretation may be limited.`);
-        resolvedItems.push({ ...item, contentType: fallbackType, frames: 1 });
-      }
-    }
-  }
-
-  if (!visualCount) {
-    return { hasMedia: true, analyzed: false, summary: '', limitations: limitations.length ? limitations : ['No supported visual frames were available.'], items };
-  }
-
-  blocks.push({ type: 'text', text: _analysisPrompt(_stripMentionText(message), resolvedItems.length ? resolvedItems : items) });
-  let raw = '';
   try {
-    const res = await aiCall({
-      model: MODELS.FAST || MODELS.SMART,
-      max_tokens: 360,
-      messages: [{ role: 'user', content: blocks }],
+    return await _withMediaCapacity(message, cfg, async () => {
+      const blocks = [];
+      const limitations = [];
+      let visualCount = 0;
+      const resolvedItems = [];
+    
+      for (const [index, item] of items.entries()) {
+        let fetched;
+        try { fetched = await _fetchItem(item, deps); }
+        catch (err) {
+          limitations.push(`${item.name || `media ${index + 1}`}: ${String(err.message || err).slice(0, 120)}`);
+          continue;
+        }
+        const actualType = _cleanContentType(fetched.contentType || item.contentType);
+        blocks.push({ type: 'text', text: `Media item ${index + 1}: ${item.kind}, source=${item.origin}/${item.source}, name=${item.name || 'unnamed'}.` });
+    
+        if (item.kind === 'image') {
+          let mediaType = _staticMediaType(item, actualType);
+          let imageBuffer = fetched.buffer;
+          const directTypeSafe = STATIC_IMAGE_TYPES.has(actualType) || STATIC_IMAGE_TYPES.has(_cleanContentType(item.contentType)) || IMAGE_EXTS.has(_ext(item.name, item.url));
+          if (!directTypeSafe || imageBuffer.length > cfg.maxStaticApiBytes) {
+            try {
+              const extractor = typeof deps.extractFrames === 'function' ? deps.extractFrames : _extractFramesWithFfmpeg;
+              const normalized = await extractor({ ...item, kind: 'image' }, imageBuffer, { maxFrames: 1, videoSeconds: 1, ffmpegPath: deps.ffmpegPath || cfg.ffmpegPath });
+              if (normalized?.[0]) { imageBuffer = normalized[0]; mediaType = 'image/png'; }
+            } catch (err) {
+              limitations.push(`${item.name || 'image'} could not be normalized (${String(err.message || err).slice(0, 100)}).`);
+            }
+          }
+          if (imageBuffer.length > cfg.maxStaticApiBytes) {
+            limitations.push(`${item.name || 'image'} exceeded the direct vision size budget and was skipped.`);
+            continue;
+          }
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBuffer.toString('base64') } });
+          visualCount += 1;
+          resolvedItems.push({ ...item, contentType: mediaType, frames: 1 });
+          continue;
+        }
+    
+        if (item.kind === 'gif' || item.kind === 'video') {
+          let frames = [];
+          try {
+            const extractor = typeof deps.extractFrames === 'function' ? deps.extractFrames : _extractFramesWithFfmpeg;
+            frames = await extractor(item, fetched.buffer, { maxFrames: cfg.maxFrames, videoSeconds: cfg.videoSeconds, ffmpegPath: deps.ffmpegPath || cfg.ffmpegPath });
+          } catch (err) {
+            limitations.push(`${item.name || item.kind}: frame extraction unavailable (${String(err.message || err).slice(0, 100)}).`);
+          }
+          if (frames.length) {
+            for (let i = 0; i < frames.length; i += 1) {
+              blocks.push({ type: 'text', text: `${item.kind.toUpperCase()} sampled frame ${i + 1} of ${frames.length}.` });
+              blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: frames[i].toString('base64') } });
+              visualCount += 1;
+            }
+            resolvedItems.push({ ...item, contentType: actualType || item.contentType, frames: frames.length });
+          } else if (item.kind === 'gif' && fetched.buffer.length <= cfg.maxStaticApiBytes) {
+            const isTrueGif = actualType === 'image/gif' || _ext(item.name, item.url) === '.gif';
+            const fallbackType = isTrueGif ? 'image/gif' : _staticMediaType(item, actualType);
+            blocks.push({ type: 'image', source: { type: 'base64', media_type: fallbackType, data: fetched.buffer.toString('base64') } });
+            visualCount += 1;
+            limitations.push(`${item.name || 'animated image'} was sent without sampled frames because frame extraction was unavailable; motion interpretation may be limited.`);
+            resolvedItems.push({ ...item, contentType: fallbackType, frames: 1 });
+          }
+        }
+      }
+    
+      if (!visualCount) {
+        return { hasMedia: true, analyzed: false, summary: '', limitations: limitations.length ? limitations : ['No supported visual frames were available.'], items };
+      }
+    
+      blocks.push({ type: 'text', text: _analysisPrompt(_stripMentionText(message), resolvedItems.length ? resolvedItems : items) });
+      let raw = '';
+      try {
+        const res = await aiCall({
+          model: MODELS.FAST || MODELS.SMART,
+          max_tokens: 360,
+          messages: [{ role: 'user', content: blocks }],
+        });
+        raw = String(res?.content?.find?.(part => part?.type === 'text')?.text || res?.content?.[0]?.text || '');
+      } catch (err) {
+        return { hasMedia: true, analyzed: false, summary: '', limitations: [...limitations, `Vision analysis failed: ${String(err.message || err).slice(0, 120)}`], items: resolvedItems.length ? resolvedItems : items };
+      }
+    
+      const parsed = _parseAnalysis(raw);
+      const combinedLimitations = [...limitations, ...(parsed.limitations || [])].slice(0, 6);
+      const result = {
+        hasMedia: true,
+        analyzed: !!parsed.summary,
+        summary: parsed.summary,
+        visibleText: parsed.visibleText,
+        motion: parsed.motion,
+        confidence: parsed.confidence,
+        limitations: combinedLimitations,
+        items: resolvedItems.length ? resolvedItems : items,
+        memoryText: parsed.summary ? `[Attached media context: ${parsed.summary}]` : '[Attached media could not be analyzed.]',
+      };
+      ANALYSIS_CACHE.set(key, { expiresAt: Date.now() + cfg.cacheMs, value: result });
+      return result;
     });
-    raw = String(res?.content?.find?.(part => part?.type === 'text')?.text || res?.content?.[0]?.text || '');
   } catch (err) {
-    return { hasMedia: true, analyzed: false, summary: '', limitations: [...limitations, `Vision analysis failed: ${String(err.message || err).slice(0, 120)}`], items: resolvedItems.length ? resolvedItems : items };
+    if (String(err?.message || '') === 'SEMAPHORE_TIMEOUT') {
+      return { hasMedia:true, analyzed:false, summary:'', limitations:['Media analysis is busy. Try again in a moment.'], items };
+    }
+    throw err;
   }
-
-  const parsed = _parseAnalysis(raw);
-  const combinedLimitations = [...limitations, ...(parsed.limitations || [])].slice(0, 6);
-  const result = {
-    hasMedia: true,
-    analyzed: !!parsed.summary,
-    summary: parsed.summary,
-    visibleText: parsed.visibleText,
-    motion: parsed.motion,
-    confidence: parsed.confidence,
-    limitations: combinedLimitations,
-    items: resolvedItems.length ? resolvedItems : items,
-    memoryText: parsed.summary ? `[Attached media context: ${parsed.summary}]` : '[Attached media could not be analyzed.]',
-  };
-  ANALYSIS_CACHE.set(key, { expiresAt: Date.now() + cfg.cacheMs, value: result });
-  return result;
 }
 
 function renderPromptContext(context) {

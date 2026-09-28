@@ -23,7 +23,7 @@ function _archiveStalePreparing(data, now = Date.now()) {
 function _repair(data, guildId, now = Date.now()) {
   _archiveStalePreparing(data, now);
   const canonical = new Map(
-    require('./activeLeagueService').listActiveLeagues()
+    require('./activeLeagueService').listOperationalLeagues()
       .filter(x => !x.guildId || String(x.guildId) === String(guildId))
       .map(x => [String(x.id), x])
   );

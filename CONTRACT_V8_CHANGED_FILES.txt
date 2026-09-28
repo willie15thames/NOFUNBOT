@@ -1,0 +1,74 @@
+NOFUNBOT Contract v8 implementation file manifest
+Changed files: 52
+M  PUBLIC_PATCH_NOTES.md
+M  changelog.txt
+M  package.json
+M  src/actions/actionCatalog.js
+M  src/commands.js
+M  src/handlers/commissionerHandler.js
+M  src/handlers/memberMentionHandler.js
+M  src/http/providerHttpServer.js
+M  src/league/gameResultService.js
+M  src/microservices/valueUnlockMicroservice.js
+M  src/routing/interactionRouter.js
+M  src/services/activeLeagueService.js
+M  src/services/ai/anthropicService.js
+M  src/services/architectureSemanticsService.js
+M  src/services/baseInitService.js
+M  src/services/channelGuideService.js
+M  src/services/cleanSlateResetService.js
+M  src/services/communityAccessService.js
+M  src/services/componentRegistryService.js
+M  src/services/diagnosticService.js
+M  src/services/flowDefinitions.js
+M  src/services/gameChannelService.js
+M  src/services/hubReleaseService.js
+M  src/services/interactionRouterService.js
+M  src/services/joinLeagueService.js
+M  src/services/leagueAutomationService.js
+M  src/services/leagueFeatureService.js
+M  src/services/leagueMemberOnboardingService.js
+M  src/services/leagueSetupService.js
+M  src/services/leagueSyncService.js
+M  src/services/liveSyncService.js
+M  src/services/loggerConfigService.js
+M  src/services/managedSpaceService.js
+M  src/services/manualService.js
+M  src/services/mediaContextService.js
+M  src/services/memberLedgerService.js
+M  src/services/naturalActionPlannerService.js
+M  src/services/openTeamsService.js
+M  src/services/pollService.js
+M  src/services/providerConnectionActionService.js
+M  src/services/providerService.js
+M  src/services/providerSyncOrchestrator.js
+M  src/services/rewardBoardService.js
+M  src/services/runtimeIncidentService.js
+M  src/services/serverRulesService.js
+M  src/services/serverSettingsService.js
+M  src/services/spaceMigrationService.js
+M  src/services/timezoneGateService.js
+M  src/services/wizardRendererService.js
+M  src/services/workflowEngineService.js
+M  src/utils/logger.js
+M  src/utils/teamUtils.js
+
+New files: 16
+A  CONTRACT_V8_IMPLEMENTATION_STATUS.md
+A  LIVE_INTERACTION_AND_LEAGUE_STATE_IMPLEMENTATION_CONTRACT_v8.md
+A  data/processBuilder.json
+A  docs/NOFUNBOT_Implementation_Contract_Logic_Reconciled_v8.docx
+A  scripts/contract-v8-static-check.js
+A  src/application/teamAssignmentUseCase.js
+A  src/services/ai/aiRuntimeOrchestrator.js
+A  src/services/autocompleteService.js
+A  src/services/buttonChoiceService.js
+A  src/services/componentSessionService.js
+A  src/services/leagueResolverService.js
+A  src/services/schedulerRegistryService.js
+A  src/services/trashTalkEngagementPolicyService.js
+A  src/utils/redact.js
+A  src/utils/semaphore.js
+A  tests/contractV8.regression.test.js
+
+Removed files: 0

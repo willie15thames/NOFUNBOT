@@ -16,13 +16,13 @@
 const {
   ChannelType, PermissionsBitField, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } = require('discord.js');
 const { makeLogger }                   = require('../utils/logger');
 const { saveJsonDebounced, loadJson }  = require('../storage/jsonStore');
 const { COMM_ROLE }                    = require('../config/env');
 const activeLeagueService                = require('./activeLeagueService');
+const buttonChoices                       = require('./buttonChoiceService');
 const { buildMemberGuideEmbed }          = require('./rulesGuideService');
 const { seedLeagueTeams }                = require('./teamSeedService');
 const stateRef                           = require('../state');
@@ -614,7 +614,7 @@ Write it like a real sports article — hype the winner a little, acknowledge th
 async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, categories) {
   const def = LEAGUE_TYPES[leagueTypeId];
   const code = leaguePrefixCode(leagueName, def.label);
-  const active = activeLeagueService.listActiveLeagues();
+  const active = activeLeagueService.listOperationalLeagues();
   const sameLeague = active.find(l => l.leagueTypeId === leagueTypeId && l.leagueName === leagueName);
   // Categories include the reserved space ID, so identical two-letter labels
   // cannot cause channels from different leagues to be reused.
@@ -713,7 +713,7 @@ async function deleteLeagueStructure(guild, { categoryIds = [], channelIds = [],
   if (!leagueId) throw new Error('Exact league ID is required for deletion; legacy resources must be mapped first.');
   const league = activeLeagueService.getLeague(leagueId);
   if (!league || (league.guildId && league.guildId !== guild.id)) throw new Error('Selected league does not belong to this server');
-  const others = activeLeagueService.listActiveLeagues().filter(l => l.id !== leagueId);
+  const others = activeLeagueService.listOperationalLeagues().filter(l => l.id !== leagueId);
   const protectedIds = new Set(others.flatMap(l => [...(l.builtCategoryIds || []), ...(l.builtChannelIds || [])]));
   let deletedChannels = 0, deletedCategories = 0;
   const failures = [], preserved = [];
@@ -924,19 +924,14 @@ async function publishLeagueRulesForPreset(guild, league, presetKey) {
 // ── Setup wizard ──────────────────────────────────────────────
 async function sendSetupWizard(interaction, state) {
   state = state || stateRef;
-  const gameRow = new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('setup_game_select')
-      .setPlaceholder('🎮 Choose your game first...')
-      .addOptions(
-        new StringSelectMenuOptionBuilder().setLabel('🏈 Madden NFL').setValue('madden')
-          .setDescription('Franchise, Fantasy, All-Time, Sim, Dual Division (Custom)').setEmoji('🏈'),
-        new StringSelectMenuOptionBuilder().setLabel('🏀 NBA 2K').setValue('nba2k')
-          .setDescription('MyNBA, Fantasy, All-Time, Pro-Am Custom Leagues').setEmoji('🏀'),
-        new StringSelectMenuOptionBuilder().setLabel('🏟 NCAA College Football').setValue('ncaa')
-          .setDescription('Dynasty, Fantasy Draft').setEmoji('🏟'),
-      )
-  );
+  const gameRows = buttonChoices.createChoiceRows({
+    guildId:interaction.guildId, actorId:interaction.user.id, flow:'setup-game', legacyCustomId:'setup_game_select', minValues:1, maxValues:1,
+    options:[
+      { label:'🏈 Madden NFL', value:'madden', description:'Franchise, Fantasy, All-Time, Sim, Dual Division' },
+      { label:'🏀 NBA 2K', value:'nba2k', description:'MyNBA, Fantasy, All-Time, Pro-Am' },
+      { label:'🏟 NCAA College Football', value:'ncaa', description:'Dynasty, Fantasy Draft' },
+    ],
+  }).rows;
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()
@@ -955,7 +950,7 @@ async function sendSetupWizard(interaction, state) {
       )
       .setFooter({ text: 'Select a game below to continue.' })
       .setTimestamp()],
-    components: [gameRow],
+    components: gameRows,
   });
 }
 
@@ -984,18 +979,10 @@ async function handleSetupInteraction(interaction, state) {
 
     if (!options.length) return interaction.update({ content: '❌ No leagues for that game.', components: [] });
 
-    const typeRow = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('setup_type_select')
-        .setPlaceholder('🏟 Choose league type...')
-        .addOptions(options.slice(0, 10).map(t =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(t.label.slice(0, 100))
-            .setValue(t.id)
-            .setDescription(t.description.slice(0, 100))
-            .setEmoji(t.emoji)
-        ))
-    );
+    const typeRows = buttonChoices.createChoiceRows({
+      guildId:interaction.guildId, actorId:interaction.user.id, flow:'setup-type', legacyCustomId:'setup_type_select', minValues:1, maxValues:1,
+      options:options.map(t => ({ label:t.label.slice(0,80), value:t.id, description:t.description.slice(0,100), emoji:t.emoji })),
+    }).rows;
 
     const gameLabels = { madden: '🏈 Madden NFL', nba2k: '🏀 NBA 2K', ncaa: '🏟 NCAA CFB', proam: '🎮 Pro-Am Custom' };
     await interaction.update({
@@ -1005,7 +992,7 @@ async function handleSetupInteraction(interaction, state) {
         .setDescription(options.map(t => `**${t.emoji} ${t.label}**\n> ${t.description}`).join('\n\n'))
         .setFooter({ text: 'Step 2: Select league type below.' })
         .setTimestamp()],
-      components: [typeRow],
+      components: typeRows,
     });
     return;
   }
@@ -1047,28 +1034,14 @@ async function handleSetupInteraction(interaction, state) {
     const partialWeeks = getSeasonWeeks(fullWeeks, 'partial', def?.game);
     const halfWeeks    = getSeasonWeeks(fullWeeks, 'half', def?.game);
 
-    const seasonRow = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('setup_season_select')
-        .setPlaceholder('📅 Choose season length...')
-        .addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(`Full Season — ${fullWeeks} weeks`)
-            .setValue('full')
-            .setDescription('Complete regular season schedule.')
-            .setEmoji('📅'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel(`Partial Season — ${partialWeeks} weeks (75%)`)
-            .setValue('partial')
-            .setDescription('75% of full season — everyone plays most opponents.')
-            .setEmoji('📆'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel(`Half Season — ${halfWeeks} weeks (50%)`)
-            .setValue('half')
-            .setDescription('Quick league — half the regular season.')
-            .setEmoji('⚡'),
-        )
-    );
+    const seasonRows = buttonChoices.createChoiceRows({
+      guildId:interaction.guildId, actorId:interaction.user.id, flow:'setup-season', legacyCustomId:'setup_season_select', minValues:1, maxValues:1,
+      options:[
+        { label:`Full — ${fullWeeks} weeks`, value:'full', description:'Complete regular season schedule.' },
+        { label:`Partial — ${partialWeeks} weeks`, value:'partial', description:'75% of full season.' },
+        { label:`Half — ${halfWeeks} weeks`, value:'half', description:'Quick league — half the regular season.' },
+      ],
+    }).rows;
 
     await interaction.update({
       embeds: [new EmbedBuilder()
@@ -1084,7 +1057,7 @@ async function handleSetupInteraction(interaction, state) {
         )
         .setFooter({ text: 'Step 3: Select season length below.' })
         .setTimestamp()],
-      components: [seasonRow],
+      components: seasonRows,
     });
     return;
   }
@@ -1124,17 +1097,15 @@ async function handleSetupInteraction(interaction, state) {
       state.leagueConfig.builtChannelIds  = builtChannelIds;
       saveJsonDebounced('leagueConfig.json', state.leagueConfig);
 
-            const activeLeagueId = activeLeague?.id || activeLeagueService.listActiveLeagues().slice(-1)[0]?.id;
-      const rulesRow = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`setup_ruleset_select::${activeLeagueId}`)
-          .setPlaceholder('📖 Choose league rules to equip...')
-          .addOptions(
-            new StringSelectMenuOptionBuilder().setLabel('Competitive Default').setValue('competitive_default').setDescription('Standard competitive ruleset').setEmoji('🏈'),
-            new StringSelectMenuOptionBuilder().setLabel('Sim League').setValue('sim').setDescription('Tighter sim-style gameplay expectations').setEmoji('🎲'),
-            new StringSelectMenuOptionBuilder().setLabel('Custom / Pro-Am').setValue('custom_proam').setDescription('Bot-managed custom league rules').setEmoji('🏆'),
-          )
-      );
+            const activeLeagueId = activeLeague?.id || activeLeagueService.listOperationalLeagues().slice(-1)[0]?.id;
+      const rulesRows = buttonChoices.createChoiceRows({
+        guildId:guild.id, actorId:interaction.user.id, flow:'setup-ruleset', legacyCustomId:`setup_ruleset_select::${activeLeagueId}`, minValues:1, maxValues:1,
+        options:[
+          { label:'Competitive Default', value:'competitive_default', description:'Standard competitive ruleset' },
+          { label:'Sim League', value:'sim', description:'Tighter sim-style gameplay expectations' },
+          { label:'Custom / Pro-Am', value:'custom_proam', description:'Bot-managed custom league rules' },
+        ],
+      }).rows;
       const featureRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`toggle_active_check::${activeLeagueId}`).setLabel('Enable 4-Day Active Check').setStyle(ButtonStyle.Secondary)
       );
@@ -1167,7 +1138,7 @@ async function handleSetupInteraction(interaction, state) {
           )
           .setFooter({ text: `${def.label} • ${weeks}-week season` })
           .setTimestamp()],
-        components: [rulesRow, featureRow],
+        components: [...rulesRows, featureRow].slice(0,5),
       });
     } catch (err) {
       log.error('Build failed:', err.message);

@@ -22,7 +22,7 @@ const IMPORT_PROVIDERS = new Set(['companion_export', 'neonsportz']);
 
 function _leagueId() {
   try { const id = require('../league/spaceContext').current(); if (id) return String(id); } catch {}
-  try { const rows = require('./activeLeagueService').listActiveLeagues(); if (rows.length === 1) return String(rows[0].id); } catch {}
+  try { const rows = require('./activeLeagueService').listProviderTargets(); if (rows.length === 1) return String(rows[0].id); } catch {}
   return 'default';
 }
 

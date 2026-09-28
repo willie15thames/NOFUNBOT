@@ -30,12 +30,14 @@ function getTeamEmoji(guild, teamName) {
     }
   }
   if (!name) return '';
-  if (!guild) return `:${name}:`;
+  // Never leak internal custom-emoji keys such as ':1804panthers:' into member-facing text.
+  // If the guild does not actually have the mapped custom emoji, degrade cleanly to no emoji.
+  if (!guild) return '';
   const found = guild.emojis.cache.find(e => e.name === name);
-  return found ? found.toString() : `:${name}:`;
+  return found ? found.toString() : '';
 }
 
-function getDevEmoji(guild,devTrait){const map={'star':'stardev','superstar':'Superstar','x-factor':'Xfactor','xfactor':'Xfactor'};const name=map[(devTrait||'').toLowerCase().trim()];if(!name)return'';if(!guild)return`:${name}:`;const found=guild.emojis.cache.find(e=>e.name===name);return found?found.toString():`:${name}:`;}
+function getDevEmoji(guild,devTrait){const map={'star':'stardev','superstar':'Superstar','x-factor':'Xfactor','xfactor':'Xfactor'};const name=map[(devTrait||'').toLowerCase().trim()];if(!name||!guild)return'';const found=guild.emojis.cache.find(e=>e.name===name);return found?found.toString():'';}
 function getTeamDataByAnyName(teamInput,players){const needle=norm(resolveTeamSlang(teamInput));if(!needle)return null;for(const d of players.values()){if(norm(d.baseTeam)===needle||norm(d.displayTeam)===needle)return d;}return null;}
 function findPlayerByUserId(userId,players){return[...players.values()].find(p=>p.userId===userId)||null;}
 function isSingleAttrCategory(cat){return(ATTRS_BY_CATEGORY[cat]||[]).length===1;}

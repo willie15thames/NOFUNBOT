@@ -93,7 +93,7 @@ async function collectDb() {
 function collectChannels(guild, getCh) {
   if (!guild || !getCh) return { found: 0, total: 0, missing: [] };
   const spaceId=require('../league/spaceContext').current();
-  const spaces=require('./activeLeagueService').listActiveLeagues();
+  const spaces=require('./activeLeagueService').listLeagueRecords();
   if(spaceId){const space=spaces.find(s=>s.id===spaceId);const ids=space?.builtChannelIds||[];const missing=ids.filter(id=>!guild.channels.cache.has(id));return{found:ids.length-missing.length,total:ids.length,missing,spaceId};}
   const keys = ['welcome','rules','announcements'];
   const found = [];

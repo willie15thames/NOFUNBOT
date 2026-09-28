@@ -4,7 +4,7 @@
  * LAYER: Service layer
  * PURPOSE: Deterministic natural-language planning for common commissioner actions. Resolve intent and entities first,
  *          ask only for genuinely ambiguous details, then call the SAME domain service used by slash commands.
- * IMPORTANT: This is not a second command system. It is an intent/entity adapter into existing services.
+ * IMPORTANT: This is an intent/entity adapter, not mutation authority. Resolved intents must converge on application use cases.
  */
 'use strict';
 
@@ -112,7 +112,7 @@ function _takePending(message) { _prune(); return _pending.get(_pendingKey(messa
 function _clearPending(message) { _pending.delete(_pendingKey(message)); }
 function _formatMemberChoices(ms) { return ms.map(m => `**${m.displayName || m.user?.username || m.id}**`).join(', '); }
 
-async function tryHandleCommissionerMessage(message, { state, claimTeam = null } = {}) {
+async function tryHandleCommissionerMessage(message, { state } = {}) {
   if (!message?.guild || !state) return { handled: false };
   const text = _stripBotMention(message);
   let parsed = parseTeamAssignment(text);
@@ -185,11 +185,18 @@ async function tryHandleCommissionerMessage(message, { state, claimTeam = null }
   }
 
   const entry = candidates[0];
-  const claim = claimTeam || require('./openTeamsService').claimTeam;
-  const result = await claim(message.guild, member, entry.baseTeam || entry.displayTeam, { leagueId: entry.leagueId });
+  const assignUseCase = require('../application/teamAssignmentUseCase');
+  const result = await assignUseCase.assignTeam({
+    guild: message.guild,
+    member,
+    team: entry.baseTeam || entry.displayTeam,
+    leagueId: entry.leagueId,
+    source: 'natural-language',
+  });
   if (!result?.success) return { handled: true, reply: `I found the right team, but I couldn't assign it: ${result?.reason || 'unknown error'}` };
   _clearPending(message);
-  return { handled: true, executed: true, reply: `✅ ${member} now owns **${result.entry.displayTeam}** in **${_leagueLabel(result.entry)}**.` };
+  const resultEntry = result.entry;
+  return { handled: true, executed: true, reply: `✅ ${member} now owns **${resultEntry.displayTeam}** in **${result.league?.leagueName || _leagueLabel(resultEntry)}**.` };
 }
 
 

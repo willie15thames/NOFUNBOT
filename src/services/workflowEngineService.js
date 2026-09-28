@@ -37,7 +37,7 @@
 const { makeLogger } = require('../utils/logger');
 const log = makeLogger('workflow');
 
-/** @type {Map<string, Array<{step:string, fn:Function, condition?:Function}>>} */
+/** @type {Map<string, {steps:Array<object>, meta:object}>} */
 const _workflows = new Map();
 
 /** @type {Map<string, Array<Function>>} */
@@ -53,10 +53,17 @@ const MAX_LOG = 200;
  * Define a named multi-step workflow.
  * Steps run in sequence; a step with `condition` is skipped when condition returns false.
  */
-function define(name, steps) {
+function define(name, steps, meta = {}) {
   if (!name || !Array.isArray(steps)) throw new Error('workflow.define: name + steps[] required');
-  _workflows.set(String(name), steps);
-  log.info(`workflow defined: ${name} (${steps.length} steps)`);
+  const normalizedMeta = {
+    wireStatus: meta.wireStatus || 'manual',
+    source: meta.source || 'unknown',
+    failFast: meta.failFast !== false,
+    entrypoints: Array.isArray(meta.entrypoints) ? meta.entrypoints.slice() : [],
+    description: meta.description || null,
+  };
+  _workflows.set(String(name), { steps, meta: normalizedMeta });
+  log.info(`workflow defined: ${name} (${steps.length} steps, ${normalizedMeta.wireStatus})`);
 }
 
 /**
@@ -64,11 +71,12 @@ function define(name, steps) {
  * Returns { ok, results, errors }.
  */
 async function run(name, ctx = {}) {
-  const steps = _workflows.get(String(name));
-  if (!steps) {
+  const definition = _workflows.get(String(name));
+  if (!definition) {
     log.warn(`workflow.run: unknown workflow "${name}"`);
     return { ok: false, results: [], errors: [`Unknown workflow: ${name}`] };
   }
+  const { steps, meta } = definition;
   const workflowId = `wf-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
   log.info(`▶ workflow "${name}" started (${workflowId})`);
   const results = [];
@@ -78,11 +86,20 @@ async function run(name, ctx = {}) {
   ctx._stepResults = ctx._stepResults || {};
   ctx._errors = errors;
 
-  for (const { step, fn, condition } of steps) {
+  for (const stepDef of steps) {
+    const { step, fn, condition } = stepDef;
     if (typeof condition === 'function') {
-      let skip = false;
-      try { skip = !(await condition(ctx)); } catch { skip = true; }
-      if (skip) {
+      let allowed;
+      try { allowed = await condition(ctx); }
+      catch (err) {
+        const msg = `condition failed: ${err?.message || String(err)}`;
+        errors.push({ step, error: msg });
+        _pushLog(workflowId, step, 'failed', msg);
+        log.error(`  ❌ condition for "${step}" failed: ${msg}`);
+        if (!stepDef.optional) break;
+        continue;
+      }
+      if (!allowed) {
         _pushLog(workflowId, step, 'skipped');
         log.info(`  ⏭ step "${step}" skipped`);
         continue;
@@ -100,8 +117,8 @@ async function run(name, ctx = {}) {
       errors.push({ step, error: msg });
       _pushLog(workflowId, step, 'failed', msg);
       log.error(`  ❌ step "${step}" failed: ${msg}`);
-      // Continue remaining steps unless ctx.stopOnError is set
-      if (ctx.stopOnError) break;
+      const shouldStop = ctx.stopOnError === true || (ctx.stopOnError !== false && meta.failFast && !stepDef.optional);
+      if (shouldStop) break;
     }
   }
 
@@ -172,7 +189,13 @@ function getRunLog(limit = 50) {
 }
 
 function listWorkflows() {
-  return [..._workflows.entries()].map(([name, steps]) => ({ name, stepCount: steps.length }));
+  return [..._workflows.entries()].map(([name, def]) => ({ name, stepCount: def.steps.length, ...def.meta }));
+}
+
+function getWorkflowDefinition(name) {
+  const def = _workflows.get(String(name));
+  if (!def) return null;
+  return { name:String(name), stepCount:def.steps.length, ...def.meta, steps:def.steps.map(s => ({ step:s.step, optional:!!s.optional, hasCondition:typeof s.condition === 'function' })) };
 }
 
 // ── Built-in workflow definitions ────────────────────────────
@@ -213,7 +236,7 @@ define('post-build', [
       await botAccess.lockBotAccessGuildWide(ctx.guild, commRole?.id).catch(e => log.warn('lock-bot-access:', e.message));
     },
   },
-]);
+], { wireStatus:'wired', source:'workflowEngineService', failFast:true, entrypoints:['server-build completion'] });
 
 define('post-trash', [
   {
@@ -232,7 +255,7 @@ define('post-trash', [
       await onboardingAuto.postAutomationStatus(ctx.guild).catch(e => log.warn('post-automation-status:', e.message));
     },
   },
-]);
+], { wireStatus:'wired', source:'workflowEngineService', failFast:true, entrypoints:['trash-the-bot completion'] });
 
 define('post-league-reset', [
   {
@@ -256,7 +279,7 @@ define('post-league-reset', [
       ctx.hubReleaseService.resetHubWeek(1, ctx.state);
     },
   },
-]);
+], { wireStatus:'manual', source:'workflowEngineService', failFast:true, entrypoints:['reset-league caller'] });
 
 module.exports = {
   define,
@@ -266,6 +289,7 @@ module.exports = {
   emitJobEvent,
   getRunLog,
   listWorkflows,
+  getWorkflowDefinition,
 };
 
 
@@ -280,7 +304,11 @@ try {
 // ── V191: Register all flow definitions ────────────────────────────────────
 try {
   const flowDefinitions = require('./flowDefinitions');
-  flowDefinitions.registerAll(module.exports);
+  const facade = {
+    ...module.exports,
+    define: (name, steps, meta = {}) => define(name, steps, { wireStatus:'dormant', source:'flowDefinitions', failFast:true, ...meta }),
+  };
+  flowDefinitions.registerAll(facade);
 } catch (err) {
   log.warn(`flow definitions registration skipped: ${err.message}`);
 }

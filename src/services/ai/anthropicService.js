@@ -21,7 +21,9 @@ function isPlaceholderApiKey(value) {
 }
 const EFFECTIVE_API_KEY = isPlaceholderApiKey(ANTHROPIC_API_KEY) ? null : ANTHROPIC_API_KEY;
 const AI_READY = AI_ENABLED && AI_PROVIDER === 'anthropic' && !!EFFECTIVE_API_KEY;
-const client = AI_READY ? new Anthropic({ apiKey: EFFECTIVE_API_KEY, timeout: RAILWAY_TIMEOUT_MS, maxRetries: 1 }) : null;
+// NOFUNBOT owns retry/cancellation so SDK-level retries cannot overlap an application retry.
+const client = AI_READY ? new Anthropic({ apiKey: EFFECTIVE_API_KEY, timeout: RAILWAY_TIMEOUT_MS, maxRetries: 0 }) : null;
+const { runWithAIRetry } = require('./aiRuntimeOrchestrator');
 const MODELS = { FAST: ANTHROPIC_MODEL_FAST, SMART: ANTHROPIC_MODEL_SMART };
 
 function getAIStatus() {
@@ -36,29 +38,20 @@ function isAIReady() {
   return AI_READY;
 }
 
-async function aiCall(params, retries = 2) {
+async function aiCall(params, retries = 2, runtime = {}) {
   if (!client) {
     const status = getAIStatus();
     const err = new Error(`AI_DISABLED: ${status.reason}`);
     err.code = 'AI_DISABLED';
     throw err;
   }
-  for (let i = 0; i < retries; i += 1) {
-    try {
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT: call exceeded Railway budget')), RAILWAY_TIMEOUT_MS));
-      return await Promise.race([client.messages.create(params), timeoutPromise]);
-    } catch (err) {
-      const isTimeout = err?.message?.startsWith('AI_TIMEOUT');
-      const isOverload = err?.status === 529 || err?.status === 429 || err?.message?.includes('overloaded');
-      if (isOverload && !isTimeout && i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        continue;
-      }
-      throw err;
-    }
-  }
-  // Should never reach here — throw so callers don't crash on null.content[0]
-  throw new Error('AI_EXHAUSTED: all retries failed without a result');
+  const attempts = Math.max(1, Number(retries) || 1);
+  return runWithAIRetry({
+    timeoutMs: RAILWAY_TIMEOUT_MS,
+    attempts,
+    requestId: runtime.requestId || null,
+    request: ({ signal }) => client.messages.create(params, { signal }),
+  });
 }
 
 module.exports = { aiCall, MODELS, RAILWAY_TIMEOUT_MS, isAIReady, getAIStatus, isPlaceholderApiKey };

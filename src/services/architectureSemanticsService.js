@@ -128,7 +128,7 @@ function classifySpace(rawName = '', settings = serverSettings.getSettings()) {
       key,
       name: title(rawName),
       type: key.includes('schedule') || key.includes('qa') || key.includes('updates') ? 'event' : 'space',
-      selectorVisible: !key.includes('qa') || true,
+      selectorVisible: !key.includes('qa'),
       description: `${title(rawName)} access.`,
     };
   }

@@ -12,10 +12,11 @@
 'use strict';
 
 const {
-  EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
+  EmbedBuilder, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle,
 } = require('discord.js');
 const activeLeagueService = require('./activeLeagueService');
+const buttonChoices = require('./buttonChoiceService');
 const { LEAGUE_TYPES } = require('./leagueSetupService');
 const { getOpenTeamsForLeague, claimTeam, createOrClaimCustomTeam } = require('./openTeamsService');
 const { normalizeTimezone } = require('./timezoneService');
@@ -30,12 +31,11 @@ function leagueDefById(leagueTypeId) {
 }
 
 
-function _buildLeagueRow(opts) {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder().setCustomId('join_league_select').setPlaceholder('Choose a league to join...').addOptions(
-      opts.map(o => new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.description))
-    )
-  );
+function _buildLeagueRows(opts, context = {}) {
+  return buttonChoices.createChoiceRows({
+    guildId:context.guildId || null, actorId:context.actorId || null, public:context.public === true,
+    flow:'join-league', legacyCustomId:'join_league_select', minValues:1, maxValues:1, options:opts,
+  }).rows;
 }
 
 function leagueOptions(state) {
@@ -46,17 +46,17 @@ function leagueOptions(state) {
   }));
 }
 
-function _selectedLeaguePayload(league, state) {
+function _selectedLeaguePayload(league, state, context = {}) {
   const def = leagueDefById(league.leagueTypeId) || {};
   const openTeams = getOpenTeamsForLeague(league.id);
   const rows = [];
   let description = `**League:** ${league.leagueName}\n**Type:** ${activeLeagueService.leagueTypeLabel(league.leagueTypeId)}\n\n`;
   if (openTeams.length) {
-    rows.push(new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`join_team_select::${league.id}`).setPlaceholder(`Choose a team in ${String(league.leagueName).slice(0,60)}...`).addOptions(
-        openTeams.slice(0,25).map(t => new StringSelectMenuOptionBuilder().setLabel(String(t.displayTeam).slice(0,100)).setValue(String(t.baseTeam)).setDescription(String(t.replacementFor ? `${t.displayTeam} replacing ${t.replacementFor}` : t.baseTeam).slice(0,100)))
-      )
-    ));
+    rows.push(...buttonChoices.createChoiceRows({
+      guildId:context.guildId || null, actorId:context.actorId || null, public:context.public === true,
+      flow:'join-team', legacyCustomId:`join_team_select::${league.id}`, minValues:1, maxValues:1,
+      options:openTeams.map(t => ({ label:String(t.displayTeam).slice(0,80), value:String(t.baseTeam), description:String(t.replacementFor ? `${t.displayTeam} replacing ${t.replacementFor}` : t.baseTeam).slice(0,100) })),
+    }).rows);
     description += 'Choose an available team below. Your timezone is selected next, before the claim is finalized.';
   } else {
     description += 'No standard open team slots are posted for this league right now.';
@@ -80,13 +80,13 @@ async function sendJoinLeaguePrompt(interaction, state, requestedLeagueId = null
   }
   if (requestedLeagueId && requestedLeagueId !== '_none_') {
     const selected = activeLeagueService.getLeague(requestedLeagueId) || activeLeagueService.listResetOptions(state).find(l => String(l.id) === String(requestedLeagueId));
-    if (selected) return interaction.reply({ ..._selectedLeaguePayload(selected, state), flags:64 });
+    if (selected) return interaction.reply({ ..._selectedLeaguePayload(selected, state, { guildId:interaction.guildId, actorId:interaction.user.id }), flags:64 });
   }
   const totalOpen = Array.isArray(state.openTeamRegistry) ? state.openTeamRegistry.filter(t => t.isOpen).length : 0;
-  const row = _buildLeagueRow(opts);
+  const rows = _buildLeagueRows(opts, { guildId:interaction.guildId, actorId:interaction.user.id });
   return interaction.reply({
     embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🏟 Join a League').setDescription(totalOpen > 0 ? 'Pick the exact league you want to join. Team choices shown next are scoped only to that league.' : 'Pick a league to browse. Standard slots may be full right now, so you may need the wait-list or a custom-team path depending on the league.').setTimestamp()],
-    components:[row], flags:64
+    components:rows, flags:64
   });
 }
 
@@ -96,10 +96,10 @@ async function sendJoinLeaguePromptFromMessage(message, state) {
   if (!opts.length) {
     return message.channel.send({ content: '❌ No active leagues exist yet. The commissioner must run `/setup-league league-name:<name>` first.' });
   }
-  const row = _buildLeagueRow(opts);
+  const rows = _buildLeagueRows(opts, { guildId:message.guild?.id || null, public:true });
   return message.channel.send({
     embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🏟 Join a League').setDescription(totalOpen > 0 ? 'Choose a league below. Standard leagues will give you a team picker. Custom / Pro-Am leagues will prompt for a custom team name, replacement slot, logo URL, and timezone.' : 'Choose a league below. Standard slots may be full right now, but custom / Pro-Am leagues can still prompt for a custom team path if enabled.').setTimestamp()],
-    components:[row],
+    components:rows,
     allowedMentions:{parse:[]}
   });
 }
@@ -110,7 +110,7 @@ async function handleJoinInteraction(interaction, state) {
     const leagueId = interaction.values[0];
     const league = activeLeagueService.getLeague(leagueId);
     if (!league) return interaction.update({ content:'❌ League not found anymore.', components:[], embeds:[] });
-    return interaction.update(_selectedLeaguePayload(league, state));
+    return interaction.update(_selectedLeaguePayload(league, state, { guildId:interaction.guildId, actorId:interaction.user.id }));
   }
 
   if (interaction.isStringSelectMenu?.() && cid.startsWith('join_team_select::')) {
@@ -120,7 +120,7 @@ async function handleJoinInteraction(interaction, state) {
     if (!league) return interaction.update({ content:'❌ League not found anymore.', embeds:[], components:[] });
     return interaction.update({
       embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle(`👋 One last step for ${league.leagueName}`).setDescription(`**Team:** ${team}\n\nChoose your timezone. After it saves, your team claim is finalized and your timezone nickname suffix is applied.`).setTimestamp()],
-      components:[require('./timezoneGateService').buildTimezoneSelectRow(`join_tz::${leagueId}::${encodeURIComponent(team)}`)],
+      components:[require('./timezoneGateService').buildTimezoneSelectRow(`join_tz::${leagueId}::${encodeURIComponent(team)}`, { guildId:interaction.guildId, actorId:interaction.user.id, public:false })],
     });
   }
 

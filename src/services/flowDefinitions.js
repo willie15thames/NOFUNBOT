@@ -47,8 +47,8 @@ function registerAll(engine) {
       condition: ctx => !!ctx.guild,
       fn: async ctx => {
         const ledger = require('./memberLedgerService');
-        const history = ledger.getMemberHistory(ctx.member.id);
-        return { priorJoins: history?.joinCount || 0, priorKicks: history?.kickCount || 0 };
+        const history = ledger.getRecord(ctx.member.id);
+        return { priorJoins: (history?.joinHistory || []).filter(x => x.type === 'join').length, priorKicks: (history?.kickHistory || []).length };
       },
     },
     {
@@ -690,7 +690,7 @@ function registerAll(engine) {
   ]);
 
   // ═══════════════════════════════════════════════════════════
-  // POLL LIFECYCLE — create → open for votes → tally (automatic via select menu)
+  // POLL LIFECYCLE — create → open for votes → tally (automatic via button interaction)
   // Trigger: /create-poll
   // Owner: pollService
   // ═══════════════════════════════════════════════════════════

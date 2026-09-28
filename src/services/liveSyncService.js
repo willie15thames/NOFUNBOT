@@ -29,7 +29,7 @@ const DEFAULTS = {
 
 function _currentLeagueId() {
   try { const id=require('../league/spaceContext').current(); if(id)return String(id); } catch {}
-  try { const rows=require('./activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event'); if(rows.length===1)return String(rows[0].id); } catch {}
+  try { const rows=require('./activeLeagueService').listProviderTargets(); if(rows.length===1)return String(rows[0].id); } catch {}
   return null;
 }
 

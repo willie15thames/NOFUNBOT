@@ -18,7 +18,7 @@ let _buildInProgress = false;
 // Central interaction handler. Routes all slash commands, buttons, autocomplete.
 // No business logic lives here — every case delegates to a service or handler.
 
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, ChannelType, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
 const { makeLogger, setInteractionContext, clearContext } = require('../utils/logger');
 const { isAdminMember, sanitize, norm, canBotModerate, safeFetchMember, buildDisplayTeam } = require('../utils/helpers');
 const { COMM_ROLE, COMMISSIONER_IDS } = require('../config/env');
@@ -28,12 +28,17 @@ const { getTeamEmoji, getDevEmoji, getTeamDataByAnyName, findPlayerByUserId,
 const { saveJsonDebounced, loadJson } = require('../storage/jsonStore');
 const { prismaSafe } = require('../storage/prisma');
 const log = makeLogger('interaction');
-const { protectInteraction, safeInitialReply, safeEdit, safeDeferred } = require('../services/interactionRouterService');
+const { protectInteraction, safeInitialReply, safeEdit, safeDeferred, safeAutocompleteRespond } = require('../services/interactionRouterService');
+const autocompleteService = require('../services/autocompleteService');
+const componentSessions = require('../services/componentSessionService');
+const buttonChoiceService = require('../services/buttonChoiceService');
 const statusCardService = require('../services/statusCardService');
 const sendMessageService = require('../services/sendMessageService');
 const backgroundJobService = require('../services/backgroundJobService');
 const fs = require('fs');
 const activeLeagueService = require('../services/activeLeagueService');
+const leagueResolver = require('../services/leagueResolverService');
+const teamAssignmentUseCase = require('../application/teamAssignmentUseCase');
 const teamRegistry = require('../services/teamRegistryService');
 const leagueVisibility = require('../services/leagueVisibilityService');
 const { normalizeTimezone } = require('../services/timezoneService');
@@ -241,7 +246,7 @@ async function _handleInteractionWithContext(interaction) {
   const context=require('../league/spaceContext');
   const registry=require('../services/activeLeagueService');
   const league=registry.findLeagueForChannel(interaction.channel);
-  const all=registry.listActiveLeagues().filter(x=>x.kind!=='event');
+  const all=registry.listOperationalLeagues().filter(x=>x.kind!=='event');
   const globalCommand=/^(setup-|delete-league|reset-league|initialize-server|trash-the-bot|member-record|join-league|select-team)/.test(interaction.commandName||'') || /^(setup_|join_)/.test(interaction.customId||'');
   const id=globalCommand?null:(league?.id || (all.length===1?all[0].id:null));
   return context.run(id,async()=>{
@@ -257,6 +262,15 @@ async function _handleInteractionWithContext(interaction) {
 
 async function _handleInteractionScoped(interaction) {
   try { require('../services/commandAliasService').resolveInteractionAlias(interaction); } catch {} // V203: idempotent
+  // Autocomplete is a distinct Discord interaction lifecycle. It only supports respond().
+  // Handle it before chat-input safety wrapping so a missing reply/followUp method can never break option loading.
+  if (interaction.isAutocomplete?.()) {
+    try { return await _handleAutocomplete(interaction); }
+    catch (err) {
+      log.warn(`autocomplete failed for ${interaction.commandName || '?'}: ${err.message}`);
+      return safeAutocompleteRespond(interaction, []);
+    }
+  }
   protectInteraction(interaction);
   const _startMs = Date.now();
   // Generate a short correlation ID for this interaction — ties all logs together
@@ -271,7 +285,6 @@ async function _handleInteractionScoped(interaction) {
   log.info(`[router] ${_interactionType} — ${interaction.customId || interaction.commandName || '?'} id=${_ixId}`);
   try {
 
-if (interaction.isAutocomplete()) return _handleAutocomplete(interaction);
 if (interaction.isModalSubmit?.()) return _handleModal(interaction);
 if (interaction.isButton() || interaction.isStringSelectMenu?.()) return _handleButton(interaction);
 if (interaction.isMessageContextMenuCommand?.()) return _handleMessageContextMenu(interaction);
@@ -343,40 +356,87 @@ const guildLock               = require('../services/guildLockService');
 
 // ── Autocomplete ──────────────────────────────────────────────
 async function _handleAutocomplete(interaction) {
-  const focused    = interaction.options.getFocused().toLowerCase().trim();
-  const optionName = interaction.options.getFocused(true).name;
-  const cmd        = interaction.commandName;
+  const _acStartedAt = Date.now();
+  const _acFocus = autocompleteService.focused(interaction);
+  const focused = _acFocus.value.toLowerCase().trim();
+  const optionName = _acFocus.name;
+  const cmd = interaction.commandName;
+  const respond = (choices, resolverStage = 'router') => autocompleteService.respond(interaction, choices, {
+    startedAt:_acStartedAt, optionName, focusedLength:_acFocus.value.length, resolverStage,
+  });
 
 if (cmd === 'join-league' && optionName === 'league') {
   try {
-    const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+    const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
     const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-    return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
+    return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
   } catch (err) {
     log.warn('join-league autocomplete failed:', err.message);
-    return interaction.respond([{ name:'Use /join-league to open the league picker', value:'_none_' }]).catch(() => null);
+    return respond([{ name:'Use /join-league to open the league picker', value:'_none_' }]).catch(() => null);
   }
 }
 
 if (cmd === 'add-member-to-league' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
 }
 
 if (cmd === 'league-export' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
 }
 
-if (cmd === 'add-member-to-league' && optionName === 'team') {
-  const leagueId = interaction.options.getString('league');
-  if (!leagueId || leagueId === '_none_') return interaction.respond([{ name:'Choose a league first', value:'_none_' }]);
-  const teams = openTeamsService.getOpenTeamsForLeague(leagueId) || [];
+if (['add-member-to-league','select-team'].includes(cmd) && optionName === 'team') {
+  const leagueInput = interaction.options.getString('league');
+  const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:interaction.guildId, mode:'joinable' });
+  if (!resolved.ok) return respond([{ name:'Choose an active league first', value:'_none_' }]);
+  const teams = openTeamsService.getOpenTeamsForLeague(resolved.league.id) || [];
   const opts = teams.map(t => ({ name:`${t.displayTeam} — ${t.baseTeam}`.slice(0,100), value:String(t.baseTeam).slice(0,100) }))
     .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(opts.length ? opts : [{ name:'⚠️ No open teams in this league', value:'_none_' }]);
+  return respond(opts.length ? opts : [{ name:'⚠️ No open teams in this league', value:'_none_' }]);
+}
+
+if (cmd === 'select-team' && optionName === 'league') {
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
+  const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No joinable leagues', value:'_none_' }]);
+}
+
+// Contract v8: all high-integrity team management carries canonical league scope as a first-class option.
+// Autocomplete is convenience only; command execution re-resolves the league and team before mutation.
+const LEAGUE_SCOPED_TEAM_COMMANDS = new Set(['register-team','set-team-identity','add-open-team','remove-open-team','set-team-logo','release-team','create-game','report-result','teams']);
+if (optionName === 'league' && LEAGUE_SCOPED_TEAM_COMMANDS.has(cmd)) {
+  const rows = cmd === 'register-team'
+    ? activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId })
+    : activeLeagueService.listOperationalLeagues({ guildId:interaction.guildId });
+  const opts = rows.map(activeLeagueService.formatResetChoice)
+    .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused))
+    .slice(0,25);
+  return respond(opts.length ? opts : [{ name:'⚠️ No eligible leagues', value:'_none_' }], 'league-scope');
+}
+
+const SCOPED_TEAM_OPTIONS = new Set(['team','team1','team2','winner','loser','original-team','base-team','replaces-team']);
+if (LEAGUE_SCOPED_TEAM_COMMANDS.has(cmd) && SCOPED_TEAM_OPTIONS.has(optionName)) {
+  let leagueInput = interaction.options.getString('league');
+  if (!leagueInput && cmd === 'report-result') leagueInput = _state.games.get(interaction.channelId)?.leagueId || null;
+  const mode = cmd === 'register-team' ? 'joinable' : 'operational';
+  const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:interaction.guildId, mode });
+  if (!resolved.ok) return respond([{ name:'Choose the league first', value:'_none_' }], 'team-scope');
+  const leagueId = resolved.league.id;
+  let rows = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(leagueId));
+  let sub = null;
+  if (cmd === 'teams') { try { sub = interaction.options.getSubcommand(false); } catch {} }
+  const openOnly = cmd === 'register-team' || (cmd === 'teams' && sub === 'assign');
+  const claimedOnly = cmd === 'release-team' || cmd === 'create-game' || cmd === 'report-result' || (cmd === 'teams' && sub === 'free');
+  if (openOnly) rows = rows.filter(t => t.isOpen);
+  if (claimedOnly) rows = rows.filter(t => !t.isOpen);
+  const opts = rows.map(t => ({
+    name:`${t.isOpen ? '✅' : '❌'} ${t.displayTeam}${norm(t.displayTeam) !== norm(t.baseTeam) ? ` (${t.baseTeam})` : ''}`.slice(0,100),
+    value:String(t.baseTeam).slice(0,100),
+  })).filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return respond(opts.length ? opts : [{ name:'⚠️ No matching teams in this league', value:'_none_' }], 'team-scope');
 }
 
 
@@ -386,19 +446,19 @@ if (cmd === 'set-bot-identity' && optionName === 'imported-emoji') {
     .map(e => ({ name: `${e.name}`.slice(0,100), value: e.name }))
     .filter(o => !focused || o.name.toLowerCase().includes(focused))
     .slice(0,25);
-  return interaction.respond(opts.length ? opts : [{ name:'⚠️ No imported emojis found', value:'_none_' }]);
+  return respond(opts.length ? opts : [{ name:'⚠️ No imported emojis found', value:'_none_' }]);
 }
 
 if (cmd === 'delete-league' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listResettableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to delete', value: '_none_' }]);
+  return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to delete', value: '_none_' }]);
 }
 
   if (cmd === 'reset-league' && optionName === 'league') {
-    const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+    const opts = activeLeagueService.listResettableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
     const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-    return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to reset', value: '_none_' }]);
+    return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to reset', value: '_none_' }]);
   }
 
   const COMMUNITY_OPTIONS = new Set(['name','community']);
@@ -408,7 +468,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
       .map(c => ({ name: `${c.name} — ${c.type}`.slice(0,100), value: c.name }))
       .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused))
       .slice(0,25);
-    return interaction.respond(options.length ? options : [{ name:'⚠️ No saved communities', value:'_none_' }]);
+    return respond(options.length ? options : [{ name:'⚠️ No saved communities', value:'_none_' }]);
   }
 
   const TEAM_OPTIONS = ['team','team1','team2','winner','loser','your-team','target-team','original-team','base-team','display-team'];
@@ -430,18 +490,18 @@ if (cmd === 'delete-league' && optionName === 'league') {
       }
       // If no claimed teams found, show a helpful empty-state
       if (!allTeams.size) {
-        return interaction.respond([{ name: '⚠️ No claimed teams to release', value: '_none_' }]);
+        return respond([{ name: '⚠️ No claimed teams to release', value: '_none_' }]);
       }
     }
     // For select-team: only show OPEN teams after at least one league has been created
     else if (cmd === 'select-team') {
       const activeLeagues = activeLeagueService.listResetOptions(_state);
       if (!activeLeagues.length) {
-        return interaction.respond([{ name: '⚠️ No active league yet — commissioner must run /setup-league first', value: '_none_' }]);
+        return respond([{ name: '⚠️ No active league yet — commissioner must run /setup-league first', value: '_none_' }]);
       }
       const openTeams = _state.openTeamRegistry.filter(t => t.isOpen);
       if (!openTeams.length) {
-        return interaction.respond([{ name: '⚠️ No teams configured or all slots are filled', value: '_none_' }]);
+        return respond([{ name: '⚠️ No teams configured or all slots are filled', value: '_none_' }]);
       }
       for (const t of openTeams) {
         const leagueTag = t.leagueName ? ` [${t.leagueName}]` : (t.leagueId ? ` [${t.leagueId}]` : '');
@@ -477,7 +537,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
       }
     }
 
-    return interaction.respond(
+    return respond(
       [...allTeams.values()].filter(t => !focused || t.name.toLowerCase().includes(focused) || t.value.toLowerCase().includes(focused)).slice(0, 25)
     );
   }
@@ -488,11 +548,11 @@ if (cmd === 'delete-league' && optionName === 'league') {
       : interaction.options.getString('attr2-category')||'';
     if (catKey && isSingleAttrCategory(catKey)) {
       const only = ATTRS_BY_CATEGORY[catKey][0];
-      return interaction.respond([{name:`✅ AUTO — ${only.full}`,value:only.abbr}]);
+      return respond([{name:`✅ AUTO — ${only.full}`,value:only.abbr}]);
     }
-    return interaction.respond(getAttrSuggestions(focused, catKey));
+    return respond(getAttrSuggestions(focused, catKey));
   }
-  return interaction.respond([]);
+  return respond([]);
 }
 
 
@@ -986,6 +1046,61 @@ async function _handleButton(interaction) {
   const cid    = interaction.customId;
   const isComm = () => isAdminMember(interaction.member, COMM_ROLE, _dynamicCommissioners());
 
+  // Button-first choice adapter. The custom ID contains only an opaque session/option key;
+  // canonical values remain server-side in ComponentSession. Legacy select handlers are
+  // reused through a synthetic select interaction until each flow is migrated to its own controller.
+  if (String(cid || '').startsWith('uiopen:')) {
+    const sessionId = String(cid).split(':')[1] || '';
+    const session = componentSessions.get(sessionId);
+    const access = componentSessions.access(session, interaction);
+    if (!access.ok) {
+      const msg = access.reason === 'wrong-user' ? '❌ This control belongs to another member.' : '⌛ This control expired. Reopen the panel.';
+      return interaction.reply({ content:msg, flags:64 }).catch(() => null);
+    }
+    return interaction.update({ components:buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+  }
+  if (String(cid || '').startsWith('ui:')) {
+    const [, sessionId, action, optionKey] = String(cid).split(':');
+    const session = componentSessions.get(sessionId);
+    const access = componentSessions.access(session, interaction);
+    if (!access.ok) {
+      const msg = access.reason === 'wrong-user' ? '❌ This control belongs to another member.' : '⌛ This control expired. Reopen the command or panel.';
+      return interaction.reply({ content: msg, flags:64 }).catch(() => null);
+    }
+    if (action === 'prev' || action === 'next') {
+      componentSessions.setPage(session, session.page + (action === 'next' ? 1 : -1));
+      return interaction.update({ components: buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+    }
+    if (action === 'page') return interaction.deferUpdate().catch(() => null);
+    if (action === 'pick') {
+      const toggled = componentSessions.toggle(session, optionKey, access.userId);
+      if (!toggled.ok) {
+        if (toggled.reason === 'max-values') return interaction.reply({ content:`⚠️ You can choose at most ${session.maxValues}.`, flags:64 }).catch(() => null);
+        return interaction.reply({ content:'⚠️ That option is no longer available.', flags:64 }).catch(() => null);
+      }
+      if (session.maxValues > 1 || session.minValues === 0) {
+        return interaction.update({ components: buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+      }
+    }
+    if (action === 'done' || action === 'pick') {
+      const values = componentSessions.values(session, access.userId);
+      if (values.length < session.minValues) return interaction.reply({ content:`⚠️ Choose at least ${session.minValues} option(s) first.`, flags:64 }).catch(() => null);
+      const synthetic = new Proxy(interaction, {
+        get(target, prop) {
+          if (prop === 'customId') return session.legacyCustomId;
+          if (prop === 'values') return values;
+          if (prop === 'isStringSelectMenu') return () => true;
+          if (prop === 'isButton') return () => false;
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      if (!session.public) componentSessions.remove(session.id);
+      return _handleButton(synthetic);
+    }
+    return interaction.deferUpdate().catch(() => null);
+  }
+
   if (_guardInstallationModeComponent(interaction)) return;
 
 // V202: application-enforced confirmation for destructive commissioner-AI actions.
@@ -1032,7 +1147,7 @@ if (interaction.isStringSelectMenu?.() && cid === 'timezone_onboarding_select') 
 }
 
 if (cid === 'timezone_onboarding_button') {
-  return interaction.reply({ content:'Use the timezone dropdown in this channel to choose one of the four main US timezones.', flags:64 });
+  return interaction.reply({ content:'Use the timezone buttons in this channel, or run `/set-timezone` with any supported IANA timezone.', flags:64 });
 }
 
 if (cid === 'setup_wizard_seed_refresh') {
@@ -1713,7 +1828,7 @@ if (cid.startsWith('comp_predictions_start::')) {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('predictions');
   if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
-  return interaction.reply({ content: '🔮 Predictions feature is active. Use the matchup select menus posted with the weekly schedule to pick your winners.', flags: 64 });
+  return interaction.reply({ content: '🔮 Predictions feature is active. Use the matchup buttons posted with the weekly schedule to pick your winners.', flags: 64 });
 }
 
   if (cid === 'server_rules_customize') {
@@ -1721,17 +1836,15 @@ if (cid.startsWith('comp_predictions_start::')) {
     return interaction.showModal(serverRulesService.buildRulesModal());
   }
 
-  if (interaction.isStringSelectMenu?.() && (cid === 'server_rules_select_a' || cid === 'server_rules_select_b')) {
+  if (interaction.isStringSelectMenu?.() && cid === 'server_rules_select_all') {
     if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
     const current = serverRulesService.getProfile();
-    const allSelected = new Map((current.selected || []).map(r => [r.id, r]));
-    const rangeIds = (cid === 'server_rules_select_a' ? serverRulesService.RULE_LIBRARY.slice(0,15) : serverRulesService.RULE_LIBRARY.slice(15,30)).map(r => r[0]);
-    for (const rid of rangeIds) allSelected.delete(rid);
-    for (const rid of interaction.values) {
+    const selected = [];
+    for (const rid of interaction.values || []) {
       const match = serverRulesService.RULE_LIBRARY.find(r => r[0] === rid);
-      if (match) { const [id,text,level] = match; allSelected.set(id, { id, text, level }); }
+      if (match) { const [id,text,level] = match; selected.push({ id, text, level }); }
     }
-    const nextProfile = { ...current, selected: [...allSelected.values()] };
+    const nextProfile = { ...current, selected };
     serverRulesService.saveProfile(nextProfile);
     await serverRulesService.publishServerRules(guild).catch(()=>null);
     return interaction.update({ embeds:[serverRulesService.buildRulesLiveEmbed(nextProfile)], components:serverRulesService.buildRuleSelectRows(nextProfile) });
@@ -2192,7 +2305,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         const event=await require('../services/eventSpaceService').create(guild,{name,description:interaction.options.getString('description')||'',commissionerRoleId:_state.leagueConfig.commissionerRoleId||null});
         return interaction.editReply(`Private event **${event.leagueName}** created. Use setup-event action:add-member to add participants. ID: ${event.id}`);
       }
-      const event=activeLeagueService.listActiveLeagues().find(x=>x.kind==='event'&&(x.id===name||x.leagueName===name));
+      const event=activeLeagueService.listEvents({ guildId:guild.id }).find(x=>x.id===name||x.leagueName===name);
       if(!event)return interaction.editReply('Select the exact event name or ID.');
       const user=interaction.options.getUser('user');
       if(action==='add-member'||action==='remove-member') {
@@ -2390,75 +2503,62 @@ async function _handleCommand(interaction, commandMeta = null) {
     
 case 'register-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const rawTeamValue = interaction.options.getString('team');
-      const [teamName, teamLeagueId] = String(rawTeamValue || '').split('::');
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
       const user = interaction.options.getUser('user');
-      const { claimTeam } = openTeamsService;
       const member = await guild.members.fetch(user.id).catch(()=>null);
       if (!member) return interaction.reply({content:'❌ Could not find member.',flags:64});
-      const result = await claimTeam(guild, member, teamName, { leagueId: teamLeagueId || null });
+      const result = await teamAssignmentUseCase.assignTeam({ guild, member, leagueId:leagueInput, team:teamName, source:'slash:register-team' });
       if (!result.success) return interaction.reply({content:`❌ ${result.reason}`,flags:64});
-      try { await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, result.entry.leagueId || null); } catch {}
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Registered').addFields({name:'Team',value:result.entry.displayTeam,inline:true},{name:'Owner',value:`${user}`,inline:true}).setTimestamp()]});
+      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Registered').addFields({name:'League',value:result.league.leagueName || result.league.id,inline:true},{name:'Team',value:result.entry.displayTeam,inline:true},{name:'Owner',value:`${user}`,inline:true}).setTimestamp()]});
     }
 
     case 'select-team': {
-      const rawTeamValue = interaction.options.getString('team');
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
       const timezoneInput = interaction.options.getString('timezone');
-      const [teamName, teamLeagueId] = String(rawTeamValue || '').split('::');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'joinable' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const selectedLeague = resolved.league;
 
       await interaction.deferReply({ flags:64 });
-
-      const activeLeagues = activeLeagueService.listResetOptions(_state);
-      if (!activeLeagues.length || !_state.openTeamRegistry?.length) {
-        return interaction.editReply({ content: '❌ No active league has been created yet. A commissioner needs to run `/setup-league league-name:<name>` first.' });
-      }
-      if (!teamName || rawTeamValue === '_none_') {
-        return interaction.editReply({ content: '❌ No valid team slot is available yet for selection.' });
-      }
+      if (!teamName || teamName === '_none_') return interaction.editReply({ content:'❌ Choose an available team in that league.' });
       const savedTimezone = memberProfiles.getProfile(interaction.user.id)?.timezone || null;
       const timezone = normalizeTimezone(timezoneInput || savedTimezone);
-      if (!timezone) {
-        return interaction.editReply({ content: '❌ Choose a timezone first with `/set-timezone`, or provide one in this command. Your team claim will not be finalized until scheduling timezone is known.' });
-      }
+      if (!timezone) return interaction.editReply({ content:'❌ Choose a timezone first with `/set-timezone`, or provide one in this command. Your team claim will not be finalized until scheduling timezone is known.' });
 
-      const { claimTeam, getUserLeagues } = openTeamsService;
-      const allOpen = _state.openTeamRegistry.filter(t => t.isOpen);
-      if (!allOpen.length) {
-        return interaction.editReply({ content: '❌ There are no open team slots right now. Either the league has not been seeded yet or every slot is already claimed.' });
-      }
-
-      const userLeagues = getUserLeagues(interaction.user.id);
-      const result = await claimTeam(guild, interaction.member, teamName, { timezone, leagueId: teamLeagueId || null });
+      const result = await teamAssignmentUseCase.assignTeam({ guild, member:interaction.member, league:selectedLeague, team:teamName, timezone, source:'slash:select-team' });
       if (!result.success) {
-        let extra = '';
-        if (userLeagues.length) {
-          extra = '\n\n**Your current teams:**\n' + userLeagues.map(l => `• **${l.team}** in ${l.leagueName}`).join('\n');
-        }
-        return interaction.editReply({ content: `❌ ${result.reason}${extra}` });
+        const userLeagues = openTeamsService.getUserLeagues(interaction.user.id);
+        const extra = userLeagues.length ? '\n\n**Your current teams:**\n' + userLeagues.map(l => `• **${l.team}** in ${l.leagueName}`).join('\n') : '';
+        return interaction.editReply({ content:`❌ ${result.reason}${extra}` });
       }
-
       const emoji = getTeamEmoji(guild, result.entry.baseTeam) || '';
-      try { await leagueVisibility.grantMemberAccessToLeague(guild, interaction.member, _state, result.entry.leagueId || null); } catch (e) { log.warn('Could not set channel perms for new member:', e.message); }
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`**League:** ${result.entry.leagueName || activeLeagueService.getLeague(result.entry.leagueId)?.leagueName || result.entry.leagueId || 'League'}\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n\nYour league access and scheduling profile are ready.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()]
-      });
+      return interaction.editReply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`**League:** ${selectedLeague.leagueName}\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n\nYour league access and scheduling profile are ready.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()] });
     }
 
     case 'release-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const { releaseByName, announceTeamOpen } = openTeamsService;
-      const result = await releaseByName(guild, interaction.options.getString('team'));
-      if (!result) return interaction.reply({content:'⚠️ Team not found.',flags:64});
-      await announceTeamOpen(guild, result.entry, 'released by the commissioner');
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
+      const result = await teamAssignmentUseCase.releaseTeam({ guild, leagueId:leagueInput, team:teamName, source:'slash:release-team' });
+      if (!result.success) return interaction.reply({content:`⚠️ ${result.reason}`,flags:64});
+      await openTeamsService.announceTeamOpen(guild, result.entry, 'released by the commissioner');
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0xf39c12).setTitle('🏟 Team Released').addFields({name:'Team',value:result.entry.displayTeam,inline:true},{name:'Status',value:'✅ Now Open',inline:true}).setTimestamp()]});
+      return interaction.reply({embeds:[new EmbedBuilder().setColor(0xf39c12).setTitle('🏟 Team Released').addFields({name:'League',value:result.league.leagueName || result.league.id,inline:true},{name:'Team',value:result.entry.displayTeam,inline:true},{name:'Status',value:'✅ Now Open',inline:true}).setTimestamp()]});
     }
+
     case 'open-teams': {
       const { buildOpenTeamsEmbeds } = openTeamsService;
       return interaction.reply({embeds:buildOpenTeamsEmbeds(guild),flags:64});
+    }
+    case 'active-leagues': {
+      const rows = activeLeagueService.listOperationalLeagues({ guildId:guild.id });
+      if (!rows.length) return interaction.reply({ content:'No active leagues are configured.', flags:64 });
+      const lines = rows.map(l => `• **${l.leagueName || l.id}** — ${l.status}${l.game ? ` • ${String(l.game).toUpperCase()}` : ''}\n  ID: \`${l.id}\``);
+      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🏟 Active Leagues').setDescription(lines.join('\n').slice(0,3900)).setFooter({text:'ACTIVE leagues are joinable. PAUSED leagues remain visible but cannot accept new team claims.'}).setTimestamp()], flags:64 });
     }
     case 'refresh-open-teams': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
@@ -2468,45 +2568,57 @@ case 'register-team': {
     }
     case 'set-team-identity': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const rawOrig = interaction.options.getString('original-team');
-      const [orig, encodedLeagueId] = String(rawOrig || '').split('::');
-      const currentLeagueId = require('../league/spaceContext').current();
-      if (encodedLeagueId && currentLeagueId && String(encodedLeagueId) !== String(currentLeagueId)) {
-        return interaction.reply({ content:'❌ That team belongs to a different league. Run this command inside the intended league channel.', flags:64 });
-      }
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
+      const orig = interaction.options.getString('original-team');
       const location = interaction.options.getString('location');
       const name = interaction.options.getString('name');
       const user = interaction.options.getUser('user');
       const display = buildDisplayTeam(location,name,orig);
-      const key = norm(orig);
+      const key = `${league.id}::${norm(orig)}`;
       const existing = _state.players.get(key);
-      const reg = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===key);
-      if (!existing && !reg) return interaction.reply({ content:`❌ Team slot **${orig}** was not found in this league.`, flags:64 });
-      _state.players.set(key,{...existing,userId:user?.id||existing?.userId||reg?.ownerId||null,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
-      if (reg) { reg.displayTeam=display; await openTeamsService.refreshOpenTeamsBoard(guild); }
+      const reg = _state.openTeamRegistry.find(t => String(t.leagueId || '') === String(league.id) && norm(t.baseTeam) === norm(orig));
+      if (!existing && !reg) return interaction.reply({ content:`❌ Team slot **${orig}** was not found in **${league.leagueName || league.id}**.`, flags:64 });
+      _state.players.set(key,{...existing,userId:user?.id||existing?.userId||reg?.ownerId||null,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,leagueId:league.id,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
+      if (reg) { reg.displayTeam=display; reg.leagueName=league.leagueName || reg.leagueName; await openTeamsService.refreshOpenTeamsBoard(guild); }
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ League Team Identity Updated').setDescription('This changes the team identity inside this league only. It does not change the member’s Discord server nickname.').addFields({name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
+      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ League Team Identity Updated').setDescription('This changes the team identity inside this league only. It does not change the member’s Discord server nickname.').addFields({name:'League',value:league.leagueName || league.id,inline:true},{name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
     }
+
     case 'add-open-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const base=interaction.options.getString('base-team'), disp=interaction.options.getString('display-team'), replaces=interaction.options.getString('replaces-team')||null, logo=interaction.options.getString('logo-url')||null;
-      const exists = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===norm(base));
-      if (exists) return interaction.reply({content:`⚠️ **${base}** already in registry.`,flags:64});
+      const exists = _state.openTeamRegistry.find(t=>String(t.leagueId||'')===String(league.id) && norm(t.baseTeam)===norm(base));
+      if (exists) return interaction.reply({content:`⚠️ **${base}** already exists in **${league.leagueName || league.id}**.`,flags:64});
       const validLogo = logo&&/^https?:\/\/.+/i.test(logo)?logo:null;
-      _state.openTeamRegistry.push({baseTeam:base,displayTeam:disp,logoUrl:validLogo,isOpen:true,ownerId:null,replacementFor:replaces||null,isCustomTeam:!!replaces});
+      _state.openTeamRegistry.push({baseTeam:base,displayTeam:disp,logoUrl:validLogo,isOpen:true,ownerId:null,leagueId:league.id,leagueName:league.leagueName || league.id,replacementFor:replaces||null,isCustomTeam:!!replaces});
       await openTeamsService.refreshOpenTeamsBoard(guild);
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Added').addFields({name:'Slot',value:base,inline:true},{name:'Display',value:disp,inline:true},{name:'Replacing',value:replaces||'—',inline:true}).setThumbnail(validLogo).setTimestamp()]});
+      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Added').addFields({name:'League',value:league.leagueName || league.id,inline:true},{name:'Slot',value:base,inline:true},{name:'Display',value:disp,inline:true},{name:'Replacing',value:replaces||'—',inline:true}).setThumbnail(validLogo).setTimestamp()]});
     }
+
     case 'remove-open-team': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const idx=_state.openTeamRegistry.findIndex(t=>norm(t.baseTeam)===norm(interaction.options.getString('team'))||norm(t.displayTeam)===norm(interaction.options.getString('team')));
-      if (idx===-1) return interaction.reply({content:'⚠️ Team not found.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
+      const teamInput = interaction.options.getString('team');
+      const idx=_state.openTeamRegistry.findIndex(t=>String(t.leagueId||'')===String(league.id) && (norm(t.baseTeam)===norm(teamInput)||norm(t.displayTeam)===norm(teamInput)));
+      if (idx===-1) return interaction.reply({content:`⚠️ Team not found in **${league.leagueName || league.id}**.`,flags:64});
       const removed=_state.openTeamRegistry.splice(idx,1)[0];
       await openTeamsService.refreshOpenTeamsBoard(guild);
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({content:`✅ **${removed.displayTeam}** removed.`,flags:64});
+      return interaction.reply({content:`✅ **${removed.displayTeam}** removed from **${league.leagueName || league.id}**.`,flags:64});
     }
+
+    // ── Rules ──
 
     // ── Rules ──
 case 'schedule-export-current': {
@@ -3128,7 +3240,7 @@ case 'active-check-status': {
   const leagueIdOpt = interaction.options.getString('league-id');
   const leagues = leagueIdOpt
     ? [{ id: leagueIdOpt, leagueName: leagueIdOpt }]
-    : activeLeagueService.listActiveLeagues();
+    : activeLeagueService.listOperationalLeagues();
 
   if (!leagues.length) return interaction.reply({ content: '⚠️ No active leagues found.', flags: 64 });
 
@@ -3215,10 +3327,10 @@ case 'post-component': {
   if (compId === 'mvp-voting') {
     const members = ((_state.openTeamRegistry || []).filter(t => t.ownerId)).map(t => ({ label: t.displayTeam || t.baseTeam || 'Unknown', value: String(t.ownerId) })).slice(0, 25);
     const embed = compReg.buildMvpVotingEmbed(week, members);
-    const row = members.length >= 2 ? new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`comp_mvp::${week}`).setPlaceholder('Vote for MVP...').setMinValues(1).setMaxValues(1).addOptions(members)
-    ) : null;
-    await sendMessageService.send(ch, { embeds: [embed], components: row ? [row] : [], allowedMentions: { parse: [] } }, { action: 'comp-mvp-panel' });
+    const rows = members.length >= 2 ? buttonChoiceService.createChoiceRows({
+      guildId:guild.id, public:true, flow:'mvp-vote', legacyCustomId:`comp_mvp::${week}`, minValues:1, maxValues:1, options:members, pageSize:15,
+    }).rows : [];
+    await sendMessageService.send(ch, { embeds: [embed], components: rows, allowedMentions: { parse: [] } }, { action: 'comp-mvp-panel' });
   } else if (compId === 'availability') {
     const embed = compReg.buildAvailabilityEmbed(week);
     const row = compReg.buildAvailabilityButtons();
@@ -3555,6 +3667,10 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
       const tonesRaw = interaction.options.getString('tones');
       const memberRaw = interaction.options.getString('member-tones');
       const commRaw = interaction.options.getString('commissioner-tones');
+      const openHouse = interaction.options.getBoolean('open-house');
+      const openHouseChannel = interaction.options.getChannel('open-house-channel');
+      const clearOpenHouseChannels = interaction.options.getBoolean('clear-open-house-channels');
+      const openHouseBurstLimit = interaction.options.getInteger('open-house-burst-limit');
       if (audience) serverSettings.setAudienceRating(audience);
       if (typeof sameTone === 'boolean') serverSettings.saveSettings({ ...serverSettings.getSettings(), useSharedToneProfile: sameTone, setupCompletedAt: Date.now() });
       if (typeof allowGifs === 'boolean') serverSettings.saveSettings({ ...serverSettings.getSettings(), allowGifReplies: allowGifs, setupCompletedAt: Date.now() });
@@ -3563,6 +3679,18 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
       if (tonesRaw) serverSettings.setToneProfile(tonesRaw.split(',').map(s => s.trim()).filter(Boolean), 'shared');
       if (memberRaw) serverSettings.setToneProfile(memberRaw.split(',').map(s => s.trim()).filter(Boolean), 'member');
       if (commRaw) serverSettings.setToneProfile(commRaw.split(',').map(s => s.trim()).filter(Boolean), 'commissioner');
+      if (typeof openHouse === 'boolean' || openHouseChannel || clearOpenHouseChannels || openHouseBurstLimit) {
+        const current = serverSettings.getSettings();
+        const channels = clearOpenHouseChannels ? [] : [...(current.rOpenHouseChannels || [])];
+        if (openHouseChannel && !channels.includes(String(openHouseChannel.id))) channels.push(String(openHouseChannel.id));
+        serverSettings.saveSettings({
+          ...current,
+          ...(typeof openHouse === 'boolean' ? { rOpenHouseEnabled: openHouse } : {}),
+          rOpenHouseChannels: channels,
+          ...(openHouseBurstLimit ? { rOpenHouseBurstLimit: openHouseBurstLimit } : {}),
+          setupCompletedAt: Date.now(),
+        });
+      }
       const settings = serverSettings.getSettings();
       return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🎭 Bot Tone Updated').setDescription(`Audience rating: **${String(settings.audienceRating).toUpperCase()}**
 Use same tone: **${settings.useSharedToneProfile ? 'YES' : 'NO'}**
@@ -3571,6 +3699,7 @@ Commissioner tone: **${serverSettings.getToneSummary(settings, 'commissioner')}*
 GIF replies: **${settings.allowGifReplies ? 'ON' : 'OFF'}**
 Filter mode: **${String(settings.filterMode || 'strict').toUpperCase()}**
 Tone visibility: **${String(settings.toneVisibility || 'public').replace(/_/g, ' ').toUpperCase()}**
+R Open House: **${settings.rOpenHouseEnabled ? 'ON' : 'OFF'}**${(settings.rOpenHouseChannels || []).length ? ` • ${(settings.rOpenHouseChannels || []).length} explicit channel(s)` : ' • safe social channels auto-detected'}
 Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings.filterMode)}**`).setTimestamp()], flags:64 });
     }
 
@@ -3726,7 +3855,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
         try { teamRegistry.syncFromState(_state); } catch {}
         const { resetHubWeek } = hubReleaseService;
-        if (activeLeagueService.listActiveLeagues().length === 1) resetHubWeek(1, _state);
+        if (activeLeagueService.listOperationalLeagues().length === 1) resetHubWeek(1, _state);
 
         return interaction.editReply({
           embeds: [new EmbedBuilder()
@@ -3766,11 +3895,11 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
     case 'add-member-to-league': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
       const targetUser = interaction.options.getUser('user');
-      const leagueId = interaction.options.getString('league');
+      const leagueInput = interaction.options.getString('league');
       const teamName = interaction.options.getString('team');
-      if (!leagueId || leagueId === '_none_') return interaction.reply({content:'❌ Choose the league this member is joining.',flags:64});
-      const selectedLeague = activeLeagueService.getLeague(leagueId) || activeLeagueService.listResetOptions(_state).find(l => String(l.id) === String(leagueId));
-      if (!selectedLeague) return interaction.reply({content:'❌ That league is no longer active.',flags:64});
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'joinable' });
+      if (!resolved.ok) return interaction.reply({content:`❌ ${resolved.message}`,flags:64});
+      const selectedLeague = resolved.league;
       const member = await guild.members.fetch(targetUser.id).catch(() => null);
       if (!member) return interaction.reply({content:'❌ Could not find that member in the server.',flags:64});
 
@@ -3784,27 +3913,31 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       }
 
       let teamResult = null;
+      let teamFailure = null;
       if (teamName && teamName !== '_none_') {
-        teamResult = await openTeamsService.claimTeam(guild, member, teamName, { leagueId:selectedLeague.id });
-        if (!teamResult.success) {
-          return interaction.editReply({ content:`❌ League access was granted, but team assignment failed: ${teamResult.reason}\n\nThe member was **not** silently assigned to another league.` });
+        const open = openTeamsService.getOpenTeamsForLeague(selectedLeague.id) || [];
+        const candidate = open.find(t => norm(t.baseTeam) === norm(teamName) || norm(t.displayTeam) === norm(teamName));
+        if (!candidate) teamFailure = `**${teamName}** is not an open team in ${selectedLeague.leagueName}.`;
+        else {
+          teamResult = await openTeamsService.claimTeam(guild, member, candidate.baseTeam, { leagueId:selectedLeague.id });
+          if (!teamResult.success) teamFailure = teamResult.reason || 'Team assignment failed.';
         }
       }
 
       const assignedTeam = teamResult?.success ? teamResult.entry.displayTeam : null;
-      const onboarding = await leagueMemberOnboarding.notifyMemberAdded({
-        guild, member, leagueId:selectedLeague.id, teamName:assignedTeam,
-        actorId:interaction.user.id, source:'commissioner',
-      }).catch(err => ({ok:false, reason:err.message}));
+      const onboarding = await leagueMemberOnboarding.notifyMemberAdded({ guild, member, leagueId:selectedLeague.id, teamName:assignedTeam, actorId:interaction.user.id, source:'commissioner' }).catch(err => ({ok:false, reason:err.message}));
+      if (teamFailure) leagueMemberOnboarding.markOnboarding(member.id, selectedLeague.id, { teamStatus:'AWAITING_TEAM', lastTeamAssignmentError:teamFailure });
 
       const fields = [
         { name:'Member', value:`${targetUser}`, inline:true },
         { name:'League', value:selectedLeague.leagueName, inline:true },
+        { name:'Membership', value:'✅ ACTIVE', inline:true },
         { name:'Channel Access', value:`${granted} categories`, inline:true },
-        { name:'Team', value:assignedTeam ? `✅ ${assignedTeam}` : 'Not assigned yet', inline:true },
-        { name:'Onboarding', value:onboarding?.ok ? '✅ Greeting + timezone selection sent' : `⚠️ Access granted; onboarding notice failed (${onboarding?.reason || 'unknown'})`, inline:false },
+        { name:'Team', value:assignedTeam ? `✅ ${assignedTeam}` : '⏳ AWAITING_TEAM', inline:true },
+        { name:'Onboarding', value:onboarding?.ok ? '✅ Greeting + timezone selection sent' : `⚠️ Membership active; onboarding notice failed (${onboarding?.reason || 'unknown'})`, inline:false },
       ];
-      return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Member Added to League').addFields(...fields).setFooter({text:'Timezone is completed by the member. Nickname suffix is applied only after their selection.'}).setTimestamp()]});
+      if (teamFailure) fields.push({ name:'Team assignment', value:`⚠️ ${teamFailure} Membership was kept active; the member can choose another team.`, inline:false });
+      return interaction.editReply({embeds:[new EmbedBuilder().setColor(teamFailure ? 0xf1c40f : 0x2ecc71).setTitle(teamFailure ? '⚠️ Member Added — Team Still Needed' : '✅ Member Added to League').addFields(...fields).setFooter({text:'Membership is authoritative. Optional team assignment never rolls back a valid membership.'}).setTimestamp()]});
     }
 
     // ── /audit-emojis — show all mapped/unmapped emojis ──
@@ -4168,16 +4301,27 @@ If they rejoin, the bot will still flag them as a returning member with history.
 
     case 'create-game': {
       if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const { createGameChannel } = gameChannelService;
       const week = interaction.options.getInteger('week');
-      const team1 = String(interaction.options.getString('team1') || '').split('::')[0];
-      const team2 = String(interaction.options.getString('team2') || '').split('::')[0];
-      const user1 = interaction.options.getUser('user1') || [..._state.players.values()].find(p => String(p.baseTeam).toLowerCase() === team1.toLowerCase()) || null;
-      const user2 = interaction.options.getUser('user2') || [..._state.players.values()].find(p => String(p.baseTeam).toLowerCase() === team2.toLowerCase()) || null;
+      const team1 = interaction.options.getString('team1');
+      const team2 = interaction.options.getString('team2');
+      const registry = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(league.id));
+      const t1 = registry.find(t => norm(t.baseTeam) === norm(team1) || norm(t.displayTeam) === norm(team1));
+      const t2 = registry.find(t => norm(t.baseTeam) === norm(team2) || norm(t.displayTeam) === norm(team2));
+      if (!t1 || !t2) return interaction.reply({ content:`⚠️ Both teams must belong to **${league.leagueName || league.id}**.`, flags:64 });
+      if (String(t1.baseTeam).toLowerCase() === String(t2.baseTeam).toLowerCase()) return interaction.reply({ content:'⚠️ Choose two different teams.', flags:64 });
+      const override1 = interaction.options.getUser('user1');
+      const override2 = interaction.options.getUser('user2');
+      const user1 = override1 || (t1.ownerId ? await guild.members.fetch(t1.ownerId).catch(()=>null) : null);
+      const user2 = override2 || (t2.ownerId ? await guild.members.fetch(t2.ownerId).catch(()=>null) : null);
       const primetime = !!interaction.options.getBoolean('primetime');
-      const channel = await createGameChannel(guild, week, team1, user1, team2, user2, primetime, false, false, { game: _state.leagueConfig.game, leagueTag: _state.leagueConfig.leagueName });
+      const channel = await createGameChannel(guild, week, t1.baseTeam, user1, t2.baseTeam, user2, primetime, false, false, { game: league.game || _state.leagueConfig.game, leagueTag: league.leagueName || league.id, leagueId:league.id });
       if (!channel) return interaction.reply({ content:'⚠️ Could not create the game channel. Make sure both teams are owned by members.', flags:64 });
-      return interaction.reply({ content:`✅ Game channel created: ${channel}`, flags:64 });
+      return interaction.reply({ content:`✅ Game channel created for **${league.leagueName || league.id}**: ${channel}`, flags:64 });
     }
 
     case 'respond': {
@@ -4190,26 +4334,43 @@ If they rejoin, the bot will still flag them as a returning member with history.
     }
 
     case 'report-result': {
-      // V202 (BUG-006): one canonical result owner — validates, dedupes, persists, updates standings once,
-      // completes the game session and keeps the legacy ocrGameResults projection in sync.
+      // One canonical result owner. League scope is taken from the game session when possible,
+      // otherwise the caller must provide a league that resolves unambiguously.
       const game = _state.games.get(interaction.channelId);
+      const leagueInput = interaction.options.getString('league');
+      let leagueId = game?.leagueId || null;
+      let league = leagueId ? activeLeagueService.getLeague(leagueId) : null;
+      if (!leagueId) {
+        if (!leagueInput) return interaction.reply({ content:'⚠️ This is not a scoped game channel. Choose the league for this result.', flags:64 });
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+        league = resolved.league; leagueId = league.id;
+      } else if (leagueInput) {
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok || String(resolved.league.id) !== String(leagueId)) return interaction.reply({ content:'❌ The selected league does not match this game channel.', flags:64 });
+      }
       const winner = interaction.options.getString('winner');
       const loser = interaction.options.getString('loser');
+      const scopedTeams = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(leagueId));
+      const winnerEntry = scopedTeams.find(t => norm(t.baseTeam) === norm(winner) || norm(t.displayTeam) === norm(winner));
+      const loserEntry = scopedTeams.find(t => norm(t.baseTeam) === norm(loser) || norm(t.displayTeam) === norm(loser));
+      if (!winnerEntry || !loserEntry) return interaction.reply({ content:`⚠️ Winner and loser must both belong to **${league?.leagueName || leagueId}**.`, flags:64 });
+      if (norm(winnerEntry.baseTeam) === norm(loserEntry.baseTeam)) return interaction.reply({ content:'⚠️ Winner and loser must be different teams.', flags:64 });
       const winnerScore = interaction.options.getInteger('winner-score');
       const loserScore = interaction.options.getInteger('loser-score');
       const gameResultService = require('../league/gameResultService');
       const week = game?.week || _state.scheduleState.week || null;
       const result = await gameResultService.submitGameResult({
-        homeTeam: winner, awayTeam: loser, homeScore: winnerScore, awayScore: loserScore,
+        homeTeam: winnerEntry.baseTeam, awayTeam: loserEntry.baseTeam, homeScore: winnerScore, awayScore: loserScore,
         week, source: 'slash-command', submittedBy: interaction.user.id,
         channelId: game ? interaction.channelId : null,
-        leagueId: game?.leagueId && _state.leagueConfig?.proAm?.[game.leagueId] ? game.leagueId : null,
+        leagueId,
       }, { state: _state, guild });
       if (!result.ok) return interaction.reply({ content:`⚠️ Result not recorded: ${result.reason}`, flags:64 });
       const note = result.deduped ? '\nℹ️ Identical result was already recorded — nothing changed.'
         : result.superseded ? '\n♻️ Previous result for this matchup was replaced; standings were corrected.'
         : result.standings.updated ? `\n📊 Standings updated.` : '';
-      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🏁 Final Score Reported').setDescription(`**${winner}** ${winnerScore} - ${loserScore} **${loser}**${note}`).setTimestamp()], flags:64 });
+      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🏁 Final Score Reported').setDescription(`**${winnerEntry.displayTeam || winnerEntry.baseTeam}** ${winnerScore} - ${loserScore} **${loserEntry.displayTeam || loserEntry.baseTeam}**${note}`).setFooter({text:league?.leagueName || String(leagueId)}).setTimestamp()], flags:64 });
     }
 
     case 'rewards-board': {
@@ -4255,8 +4416,11 @@ If they rejoin, the bot will still flag them as a returning member with history.
 
     case 'cancel-potw-timer': {
       if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      require('../services/schedulerRegistryService').cancel('potw-followup', guild.id);
       if (_state.hubWeeklyData.potwTimerId) clearTimeout(_state.hubWeeklyData.potwTimerId);
       _state.hubWeeklyData.potwTimerId = null;
+      _state.hubWeeklyData.potwDueAt = null;
+      _state.hubWeeklyData.potwAttempts = 0;
       return interaction.reply({ content:'✅ POTW timer cancelled.', flags:64 });
     }
 
@@ -4395,13 +4559,17 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
 
     case 'set-team-logo': {
       if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const team = interaction.options.getString('team');
       const logoUrl = interaction.options.getString('logo-url');
-      const entry = _state.openTeamRegistry.find(t => String(t.baseTeam).toLowerCase() === String(team).toLowerCase() || String(t.displayTeam).toLowerCase() === String(team).toLowerCase());
-      if (!entry) return interaction.reply({ content:'⚠️ Team not found in the open-team registry.', flags:64 });
+      const entry = _state.openTeamRegistry.find(t => String(t.leagueId || '') === String(league.id) && (norm(t.baseTeam) === norm(team) || norm(t.displayTeam) === norm(team)));
+      if (!entry) return interaction.reply({ content:`⚠️ Team not found in **${league.leagueName || league.id}**.`, flags:64 });
       entry.logoUrl = logoUrl;
       await openTeamsService.refreshOpenTeamsBoard(guild).catch(() => null);
-      return interaction.reply({ content:`✅ Updated logo for **${entry.displayTeam}**.`, flags:64 });
+      return interaction.reply({ content:`✅ Updated logo for **${entry.displayTeam}** in **${league.leagueName || league.id}**.`, flags:64 });
     }
 
     case 'set-stat-leaders': {
@@ -4827,24 +4995,33 @@ Clear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 }
       }
       if (sub === 'assign') {
         const user = interaction.options.getUser('user');
-        const team = String(interaction.options.getString('team') || '').split('::')[0];
+        const team = interaction.options.getString('team');
+        const leagueInput = interaction.options.getString('league');
         const member = await guild.members.fetch(user.id).catch(() => null);
         if (!member) return interaction.reply({ content:'❌ Could not find that member in the server.', flags:64 });
-        const result = await claimTeam(guild, member, team, {});
+        const result = await teamAssignmentUseCase.assignTeam({ guild, member, leagueId:leagueInput, team, source:'slash:teams.assign' });
         if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
         try { teamRegistry.syncFromState(_state); } catch {}
-        return interaction.reply({ content:`✅ ${user} now owns **${result.entry.displayTeam}**.`, flags:64 });
+        return interaction.reply({ content:`✅ ${user} now owns **${result.entry.displayTeam}** in **${result.league.leagueName || result.league.id}**.`, flags:64 });
       }
       if (sub === 'free') {
         const team = interaction.options.getString('team');
-        const result = await releaseByName(guild, team);
-        if (!result) return interaction.reply({ content:'⚠️ Team not found.', flags:64 });
+        const leagueInput = interaction.options.getString('league');
+        const result = await teamAssignmentUseCase.releaseTeam({ guild, leagueId:leagueInput, team, source:'slash:teams.free' });
+        if (!result.success) return interaction.reply({ content:`⚠️ ${result.reason}`, flags:64 });
         await announceTeamOpen(guild, result.entry, 'released by a commissioner');
         try { teamRegistry.syncFromState(_state); } catch {}
-        return interaction.reply({ content:`✅ **${result.entry.displayTeam}** is now open.`, flags:64 });
+        return interaction.reply({ content:`✅ **${result.entry.displayTeam}** is now open in **${result.league.leagueName || result.league.id}**.`, flags:64 });
+      }
+      const leagueInput = interaction.options.getString('league');
+      let leagueId;
+      if (leagueInput) {
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok) return interaction.reply({ content:`❌ ${resolved.message}`, flags:64 });
+        leagueId = resolved.league.id;
       }
       await refreshOpenTeamsBoard(guild).catch(() => null);
-      return interaction.reply({ embeds: buildOpenTeamsEmbeds(guild), flags:64 });
+      return interaction.reply({ embeds: buildOpenTeamsEmbeds(guild, leagueId), flags:64 });
     }
 
     case 'waitlist': {
@@ -5138,7 +5315,7 @@ async function _refreshRules(guild) {
 }
 
 async function _saveLifetimeAward(interaction, grant) {
-  const league = activeLeagueService.findLeagueForChannel(interaction.channel) || (activeLeagueService.listActiveLeagues().length === 1 ? activeLeagueService.listActiveLeagues()[0] : null);
+  const league = activeLeagueService.findLeagueForChannel(interaction.channel) || (activeLeagueService.listOperationalLeagues().length === 1 ? activeLeagueService.listOperationalLeagues()[0] : null);
   if (!league) throw new Error('Run award commands inside the selected league channel.');
   if (!grant.userId) throw new Error('Select the member receiving credit in the user option.');
   return require('../services/lifetimeHistoryService').award(interaction.guild.id,{...grant,id:interaction.id,leagueId:league.id,grantedBy:interaction.user.id});

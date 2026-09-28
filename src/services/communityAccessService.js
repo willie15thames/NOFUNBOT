@@ -11,7 +11,8 @@
 'use strict';
 
 const { makeLogger } = require('../utils/logger');
-const { ChannelType, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
+const { ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const buttonChoices = require('./buttonChoiceService');
 const serverSettings = require('./serverSettingsService');
 const memberProfiles = require('./memberProfileService');
 const { getSelectorCommunities, classifySpace } = require('./architectureSemanticsService');
@@ -77,18 +78,14 @@ function buildSelectorPayload(settings = serverSettings.getSettings(), note = ''
     .setDescription(communities.length
       ? 'Choose the communities you want access to. You can come back and change this later.'
       : 'This server does not currently expose separate community spaces for access selection.')
-    .setFooter({ text: 'Use the selector below any time to update your spaces.' })
+    .setFooter({ text: 'Use the button panel below any time to update your spaces.' })
     .setTimestamp();
   const components = [];
   if (communities.length) {
-    components.push(new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('community_membership_select')
-        .setPlaceholder('Choose your communities and spaces...')
-.setMinValues(0)
-        .setMaxValues(Math.min(communities.length, 10))
-        .addOptions(communities.map(c => ({ label: c.name.slice(0, 100), value: c.key, description: String(c.description || `Access for ${c.name}`).slice(0, 100) })))
-    ));
+    components.push(...buttonChoices.createChoiceRows({
+      public:true, flow:'community-membership', legacyCustomId:'community_membership_select', minValues:0, maxValues:Math.min(communities.length, 10), pageSize:15,
+      options:communities.map(c => ({ label:c.name.slice(0,80), value:c.key, description:String(c.description || `Access for ${c.name}`).slice(0,100) })),
+    }).rows);
   }
   return { embeds: [embed], components, allowedMentions: { parse: [] } };
 }

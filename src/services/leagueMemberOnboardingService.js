@@ -86,7 +86,7 @@ async function notifyMemberAdded({ guild, member, leagueId, teamName = null, act
     }).catch(() => null);
   }
 
-  // DM is supplemental only. The league channel message remains canonical because its select menu
+  // DM is supplemental only. The league channel message remains canonical because its button panel
   // runs with guild/member context and works even when DMs are disabled.
   await member.send?.({
     content:`You were added to **${league.leagueName}**${teamName ? ` as **${teamName}**` : ''}. Open the league in **${guild.name}** and choose your timezone on the welcome card.`,
@@ -95,6 +95,7 @@ async function notifyMemberAdded({ guild, member, leagueId, teamName = null, act
 
   markOnboarding(member.id, league.id, {
     status:'awaiting-timezone',
+    teamStatus: teamName ? 'ASSIGNED' : 'AWAITING_TEAM',
     teamName: teamName || null,
     notifiedAt:Date.now(),
     messageId:message?.id || null,

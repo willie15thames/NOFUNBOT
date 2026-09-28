@@ -171,11 +171,13 @@ new SlashCommandBuilder()
   // ── Teams ──
   new SlashCommandBuilder()
     .setName('register-team').setDescription('Link a Discord user to a franchise slot (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this franchise slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Original Madden franchise slot, e.g. Ravens').setRequired(true).setAutocomplete(true))
     .addUserOption(o => o.setName('user').setDescription('The Discord user who owns this slot').setRequired(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('set-team-identity').setDescription('Set a custom city/name for a franchise slot (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this franchise slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('original-team').setDescription('Original Madden slot to rename, e.g. Chargers').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('location').setDescription('New city name, e.g. Sacramento').setRequired(true))
     .addStringOption(o => o.setName('name').setDescription('New team name, e.g. Kings').setRequired(true))
@@ -183,6 +185,7 @@ new SlashCommandBuilder()
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('add-open-team').setDescription('Add a team to the open registry (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League to add this team slot to').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('base-team').setDescription('Original Madden slot name, e.g. Chargers').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('display-team').setDescription('What to show on the board, e.g. Sacramento Kings').setRequired(true))
     .addStringOption(o => o.setName('replaces-team').setDescription('Optional: what slot this custom/imported team replaces').setAutocomplete(true))
@@ -190,10 +193,12 @@ new SlashCommandBuilder()
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('remove-open-team').setDescription('Remove a team from the open registry (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name (base or display) to remove').setRequired(true).setAutocomplete(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('set-team-logo').setDescription('Set or update a team logo URL (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('logo-url').setDescription('Discord CDN image URL').setRequired(true))
     .setDefaultMemberPermissions(P),
@@ -205,15 +210,19 @@ new SlashCommandBuilder()
   .setName('join-league').setDescription('Join an active league through the guided join flow')
   .addStringOption(o => o.setName('league').setDescription('Optional: choose a specific active league').setAutocomplete(true)),
 new SlashCommandBuilder()
-  .setName('select-team').setDescription('Claim an open team as your own')
+  .setName('select-team').setDescription('Claim an open team in a specific league')
+    .addStringOption(o => o.setName('league').setDescription('League you are claiming a team in').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name you want to claim').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('timezone').setDescription('Optional if you already saved a timezone during onboarding').setRequired(false)),
   new SlashCommandBuilder()
     .setName('release-team').setDescription('Release a team back to open status (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name to release').setRequired(true).setAutocomplete(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('open-teams').setDescription('Show the current open teams board'),
+  new SlashCommandBuilder()
+    .setName('active-leagues').setDescription('Show active leagues and their current status'),
 
   // ── Rules ──
   new SlashCommandBuilder()
@@ -243,6 +252,7 @@ new SlashCommandBuilder()
   // ── Games ──
   new SlashCommandBuilder()
     .setName('create-game').setDescription('Open a private game channel for a matchup (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League for this matchup').setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName('week').setDescription('Week number 1-18').setRequired(true))
     .addStringOption(o => o.setName('team1').setDescription('Home team').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team2').setDescription('Away team').setRequired(true).setAutocomplete(true))
@@ -257,7 +267,8 @@ new SlashCommandBuilder()
     .addStringOption(o => o.setName('winner').setDescription('Winning team').setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName('winner-score').setDescription('Winner points scored').setRequired(true))
     .addStringOption(o => o.setName('loser').setDescription('Losing team').setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName('loser-score').setDescription('Loser points scored').setRequired(true)),
+    .addIntegerOption(o => o.setName('loser-score').setDescription('Loser points scored').setRequired(true))
+    .addStringOption(o => o.setName('league').setDescription('League for this result (optional inside a game channel)').setAutocomplete(true)),
 
   // ── Stats / Awards ──
   new SlashCommandBuilder()
@@ -617,7 +628,7 @@ new SlashCommandBuilder()
   .setName('customize-server-rules').setDescription('Open the optional base server rules customizer (Commissioner only)')
   .setDefaultMemberPermissions(P),
 new SlashCommandBuilder()
-  .setName('create-poll').setDescription('Post a vote-only picklist poll in #polls (Commissioner only)')
+  .setName('create-poll').setDescription('Post a button-based poll in #polls (Commissioner only)')
   .addStringOption(o => o.setName('question').setDescription('Poll question').setRequired(true))
   .addStringOption(o => o.setName('options').setDescription('Comma-separated options, 2 to 5').setRequired(true))
   .setDefaultMemberPermissions(P),
@@ -689,6 +700,10 @@ new SlashCommandBuilder()
   .addStringOption(o => o.setName('tones').setDescription('Shared tones, comma-separated, up to 7').setRequired(false))
   .addStringOption(o => o.setName('member-tones').setDescription('Member tones, comma-separated, up to 7').setRequired(false))
   .addStringOption(o => o.setName('commissioner-tones').setDescription('Commissioner tones, comma-separated, up to 7').setRequired(false))
+  .addBooleanOption(o => o.setName('open-house').setDescription('R mode: let the bot join high-signal banter without requiring @mention').setRequired(false))
+  .addChannelOption(o => o.setName('open-house-channel').setDescription('Add a social channel to R-mode Open House').setRequired(false))
+  .addBooleanOption(o => o.setName('clear-open-house-channels').setDescription('Clear explicit Open House channels and use safe social-channel auto detection').setRequired(false))
+  .addIntegerOption(o => o.setName('open-house-burst-limit').setDescription('Maximum ambient replies per channel in five minutes').setMinValue(1).setMaxValue(10).setRequired(false))
   .setDefaultMemberPermissions(P),
 
 new SlashCommandBuilder()
@@ -704,13 +719,7 @@ new SlashCommandBuilder()
     )),
 new SlashCommandBuilder()
   .setName('set-timezone').setDescription('Update your scheduling timezone for your claimed team(s)')
-  .addStringOption(o => o.setName('timezone').setDescription('Pick your timezone').setRequired(true)
-    .addChoices(
-      { name: 'Pacific Time (PST/PDT)', value: 'America/Los_Angeles' },
-      { name: 'Mountain Time (MST/MDT)', value: 'America/Denver' },
-      { name: 'Central Time (CST/CDT)', value: 'America/Chicago' },
-      { name: 'Eastern Time (EST/EDT)', value: 'America/New_York' },
-    )),
+  .addStringOption(o => o.setName('timezone').setDescription('IANA timezone or common alias, e.g. America/Los_Angeles, PST, EST').setRequired(true)),
 new SlashCommandBuilder()
   .setName('team-registry-status').setDescription('Show the synced team ownership registry status (Commissioner only)')
   .setDefaultMemberPermissions(P),
@@ -851,11 +860,14 @@ new SlashCommandBuilder()
     .addSubcommand(sc => sc.setName('configure').setDescription('Save team role tracking preference')
       .addBooleanOption(o => o.setName('use-team-roles').setDescription('Track team roles for owners')))
     .addSubcommand(sc => sc.setName('assign').setDescription('Assign a team to a member')
+      .addStringOption(o => o.setName('league').setDescription('League that owns the team').setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName('team').setDescription('Team slot to assign').setRequired(true).setAutocomplete(true))
       .addUserOption(o => o.setName('user').setDescription('Member to assign').setRequired(true)))
     .addSubcommand(sc => sc.setName('free').setDescription('Release a claimed team back open')
+      .addStringOption(o => o.setName('league').setDescription('League that owns the team').setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName('team').setDescription('Team slot to free').setRequired(true).setAutocomplete(true)))
-    .addSubcommand(sc => sc.setName('open').setDescription('Show the current open teams board'))
+    .addSubcommand(sc => sc.setName('open').setDescription('Show the current open teams board')
+      .addStringOption(o => o.setName('league').setDescription('Optional league to show').setAutocomplete(true)))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('waitlist').setDescription('Manage the league waitlist')

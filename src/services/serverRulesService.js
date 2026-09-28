@@ -12,8 +12,9 @@
 
 const {
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle,
 } = require('discord.js');
+const buttonChoices = require('./buttonChoiceService');
 const { loadJson, saveJson } = require('../storage/jsonStore');
 const serverSettings = require('./serverSettingsService');
 
@@ -156,7 +157,7 @@ function buildWizardEmbed(profile = getProfile()) {
     .setDescription(
       'Choose the **base server rules** here. These are not league gameplay rules. Keep them clean, short, and readable on mobile.\n\n' +
       '**Fast path**\n' +
-      '1. Use the two picklists to turn standard rules on or off.\n' +
+      '1. Use **Configure Standard Rules** to toggle standard rules on or off.\n' +
       '2. Use **Add Custom Rules / Notes** for custom wording or enforcement changes.\n' +
       '3. Use **Refresh Rules Preview Now** to republish the preview below in a cleaner format.'
     )
@@ -180,25 +181,11 @@ function buildWizardEmbed(profile = getProfile()) {
 
 function buildRuleSelectRows(profile = getProfile()) {
   const selectedIds = new Set((_selectedRules(profile) || []).map(r => r.id));
-  const partA = RULE_LIBRARY.slice(0, 15).map(([id, text]) => ({ label: text.slice(0, 100), value: id, default: selectedIds.has(id) }));
-  const partB = RULE_LIBRARY.slice(15, 30).map(([id, text]) => ({ label: text.slice(0, 100), value: id, default: selectedIds.has(id) }));
-  const rows = [];
-  rows.push(new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('server_rules_select_a')
-      .setPlaceholder('Toggle standard server rules (1-15)...')
-      .setMinValues(0)
-      .setMaxValues(Math.min(15, partA.length || 1))
-      .addOptions(partA)
-  ));
-  rows.push(new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('server_rules_select_b')
-      .setPlaceholder('Toggle standard server rules (16-30)...')
-      .setMinValues(0)
-      .setMaxValues(Math.min(15, partB.length || 1))
-      .addOptions(partB)
-  ));
+  const options = RULE_LIBRARY.map(([id,text]) => ({ label:text.slice(0,80), value:id, default:selectedIds.has(id) }));
+  const rows = [buttonChoices.createChoiceLauncher({
+    public:true, flow:'server-rules', legacyCustomId:'server_rules_select_all', minValues:0, maxValues:options.length, options,
+    launchLabel:`Configure Standard Rules (${selectedIds.size} selected)`, pageSize:15,
+  }).row];
   rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('server_rules_customize').setLabel('Add Custom Rules / Notes').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('server_rules_publish_now').setLabel('Refresh Rules Preview Now').setStyle(ButtonStyle.Primary),
@@ -220,7 +207,7 @@ function buildRulesLiveEmbed(profile = getProfile()) {
     )
     .addFields({
       name: 'How to edit this',
-      value: 'Use the two picklists below to turn standard rules on or off. Use **Add Custom Rules / Notes** for server-specific wording or enforcement overrides like `3=warning+boot`.',
+      value: 'Use **Configure Standard Rules** to turn standard rules on or off. Use **Add Custom Rules / Notes** for server-specific wording or enforcement overrides like `3=warning+boot`.',
     })
     .setTimestamp();
 

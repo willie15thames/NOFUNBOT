@@ -10,14 +10,15 @@
 
 'use strict';
 
-const { ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const buttonChoices = require('./buttonChoiceService');
 const memberProfiles = require('./memberProfileService');
 const nicknamePolicy = require('./nicknamePolicyService');
 const serverSettings = require('./serverSettingsService');
 const { findConfiguredChannel, getConfiguredChannelName, matchesConfiguredChannel } = require('./channelTopologyService');
 
 const GATE_CHANNEL_NAME = getConfiguredChannelName('timezoneGate') || 'timezone-gate';
-const GATE_CHANNEL_TOPIC = 'Members must save their timezone here before the rest of the server unlocks when timezone gate is enabled. Pick one of the four main US timezones from the dropdown.';
+const GATE_CHANNEL_TOPIC = 'Members must save their timezone here before the rest of the server unlocks when timezone gate is enabled. Pick your timezone using the buttons below.';
 
 
 const TIMEZONE_CHOICES = [
@@ -39,13 +40,12 @@ function isTimezoneGateActive(settings = serverSettings.getSettings()) {
 }
 
 
-function buildTimezoneSelectRow(customId = 'timezone_onboarding_select') {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(customId)
-      .setPlaceholder('Choose your timezone...')
-      .addOptions(TIMEZONE_CHOICES)
-  );
+function buildTimezoneSelectRow(customId = 'timezone_onboarding_select', context = {}) {
+  const built = buttonChoices.createChoiceRows({
+    guildId: context.guildId || null, actorId: context.actorId || null, public: context.public !== false,
+    flow:'timezone', legacyCustomId:customId, minValues:1, maxValues:1, options:TIMEZONE_CHOICES,
+  });
+  return built.rows[0];
 }
 
 function _denyViewPermissions() {
@@ -112,7 +112,7 @@ async function postGatePrompt(member) {
     embeds: [new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle('🕒 Timezone Gate')
-      .setDescription('Choose your timezone from the dropdown below to unlock the rest of the server.')
+      .setDescription('Choose your timezone using the buttons below to unlock the rest of the server.')
       .setFooter({ text: 'Once your timezone saves, the rest of the server unlocks automatically.' })
       .setTimestamp()],
     components: [buildTimezoneSelectRow()],

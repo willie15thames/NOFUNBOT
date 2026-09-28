@@ -35,16 +35,20 @@ function _normalizePayload(payload, mode = 'reply') {
 
 function protectInteraction(interaction) {
   if (!interaction || interaction.__nofunSafeWrapped) return interaction;
+  // Autocomplete has a different acknowledgement contract: only respond() is valid.
+  // Never bind chat-input reply methods onto autocomplete interactions.
+  if (interaction.isAutocomplete?.()) return interaction;
   interaction.__nofunSafeWrapped = true;
 
+  const bind = (name) => typeof interaction[name] === 'function' ? interaction[name].bind(interaction) : null;
   const orig = {
-    reply: interaction.reply.bind(interaction),
-    followUp: interaction.followUp.bind(interaction),
-    editReply: interaction.editReply.bind(interaction),
-    deferReply: interaction.deferReply.bind(interaction),
-    update: interaction.update ? interaction.update.bind(interaction) : null,
-    deferUpdate: interaction.deferUpdate ? interaction.deferUpdate.bind(interaction) : null,
-    showModal: interaction.showModal ? interaction.showModal.bind(interaction) : null,
+    reply: bind('reply'),
+    followUp: bind('followUp'),
+    editReply: bind('editReply'),
+    deferReply: bind('deferReply'),
+    update: bind('update'),
+    deferUpdate: bind('deferUpdate'),
+    showModal: bind('showModal'),
   };
 
   interaction.reply = async (payload) => {
@@ -217,10 +221,28 @@ async function safeAcknowledge(interaction, opts = {}) {
   }
 }
 
+
+async function safeAutocompleteRespond(interaction, choices = []) {
+  if (!interaction?.isAutocomplete?.() || typeof interaction.respond !== 'function') return false;
+  const bounded = Array.isArray(choices) ? choices.slice(0, 25).map(choice => ({
+    name: String(choice?.name ?? choice?.label ?? choice?.value ?? 'Option').slice(0, 100),
+    value: String(choice?.value ?? '').slice(0, 100),
+  })) : [];
+  try {
+    await interaction.respond(bounded);
+    return true;
+  } catch (err) {
+    // Unknown/expired interactions cannot be recovered with reply/followUp.
+    if (_isAckErr(err)) return false;
+    throw err;
+  }
+}
+
 module.exports = {
   protectInteraction,
   safeInitialReply,
   safeDeferred,
   safeEdit,
   safeAcknowledge,
+  safeAutocompleteRespond,
 };
