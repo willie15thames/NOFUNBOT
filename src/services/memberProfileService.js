@@ -51,6 +51,8 @@ function clearTimezone(userId) {
   return store.profiles[id];
 }
 
+function resetAll() { return saveStore({ profiles:{} }); }
+
 function clearAllTimezones() {
   const store = getStore();
   for (const id of Object.keys(store.profiles || {})) {
@@ -60,4 +62,4 @@ function clearAllTimezones() {
   return store;
 }
 
-module.exports = { FILE, getStore, getProfile, upsertProfile, ensureProfile, clearTimezone, clearAllTimezones };
+module.exports = { FILE, getStore, getProfile, upsertProfile, ensureProfile, clearTimezone, clearAllTimezones, resetAll };

@@ -119,10 +119,11 @@ function removeMessage(message) {
 }
 
 function clearChannel(guildId, channelId) { return _channels.delete(_key(guildId, channelId)); }
+function clearGuild(guildId) { const gid=String(guildId||''); let n=0; for(const [k,b] of _channels.entries()) if(b.guildId===gid){_channels.delete(k);n++;} return n; }
 function clearAll() { const n = _channels.size; _channels.clear(); return n; }
 function stats() { prune(); const p=_channelPolicy(); return { channels:_channels.size, ttlMs:TTL_MS, maxMessages:MAX_MESSAGES, allowlistCount:p.allow.size, denylistCount:p.deny.size }; }
 
 const _timer = setInterval(() => { const n = prune(); if (n) log.debug(`pruned ${n} ambient channel contexts`); }, 60 * 1000);
 _timer.unref?.();
 
-module.exports = { TTL_MS, MAX_MESSAGES, observe, updateMessage, removeMessage, getRecent, renderForPrompt, clearChannel, clearAll, prune, stats };
+module.exports = { TTL_MS, MAX_MESSAGES, observe, updateMessage, removeMessage, getRecent, renderForPrompt, clearChannel, clearGuild, clearAll, prune, stats };

@@ -1,13 +1,21 @@
 /*
  * Central speech gate for conversational AI personas.
- * Passive observation may collect bounded local context, but conversational handlers may speak only when
- * Discord resolved an explicit mention of the current bot user. Slash commands/buttons/system jobs bypass this
- * service because they are already explicit invocation paths.
+ * A direct @mention OR a Discord reply to the bot is an explicit invocation.
+ * This lets several humans participate in one bot conversation without forcing
+ * every follow-up to repeat the @mention.
  */
 'use strict';
+function isReplyToBot(message, client){
+  if(!message || !client?.user?.id) return false;
+  if(message.mentions?.repliedUser?.id === client.user.id) return true;
+  const refId = message.reference?.messageId;
+  if(!refId) return false;
+  const cached = message.channel?.messages?.cache?.get?.(refId);
+  return cached?.author?.id === client.user.id;
+}
 function isExplicitBotMention(message, client){
   if(!message || !client?.user?.id) return false;
   if(message.author?.bot || !message.guild) return false;
-  return !!message.mentions?.users?.has?.(client.user.id);
+  return !!message.mentions?.users?.has?.(client.user.id) || isReplyToBot(message, client);
 }
-module.exports={isExplicitBotMention};
+module.exports={isExplicitBotMention,isReplyToBot};

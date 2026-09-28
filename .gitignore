@@ -3,3 +3,7 @@ node_modules/
 .env.local
 *.log
 coverage/
+
+# Local AI/editor state
+.claude/
+.copilot/

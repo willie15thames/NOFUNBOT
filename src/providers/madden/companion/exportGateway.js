@@ -104,17 +104,14 @@ function resolveLeagueToken(token) {
   }
   const single = String(process.env.COMPANION_EXPORT_TOKEN || '').trim();
   if (single && _timingSafeEqual(presented, single)) return { valid:true, leagueId:String(process.env.PROVIDER_HTTP_SPACE_ID || '').trim() || null, mode:'legacy-single' };
-
-  // A configured legacy token with the wrong presented value is still a
-  // configured gateway. Preserve the security-safe 404 path instead of
-  // misclassifying it as an unconfigured gateway and returning 503.
-  const mode = managedConfigured
-    ? 'connection-registry'
-    : (Object.keys(map).length
-        ? 'map'
-        : (single ? 'legacy-single' : 'unconfigured'));
-
-  return { valid:false, leagueId:null, mode };
+  // A configured gateway must hide whether a presented token is valid.
+  // Keep the configuration mode even on mismatch so callers return 404, not
+  // the misleading 503 "gateway-not-configured" response.
+  return {
+    valid:false,
+    leagueId:null,
+    mode: managedConfigured ? 'connection-registry' : (Object.keys(map).length ? 'map' : (single ? 'legacy-single' : 'unconfigured')),
+  };
 }
 
 function _timingSafeEqual(a, b) {
