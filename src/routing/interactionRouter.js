@@ -3232,11 +3232,10 @@ case 'initialize-server': {
     const { resetToInstallationMode } = baseInitService;
     const preserveChannelIds = interaction.channelId ? [interaction.channelId] : [];
     const preserveCategoryIds = interaction.channel?.parentId ? [interaction.channel.parentId] : [];
-    conversationCtxService.clearAll();
-    serverSettings.resetInstallationDefaults();
-    serverRulesService.resetProfile();
-    wizardPrefs.resetPrefs();
-    wizardStateService.resetState({ installationMode: true, currentStep: 'mode' });
+    // TRUE CLEAN SLATE: clear every guild-scoped bot memory source before rebuilding the setup lane.
+    // This includes hidden managed-space reservations, active league registry, conversation history,
+    // member/history memory, server settings/rules, wizard state, and guild-scoped DB config.
+    const memoryReset = await require('../services/cleanSlateResetService').resetGuild(guild.id, _state);
     await backgroundJobService.markProgress(bgJob.id, { step: 'resetting-workspace', pct: 35 });
     await statusCardService.updateStatusCard(statusCard, {
       title: 'Initialize Server',
@@ -3261,7 +3260,7 @@ case 'initialize-server': {
     const ch = await _postSetupWizardMessage(guild, `**${result.serverName}** is in installation mode now. Choose a structure strategy and server template to begin.`, { stage: 'mode' });
     await postRebootFinalizationService.finalizeSetupLaneAfterReboot(guild, ch, () => wizardRendererService.buildWizardPayload(guild, '**Installation mode is active.** Continue setup from this guide.'), { currentStep: 'mode', deleteUserMessages: true }).catch(() => null);
     const msg = ch ? `🧹 Installation mode is live in <#${ch.id}>.` : '🧹 Installation mode is live in **#setup-wizard**.';
-    await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null });
+    await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null, memoryReset });
     await statusCardService.updateStatusCard(statusCard, {
       title: 'Initialize Server',
       status: 'completed',
@@ -3422,11 +3421,10 @@ case 'trash-the-bot': {
     const { resetToInstallationMode } = baseInitService;
     const preserveChannelIds = interaction.channelId ? [interaction.channelId] : [];
     const preserveCategoryIds = interaction.channel?.parentId ? [interaction.channel.parentId] : [];
-    conversationCtxService.clearAll?.();
-    serverSettings.resetInstallationDefaults();
-    serverRulesService.resetProfile();
-    wizardPrefs.resetPrefs();
-    wizardStateService.resetState({ installationMode: true, currentStep: 'flow' });
+    // Full reboot uses the same clean-slate memory contract as /initialize-server.
+    // This prevents stale hidden leagues, old settings, or conversation history from
+    // surviving under a second reset path.
+    const memoryReset = await require('../services/cleanSlateResetService').resetGuild(guild.id, _state);
     const result = await resetToInstallationMode(guild, _state, {
       fullReboot: true,
       preserveChannelIds,
@@ -3461,7 +3459,7 @@ case 'trash-the-bot': {
 
 Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Confirm / Open Setup Wizard** to continue.`, { stage: 'flow' });
     await postRebootFinalizationService.finalizeSetupLaneAfterReboot(guild, ch, () => wizardRendererService.buildWizardPayload(guild, 'Full reboot complete. This setup guide is now the single live wizard message.'), { currentStep: 'flow', deleteUserMessages: true }).catch(() => null);
-    await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null });
+    await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null, memoryReset });
     await statusCardService.updateStatusCard(statusCard, {
       title: 'Full Reboot',
       status: 'completed',

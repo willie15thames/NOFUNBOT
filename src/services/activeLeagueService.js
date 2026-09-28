@@ -89,6 +89,19 @@ function upsertLeague(league) {
   return { id: String(league.id), ...reg[String(league.id)] };
 }
 
+
+function clearGuild(guildId, options = {}) {
+  const gid = String(guildId || '');
+  const includeLegacyUnscoped = options.includeLegacyUnscoped !== false;
+  const reg = getRegistry();
+  let removed = 0;
+  for (const [id, league] of Object.entries(reg)) {
+    if (String(league.guildId || '') === gid || (includeLegacyUnscoped && !league.guildId)) { delete reg[id]; removed++; }
+  }
+  saveRegistry(reg);
+  return removed;
+}
+
 function removeLeague(id) {
   const reg = getRegistry();
   delete reg[String(id)];
@@ -139,6 +152,7 @@ module.exports = {
   leagueTypeLabel,
   upsertLeague,
   removeLeague,
+  clearGuild,
   setDataSourceMode,
   getDataSourceMode,
   findLeagueForChannel,

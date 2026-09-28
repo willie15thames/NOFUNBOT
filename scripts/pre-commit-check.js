@@ -25,7 +25,7 @@ const FORBIDDEN_PATTERNS = [
     message: 'Do not read wizardStage or installationMode from wizardPreferencesService. Use the authoritative state service instead.',
   },
   {
-    regex: /\.send\s*\(\s*\{[^}]{0,180}\bflags\s*:/m,
+    regex: /\.send\s*\([\s\S]{0,180}flags\s*:/m,
     message: 'channel.send() payload appears to use flags. Verify this is supported for the target API path.',
   },
 ];

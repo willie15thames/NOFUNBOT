@@ -78,10 +78,11 @@ function resetBotState(state) {
     state.activeLeagues?.clear?.();
     if (Array.isArray(state.openTeamRegistry)) state.openTeamRegistry.splice(0, state.openTeamRegistry.length);
     if (Array.isArray(state.ocrGameResults)) state.ocrGameResults.length = 0;
-    // Preserve potwHistory for lifetime migration and archive.
-    // Preserve yearlyAwardHistory for lifetime migration and archive.
-    // Preserve superbowlHistory for lifetime migration and archive.
-    // Preserve streamMilestones for lifetime migration and archive.
+    // /initialize-server is a true clean slate: bot-retained competition history is cleared.
+    if (Array.isArray(state.potwHistory)) state.potwHistory.length = 0;
+    if (Array.isArray(state.yearlyAwardHistory)) state.yearlyAwardHistory.length = 0;
+    if (Array.isArray(state.superbowlHistory)) state.superbowlHistory.length = 0;
+    if (Array.isArray(state.streamMilestones)) state.streamMilestones.length = 0;
     if (state.leagueMemory) {
       state.leagueMemory.scores = []; state.leagueMemory.statLines = []; state.leagueMemory.potw = [];
       state.leagueMemory.superbowls = []; state.leagueMemory.weeklyStats = []; state.leagueMemory.lastUpdated = null;
@@ -104,7 +105,7 @@ function resetBotState(state) {
   saveJson('stateEngine.json', { boards:{}, timers:{}, lastHashes:{}, meta:{ purpose:'Cleared during base initialization flush.' } });
   saveJson('players.json', []);
   saveJson('rosterOverrides.json', {});
-  // Member identity and earned history survive server reinitialization.
+  // Member identity/history is cleared by cleanSlateResetService during /initialize-server.
 
   saveJson('broadcasts.json', {});
   saveJson('gameChannelConfig.json', {});

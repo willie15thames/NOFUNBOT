@@ -402,19 +402,6 @@ v204.7-rc.2 (2026-09-27)
 - See docs/V204_7_RELEASE_COMPLETION_REPORT.md for verification and remaining clean-install promotion gates.
 package 21.11.0-rc.2 - NOFUNBOT v204.7 production candidate (2026-09-27)
 
-v204.7 RC3 release-gate follow-up:
-- Fixed Companion export wrong-token handling so a configured legacy receiver returns security-safe 404 rather than gateway-not-configured 503.
-- Hardened tests/run-all.js so Railway production provider variables cannot contaminate hermetic provider regression tests.
-- Root cause was exposed only when running the full suite through `railway run`.
-
-v204.7 RC3 final release-gate follow-up:
-- Normalized NeonSportz missing-configuration reporting so both supported
-  configuration paths are reported individually.
-- Corrected the channel.send()/flags static pre-commit detector so it cannot
-  cross into a later interaction payload.
-- Added the required workflow ownership/failsafe/rollback contract metadata
-  to tradeWorkflowService.js.
-
 V1 PUBLIC SURFACE + RUNTIME OBSERVABILITY
 - Added PUBLIC_PATCH_NOTES.md as the sole Discord-facing release-note source.
 - Internal RC/test/migration/CI notes remain backend-only.

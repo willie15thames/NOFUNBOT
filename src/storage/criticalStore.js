@@ -54,8 +54,19 @@ async function transact(key, fallback, mutate) {
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); throw err; }
   finally { client.release(); }
 }
+
+async function clear(key) {
+  if (!process.env.DATABASE_URL) {
+    const target = file(key);
+    try { fs.unlinkSync(target); return true; }
+    catch (err) { if (err.code === 'ENOENT') return false; throw err; }
+  }
+  const res = await db().query('DELETE FROM "bot_kv" WHERE key=$1', [key]);
+  return Number(res.rowCount || 0) > 0;
+}
+
 async function close() { if (pool) { await pool.end(); pool = null; } }
-module.exports = { read, transact, close };
+module.exports = { read, transact, clear, close };
 
 // Business-operation lock, held for the entire callback (no expiring lease).
 // A lost PostgreSQL session must terminate this process before it can mutate

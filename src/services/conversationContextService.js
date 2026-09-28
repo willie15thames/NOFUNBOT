@@ -15,6 +15,8 @@ const log = makeLogger('conversationCtx');
 
 const MINUTE = 60 * 1000;
 const MAX_ENTRIES = Math.max(4, Math.min(20, Number(process.env.BOT_CONTEXT_MAX_ENTRIES || 10) || 10));
+const SHARED_MAX_ENTRIES = Math.max(8, Math.min(40, Number(process.env.BOT_SHARED_CONTEXT_MAX_ENTRIES || 20) || 20));
+const SHARED_TTL_MS = Math.max(5, Math.min(120, Number(process.env.BOT_SHARED_CONTEXT_MINUTES || 30) || 30)) * MINUTE;
 const TTLS = {
   casual: Math.max(1, Number(process.env.BOT_CONTEXT_CASUAL_MINUTES || 10) || 10) * MINUTE,
   prompt: Math.max(1, Number(process.env.BOT_CONTEXT_PROMPT_MINUTES || 5) || 5) * MINUTE,
@@ -25,6 +27,7 @@ const ACTION_RX = /\b(?:set|create|delete|remove|update|change|rename|build|rese
 const PROMPT_RX = /(^|\b)(what|when|where|who|why|how|which|can i|can you|do i|is there|are there|tell me|show me|help|rules|schedule|teams|open teams|available teams|what are|what's|whats|give me|explain|lookup|check|status)(\b|\?)/i;
 
 const _sessions = new Map();
+const _shared = new Map();
 let _sweeper = null;
 
 function ttlFor(lane = 'casual') {
@@ -144,6 +147,58 @@ function getSessionState(meta = {}, lane = 'casual', now = Date.now()) {
   };
 }
 
+
+function sharedKey(meta = {}) {
+  return `${String(meta.guildId || 'dm')}:${String(meta.channelId || 'unknown-channel')}`;
+}
+
+function appendShared(meta = {}, role = 'user', content = '', info = {}, now = Date.now()) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!text || !meta.guildId || !meta.channelId) return [];
+  const key = sharedKey(meta);
+  const bucket = _shared.get(key) || { guildId:String(meta.guildId), channelId:String(meta.channelId), entries:[], expiresAt:now + SHARED_TTL_MS };
+  const display = String(info.display || info.username || (role === 'assistant' ? 'Bot' : 'Member')).replace(/\s+/g,' ').trim().slice(0,80);
+  bucket.entries.push({
+    role: role === 'assistant' ? 'assistant' : 'user',
+    content: text.slice(0, 2000),
+    userId: info.userId ? String(info.userId) : null,
+    display,
+    messageId: info.messageId ? String(info.messageId) : null,
+    replyToMessageId: info.replyToMessageId ? String(info.replyToMessageId) : null,
+    isCommissioner: !!info.isCommissioner,
+    timestamp: now,
+  });
+  while (bucket.entries.length > SHARED_MAX_ENTRIES) bucket.entries.shift();
+  bucket.expiresAt = now + SHARED_TTL_MS;
+  _shared.set(key, bucket);
+  return bucket.entries.slice();
+}
+
+function getSharedHistory(meta = {}, now = Date.now()) {
+  const key = sharedKey(meta);
+  const bucket = _shared.get(key);
+  if (!bucket) return [];
+  if (now > bucket.expiresAt) { _shared.delete(key); return []; }
+  bucket.expiresAt = now + SHARED_TTL_MS;
+  return bucket.entries.slice();
+}
+
+function renderShared(meta = {}, options = {}, now = Date.now()) {
+  let rows = getSharedHistory(meta, now);
+  const excludeMessageId = options.excludeMessageId ? String(options.excludeMessageId) : null;
+  if (excludeMessageId) rows = rows.filter(x => String(x.messageId || '') !== excludeMessageId);
+  const max = Math.max(1, Math.min(SHARED_MAX_ENTRIES, Number(options.max || 12) || 12));
+  return rows.slice(-max).map(e => `${e.role === 'assistant' ? 'Bot' : e.display}${e.isCommissioner ? ' [commissioner]' : ''}: ${e.content}`).join('\n') || 'none';
+}
+
+function clearGuild(guildId) {
+  const gid = String(guildId || '');
+  let removed = 0;
+  for (const [key, session] of _sessions.entries()) if (session.guildId === gid) { _sessions.delete(key); removed++; }
+  for (const [key, bucket] of _shared.entries()) if (bucket.guildId === gid) { _shared.delete(key); removed++; }
+  return removed;
+}
+
 function clear(meta = {}, lane) {
   if (lane) {
     _sessions.delete(sessionKey(meta, lane));
@@ -157,19 +212,16 @@ function clear(meta = {}, lane) {
 }
 
 function clearAll() {
-  const count = _sessions.size;
+  const count = _sessions.size + _shared.size;
   _sessions.clear();
+  _shared.clear();
   return count;
 }
 
 function pruneExpired(now = Date.now()) {
   let removed = 0;
-  for (const [key, session] of _sessions.entries()) {
-    if (now > session.expiresAt) {
-      _sessions.delete(key);
-      removed += 1;
-    }
-  }
+  for (const [key, session] of _sessions.entries()) { if (now > session.expiresAt) { _sessions.delete(key); removed += 1; } }
+  for (const [key, bucket] of _shared.entries()) { if (now > bucket.expiresAt) { _shared.delete(key); removed += 1; } }
   return removed;
 }
 
@@ -194,10 +246,14 @@ module.exports = {
   ttlLabel,
   detectLane,
   append,
+  appendShared,
+  getSharedHistory,
+  renderShared,
   getHistory,
   getSessionState,
   getActiveLanes,
   clear,
+  clearGuild,
   clearAll,
   pruneExpired,
   startSweeper,

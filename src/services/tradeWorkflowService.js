@@ -7,48 +7,6 @@
  */
 'use strict';
 
-/*
- * PROCESS NAME: Trade Proposal and Decision Workflow
- *
- * PURPOSE:
- *   Provide one authoritative domain workflow for proposing, resolving,
- *   approving, declining, and persisting league trades. Slash commands,
- *   buttons, and natural-language planner adapters must use this service
- *   instead of directly mutating pending trade state.
- *
- * TRIGGER:
- *   - A member or commissioner proposes a trade through an approved adapter.
- *   - A commissioner or authorized workflow approves or declines a pending trade.
- *
- * CONDITIONS:
- *   - Source and target teams must resolve successfully.
- *   - Both teams must belong to the same league.
- *   - The proposer must own the source team.
- *   - Both teams must currently be claimed.
- *   - Ambiguous league/team resolution must fail closed and request clarification.
- *   - Natural-language planning is an adapter only and never becomes the state owner.
- *
- * FAILSAFE:
- *   - Missing teams produce structured team-not-found failures.
- *   - Multiple valid leagues produce league-ambiguous instead of guessing.
- *   - Multiple team candidates produce team-ambiguous instead of guessing.
- *   - Missing durable trade state returns trade-state-unavailable.
- *   - Missing/already-processed trade IDs return already-processed-or-not-found.
- *   - Failed validation performs no durable trade mutation.
- *
- * ROLLBACK:
- *   - Proposal state is created only after every validation requirement succeeds.
- *   - Failed proposal validation leaves pending trade state unchanged.
- *   - Decision mutation occurs only when the referenced pending trade exists.
- *   - Discord presentation is never the source of truth.
- *   - Retry paths use existing durable workflow state rather than duplicating trades.
- *
- * COMMENT POLICY:
- *   Keep PROCESS NAME, PURPOSE, TRIGGER, CONDITIONS, FAILSAFE, and ROLLBACK
- *   synchronized with workflow ownership whenever this service changes.
- */
-
-
 const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function _leagueLabel(state, id) {

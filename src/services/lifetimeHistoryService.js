@@ -54,6 +54,7 @@ function recordResultIn(data, record, state) {
 async function recordResult(guildId,record,state){return transaction(guildId,data=>recordResultIn(data,record,state));}
 async function transaction(guildId,mutate){return store.transact(key(guildId),empty(),mutate);}
 async function snapshot(guildId){return store.read(key(guildId),empty());}
+async function clearGuild(guildId){return store.clear(key(guildId));}
 async function retract(guildId, matchupKey, actor) {
   return store.transact(key(guildId), empty(), data => {
     const item=data.results[matchupKey]; if(!item || item.status==='RETRACTED') return false;
@@ -135,4 +136,4 @@ async function importLegacy(guildId,state) {
     return {imported,unresolved};
   });
 }
-module.exports={adjustStreamProgress,creditStream,transaction,snapshot,recordResultIn,recordStat,METRICS,archiveCompetition,presence,award,recordResult,retract,revokeAward,career,importLegacy};
+module.exports={clearGuild,adjustStreamProgress,creditStream,transaction,snapshot,recordResultIn,recordStat,METRICS,archiveCompetition,presence,award,recordResult,retract,revokeAward,career,importLegacy};
