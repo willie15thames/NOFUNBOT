@@ -12,8 +12,8 @@ const webhook = require('../../providers/madden/neonsportz/webhook');
 
 function match(method, pathname) {
   if (method !== 'POST') return null;
-  const m=String(pathname||'').match(/^\/v1\/providers\/neonsportz\/import-completed(?:\/([A-Za-z0-9_-]{16,128}))?\/?$/);
-  return m ? { routeToken:m[1]||null } : null;
+  const m=String(pathname||'').match(/^(?:\/v1\/providers\/neonsportz\/import-completed(?:\/([A-Za-z0-9_-]{16,128}))?|\/n\/([A-Za-z0-9_-]{16,128}))\/?$/);
+  return m ? { routeToken:m[1]||m[2]||null } : null;
 }
 
 

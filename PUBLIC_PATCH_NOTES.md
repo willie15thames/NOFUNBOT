@@ -11,5 +11,8 @@
 - Multi-person bot conversations now keep speaker-aware shared channel context, including replies to the bot without requiring a fresh mention.
 - Phantom managed league slots are repaired automatically so stale hidden records cannot block new league creation.
 - `/initialize-server` and the full reboot path now clear guild bot memory, league state, setup settings, and user-facing persisted history before rebuilding installation mode.
+- League onboarding now names the exact league, scopes team choices to that league, notifies added members, collects timezone before nickname updates, and keeps team identity league-specific.
+- Commissioners can generate short-lived inbound export URLs for Madden Companion or NeonSportz so external league data can be pushed directly into the bot without a permanent public token.
+- Conversational AI can now understand Discord-hosted images, memes, animated GIFs, stickers, and sampled short-video frames, then carry a safe semantic description into short-lived conversation context.
 
 > Internal RC, test, migration, CI, and engineering notes are intentionally not published to league users.

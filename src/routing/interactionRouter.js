@@ -320,6 +320,7 @@ const manualService           = require('../services/manualService');
 const scheduleRegistryService = require('../services/scheduleRegistryService');
 const communityAccessService  = require('../services/communityAccessService');
 const joinLeagueService       = require('../services/joinLeagueService');
+const leagueMemberOnboarding  = require('../services/leagueMemberOnboardingService');
 const baseInitService         = require('../services/baseInitService');
 const hierarchyService        = require('../services/hierarchyEnforcementService');
 const gameChannelService      = require('../services/gameChannelService');
@@ -347,9 +348,35 @@ async function _handleAutocomplete(interaction) {
   const cmd        = interaction.commandName;
 
 if (cmd === 'join-league' && optionName === 'league') {
+  try {
+    const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+    const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+    return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
+  } catch (err) {
+    log.warn('join-league autocomplete failed:', err.message);
+    return interaction.respond([{ name:'Use /join-league to open the league picker', value:'_none_' }]).catch(() => null);
+  }
+}
+
+if (cmd === 'add-member-to-league' && optionName === 'league') {
   const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
+  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+}
+
+if (cmd === 'league-export' && optionName === 'league') {
+  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+}
+
+if (cmd === 'add-member-to-league' && optionName === 'team') {
+  const leagueId = interaction.options.getString('league');
+  if (!leagueId || leagueId === '_none_') return interaction.respond([{ name:'Choose a league first', value:'_none_' }]);
+  const teams = openTeamsService.getOpenTeamsForLeague(leagueId) || [];
+  const opts = teams.map(t => ({ name:`${t.displayTeam} — ${t.baseTeam}`.slice(0,100), value:String(t.baseTeam).slice(0,100) }))
+    .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return interaction.respond(opts.length ? opts : [{ name:'⚠️ No open teams in this league', value:'_none_' }]);
 }
 
 
@@ -1383,6 +1410,25 @@ if (cid === 'bot_setup_custom') {
     const { handleSetupInteraction } = leagueSetupService;
     return handleSetupInteraction(interaction, _state);
   }
+  if (interaction.isStringSelectMenu?.() && cid.startsWith('league_member_timezone::')) {
+    const [, leagueId, targetUserId] = cid.split('::');
+    if (String(interaction.user.id) !== String(targetUserId)) {
+      return interaction.reply({ content:'❌ This onboarding card belongs to another member.', flags:64 });
+    }
+    const picked = interaction.values?.[0] || '';
+    const result = await _saveMemberTimezoneAndSync(interaction.member, picked, { channelId:interaction.channelId, advanceWizard:false, refreshWizard:false });
+    if (!result.ok) return interaction.reply({ content:'❌ Invalid timezone choice.', flags:64 });
+    leagueMemberOnboarding.markTimezoneComplete(interaction.user.id, leagueId, result.timezone, result.nicknameSync);
+    const league = activeLeagueService.getLeague(leagueId);
+    const team = nicknamePolicy.getDisplayForLeague(_state, interaction.user.id, leagueId);
+    return interaction.update({
+      content:`<@${interaction.user.id}>`,
+      embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ ${league?.leagueName || 'League'} onboarding complete`).setDescription(`**League:** ${league?.leagueName || leagueId}\n**Team:** ${team || 'Not selected yet'}\n**Timezone:** ${result.label}\n\n${team ? 'You are ready for scheduling and league activity.' : 'Your timezone is saved. Use `/select-team` to claim an available team in this league.'}`).setTimestamp()],
+      components:[],
+      allowedMentions:{ users:[interaction.user.id], parse:[] },
+    });
+  }
+
   if (cid.startsWith('join_')) {
     const { handleJoinInteraction } = joinLeagueService;
     return handleJoinInteraction(interaction, _state);
@@ -2336,7 +2382,8 @@ async function _handleCommand(interaction, commandMeta = null) {
 
     case 'join-league': {
       const { sendJoinLeaguePrompt } = joinLeagueService;
-      return sendJoinLeaguePrompt(interaction, _state);
+      const requestedLeague = interaction.options.getString('league');
+      return sendJoinLeaguePrompt(interaction, _state, requestedLeague);
     }
 
     // ── Teams ──
@@ -2370,9 +2417,10 @@ case 'register-team': {
       if (!teamName || rawTeamValue === '_none_') {
         return interaction.editReply({ content: '❌ No valid team slot is available yet for selection.' });
       }
-      const timezone = normalizeTimezone(timezoneInput);
+      const savedTimezone = memberProfiles.getProfile(interaction.user.id)?.timezone || null;
+      const timezone = normalizeTimezone(timezoneInput || savedTimezone);
       if (!timezone) {
-        return interaction.editReply({ content: '❌ Invalid timezone. Use something like `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.' });
+        return interaction.editReply({ content: '❌ Choose a timezone first with `/set-timezone`, or provide one in this command. Your team claim will not be finalized until scheduling timezone is known.' });
       }
 
       const { claimTeam, getUserLeagues } = openTeamsService;
@@ -2395,7 +2443,7 @@ case 'register-team': {
       try { await leagueVisibility.grantMemberAccessToLeague(guild, interaction.member, _state, result.entry.leagueId || null); } catch (e) { log.warn('Could not set channel perms for new member:', e.message); }
       try { teamRegistry.syncFromState(_state); } catch {}
       return interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`Locked in. Timezone saved as **${timezone}**.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()]
+        embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`**League:** ${result.entry.leagueName || activeLeagueService.getLeague(result.entry.leagueId)?.leagueName || result.entry.leagueId || 'League'}\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n\nYour league access and scheduling profile are ready.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()]
       });
     }
 
@@ -3718,35 +3766,45 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
     case 'add-member-to-league': {
       if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
       const targetUser = interaction.options.getUser('user');
+      const leagueId = interaction.options.getString('league');
       const teamName = interaction.options.getString('team');
+      if (!leagueId || leagueId === '_none_') return interaction.reply({content:'❌ Choose the league this member is joining.',flags:64});
+      const selectedLeague = activeLeagueService.getLeague(leagueId) || activeLeagueService.listResetOptions(_state).find(l => String(l.id) === String(leagueId));
+      if (!selectedLeague) return interaction.reply({content:'❌ That league is no longer active.',flags:64});
       const member = await guild.members.fetch(targetUser.id).catch(() => null);
       if (!member) return interaction.reply({content:'❌ Could not find that member in the server.',flags:64});
 
-      // Grant league channel access scoped to the relevant league
+      await interaction.deferReply({flags:64});
       let granted = 0;
       try {
-        const targetLeagueId = teamName
-          ? (_state.openTeamRegistry.find(t => String(t.baseTeam).toLowerCase() === String(teamName).toLowerCase() || String(t.displayTeam).toLowerCase() === String(teamName).toLowerCase())?.leagueId || null)
-          : null;
-        const res = await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, targetLeagueId);
+        const res = await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, selectedLeague.id);
         granted = res.granted || 0;
-      } catch {}
-
-      // If team specified, also claim the team for them
-      let teamResult = null;
-      if (teamName) {
-        const { claimTeam } = openTeamsService;
-        teamResult = await claimTeam(guild, member, teamName);
+      } catch (err) {
+        return interaction.editReply({content:`❌ Could not grant access to **${selectedLeague.leagueName}**: ${err.message}`});
       }
+
+      let teamResult = null;
+      if (teamName && teamName !== '_none_') {
+        teamResult = await openTeamsService.claimTeam(guild, member, teamName, { leagueId:selectedLeague.id });
+        if (!teamResult.success) {
+          return interaction.editReply({ content:`❌ League access was granted, but team assignment failed: ${teamResult.reason}\n\nThe member was **not** silently assigned to another league.` });
+        }
+      }
+
+      const assignedTeam = teamResult?.success ? teamResult.entry.displayTeam : null;
+      const onboarding = await leagueMemberOnboarding.notifyMemberAdded({
+        guild, member, leagueId:selectedLeague.id, teamName:assignedTeam,
+        actorId:interaction.user.id, source:'commissioner',
+      }).catch(err => ({ok:false, reason:err.message}));
 
       const fields = [
-        { name: 'Member', value: `${targetUser}`, inline: true },
-        { name: 'Channel Access', value: `${granted} categories`, inline: true },
+        { name:'Member', value:`${targetUser}`, inline:true },
+        { name:'League', value:selectedLeague.leagueName, inline:true },
+        { name:'Channel Access', value:`${granted} categories`, inline:true },
+        { name:'Team', value:assignedTeam ? `✅ ${assignedTeam}` : 'Not assigned yet', inline:true },
+        { name:'Onboarding', value:onboarding?.ok ? '✅ Greeting + timezone selection sent' : `⚠️ Access granted; onboarding notice failed (${onboarding?.reason || 'unknown'})`, inline:false },
       ];
-      if (teamResult) {
-        fields.push({ name: 'Team', value: teamResult.success ? `✅ ${teamResult.entry.displayTeam}` : `❌ ${teamResult.reason}`, inline: true });
-      }
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Member Added to League').addFields(...fields).setTimestamp()]});
+      return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Member Added to League').addFields(...fields).setFooter({text:'Timezone is completed by the member. Nickname suffix is applied only after their selection.'}).setTimestamp()]});
     }
 
     // ── /audit-emojis — show all mapped/unmapped emojis ──
@@ -4653,6 +4711,31 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
     case 'league-export': {
       if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
       const sub = interaction.options.getSubcommand();
+      if (sub === 'receiver-url') {
+        const leagueId = interaction.options.getString('league');
+        const provider = interaction.options.getString('provider');
+        const minutes = interaction.options.getInteger('minutes') || 60;
+        if (!leagueId || leagueId === '_none_') return interaction.reply({ content:'❌ Choose the exact active league that should receive this export.', flags:64 });
+        const league = activeLeagueService.getLeague(leagueId) || activeLeagueService.listResetOptions(_state).find(l => String(l.id) === String(leagueId));
+        if (!league) return interaction.reply({ content:'❌ That league is no longer active.', flags:64 });
+        const actions = require('../services/providerConnectionActionService');
+        const out = await actions.temporaryUrl({ leagueId, provider, minutes }).catch(e => ({ok:false,reason:e.message}));
+        if (!out?.ok) {
+          const hint = out?.reason === 'public-base-url-required'
+            ? '\n\nSet `PUBLIC_BASE_URL` to the public HTTPS address of the bot (or use Railway `RAILWAY_PUBLIC_DOMAIN`).'
+            : out?.reason === 'provider-http-disabled'
+              ? '\n\nSet `ENABLE_PROVIDER_HTTP=true` in Railway, then redeploy before generating a receiver URL.'
+              : '';
+          return interaction.reply({ content:`❌ Could not create the temporary receiver URL: **${out?.reason || 'unknown error'}**.${hint}`, flags:64 });
+        }
+        const expires = Math.floor(out.expiresAt / 1000);
+        return interaction.reply({
+          embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('🔗 Temporary League Export Receiver').setDescription(
+            `**League:** ${league.leagueName}\n**Provider:** ${provider === 'companion_export' ? 'Madden Companion' : 'NeonSportz'}\n**Valid until:** <t:${expires}:F> (<t:${expires}:R>)\n\nPaste this URL into the external app's export/webhook destination:\n\n\`${out.receiverUrl}\`\n\nThe link can receive multiple exports until it expires. Generating a new URL invalidates the previous one. Receiving data does **not** advance the week automatically.`
+          ).setFooter({text:'Keep this URL private. It contains a temporary bearer token and is shown only in this commissioner-only response.'}).setTimestamp()],
+          flags:64,
+        });
+      }
       let payload;
       if (sub === 'current') payload = scheduleRegistryService.exportCurrentWeek(_state);
       if (sub === 'all-weeks') payload = scheduleRegistryService.exportAllWeeks(_state);

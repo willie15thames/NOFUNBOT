@@ -1,5 +1,5 @@
 FROM node:22-alpine
-RUN apk add --no-cache openssl && addgroup -g 1001 -S botgroup && adduser -u 1001 -S botuser -G botgroup
+RUN apk add --no-cache openssl ffmpeg && addgroup -g 1001 -S botgroup && adduser -u 1001 -S botuser -G botgroup
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma

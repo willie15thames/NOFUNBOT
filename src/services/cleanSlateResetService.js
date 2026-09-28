@@ -119,6 +119,7 @@ async function resetGuild(guildId, state) {
 
   summary.directConversation = require('./conversationContextService').clearGuild(guildId);
   summary.ambientConversation = require('./ambientConversationService').clearGuild(guildId);
+  summary.mediaContext = require('./mediaContextService').clearGuild(guildId);
   summary.activeLeagues = require('./activeLeagueService').clearGuild(guildId, { includeLegacyUnscoped: true });
   await require('./managedSpaceService').clearGuild(guildId); summary.managedSpaces = true;
   await require('./lifetimeHistoryService').clearGuild(guildId); summary.lifetimeHistory = true;

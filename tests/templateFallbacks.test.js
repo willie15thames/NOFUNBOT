@@ -34,29 +34,31 @@ test('rules preset keeps the prior bot post if the replacement send fails', asyn
   eq(deleted,false,'prior rules remain visible');
 });
 
-test('team identity is league-specific while native guild nicknames remain untouched', async () => {
+test('team identity stays league-specific while timezone suffix uses the member nickname base', async () => {
   const member = {id:'member-stable',displayName:'Player',user:{username:'Player'}};
   profiles.upsertProfile(member.id,{timezone:'America/Los_Angeles',timezoneLabel:'PDT',nicknameBase:'Player'});
   const state = {openTeamRegistry:[{ownerId:member.id,leagueId:'a',displayTeam:'Lions'}]};
-  eq(names.buildDesiredNickname(member,state,{channel:{id:'a'}}),null);
+  eq(names.buildDesiredNickname(member,state,{channel:{id:'a'}}),'Player (PDT)');
   eq(names.getDisplayForLeague(state,member.id,'a'),'Lions');
   state.openTeamRegistry.push({ownerId:member.id,leagueId:'b',displayTeam:'Ravens'});
   eq(names.getDisplayForLeague(state,member.id,'b'),'Ravens');
   let changed=false;
-  eq((await names.syncMemberNickname({...member,nickname:'My chosen name',manageable:true,setNickname:async()=>{changed=true;}},state)).reason,'custom-nickname-preserved');
-  eq(changed,false);
+  const custom = {...member,guild:{id:'nickname-guild'},nickname:'My chosen name',displayName:'My chosen name',manageable:true,setNickname:async next=>{changed=next;}};
+  const synced = await names.syncMemberNickname(custom,state);
+  eq(synced.value,'My chosen name (PDT)');
+  eq(changed,'My chosen name (PDT)');
 });
 
-test('legacy bot team nickname resets to Discord profile while commissioner hierarchy failure is explicit', async () => {
+test('legacy team-based bot nickname migrates to profile-plus-timezone and hierarchy failure is explicit', async () => {
   const member={guild:{id:'nickname-guild'},id:'legacy-nick',nickname:'Lions (PDT)',displayName:'Lions (PDT)',user:{username:'Player'}};
   const state={openTeamRegistry:[{ownerId:member.id,leagueId:'league-a',displayTeam:'Lions'}]};
   profiles.upsertProfile(member.id,{timezone:'America/Los_Angeles',timezoneLabel:'PDT',nicknameBase:'Player',botNicknameAssignment:{guildId:member.guild.id,value:member.nickname,status:'ASSIGNED'}});
   eq((await names.syncMemberNickname({...member,manageable:false},state)).reason,'not-manageable');
   let value='not-called';
   const result=await names.syncMemberNickname({...member,manageable:true,setNickname:async next=>{value=next;}},state);
-  eq(result.restored,true);eq(value,null);
+  eq(result.assigned,true);eq(value,'Player (PDT)');
   const changedSeason=await names.syncMemberNickname({...member,nickname:'Lions (EDT)',manageable:true,setNickname:async next=>{value=next;}},state);
-  eq(changedSeason.reason,'custom-nickname-preserved');
+  eq(changedSeason.reason,'manual-nickname-change-preserved');
 });
 
 test('initial template manifest records ownership so a later edit can remove obsolete bot assets', async () => {

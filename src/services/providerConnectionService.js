@@ -32,7 +32,14 @@ function _public(r){if(!r)return null;const n=_normalize(r);const {secretCiphert
 function getConnection(leagueId,providerKey=null){const row=_store().connections.find(r=>String(r.leagueId)===String(leagueId)&&(!providerKey||r.providerKey===providerKey));return row?_normalize(row):null;}
 function listConnections(leagueId=null){return _store().connections.filter(r=>leagueId==null||String(r.leagueId)===String(leagueId)).map(_public);}
 function getSecret(l,p){return decryptSecret(getConnection(l,p)?.secretCiphertext);}
-function resolveRouteToken(providerKey,token){const hash=_hash(token);const row=_store().connections.find(r=>r.providerKey===providerKey&&r.routeTokenHash&&_safeEqHex(r.routeTokenHash,hash)&&!['disconnecting','disconnected'].includes(_normalize(r).status));return row?{valid:true,leagueId:String(row.leagueId),connection:_public(row)}:{valid:false,leagueId:null,connection:null};}
+function resolveRouteToken(providerKey,token){
+ const hash=_hash(token);
+ const row=_store().connections.find(r=>r.providerKey===providerKey&&r.routeTokenHash&&_safeEqHex(r.routeTokenHash,hash)&&!['disconnecting','disconnected'].includes(_normalize(r).status));
+ if(!row)return{valid:false,leagueId:null,connection:null,expired:false};
+ const expiresAt=Number(row.config?.receiverExpiresAt||0);
+ if(expiresAt&&Date.now()>=expiresAt)return{valid:false,leagueId:null,connection:_public(row),expired:true};
+ return{valid:true,leagueId:String(row.leagueId),connection:_public(row),expired:false};
+}
 function _put(row){const s=_store(),idx=s.connections.findIndex(r=>r.id===row.id);if(idx>=0)s.connections[idx]=row;else s.connections.push(row);_save(s);_mirror(row);return row;}
 function upsertConnection(input={}){
  const leagueId=String(input.leagueId||'').trim(),providerKey=String(input.providerKey||'').trim();if(!leagueId)throw Error('provider connection requires leagueId');if(!PROVIDERS.has(providerKey))throw Error(`unsupported provider: ${providerKey}`);

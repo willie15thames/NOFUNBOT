@@ -10,6 +10,7 @@ const svc = fs.readFileSync(path.join(__dirname,'../src/services/cleanSlateReset
 const router = fs.readFileSync(path.join(__dirname,'../src/routing/interactionRouter.js'),'utf8');
 check('clean slate clears shared/direct conversation state', /conversationContextService'\)\.clearGuild/.test(svc));
 check('clean slate clears ambient conversation state', /ambientConversationService'\)\.clearGuild/.test(svc));
+check('clean slate clears media-analysis cache', /mediaContextService'\)\.clearGuild/.test(svc));
 check('clean slate clears active league registry', /activeLeagueService'\)\.clearGuild/.test(svc));
 check('clean slate clears managed-space reservations', /managedSpaceService'\)\.clearGuild/.test(svc));
 check('clean slate clears lifetime history', /lifetimeHistoryService'\)\.clearGuild/.test(svc));
