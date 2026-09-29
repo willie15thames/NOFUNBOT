@@ -97,7 +97,7 @@ async function projectTeamRelease({guildId,leagueId,entry,userId,departureType='
     const teamId=await resolveTeam(client,{guildId,leagueId,entry});
     const user=(await client.query(`SELECT id FROM "users" WHERE "guildId"=$1 AND "userId"=$2`,[guildId,userId])).rows[0];
     if(user) await client.query(`DELETE FROM "team_members" WHERE "userId"=$1 AND "teamId"=$2`,[user.id,teamId]);
-    const seasons=(await client.query(`SELECT s.id,s."policyVersionId",p.policy FROM "seasons" s LEFT JOIN "progression_policy_versions" p ON p.id=s."policyVersionId" WHERE s."guildId"=$1 AND s."leagueId"=$2 AND s.state<>'ARCHIVED' FOR UPDATE`,[guildId,leagueId])).rows;
+    const seasons=(await client.query(`SELECT s.id,s."policyVersionId",p.policy FROM "seasons" s LEFT JOIN "progression_policy_versions" p ON p.id=s."policyVersionId" WHERE s."guildId"=$1 AND s."leagueId"=$2 AND s.state<>'ARCHIVED' FOR UPDATE OF s`,[guildId,leagueId])).rows;
     const mId=membershipId(guildId,leagueId,userId);
     for(const season of seasons){
       await client.query(`UPDATE "membership_tenures" SET "leftAt"=NOW(),"departureType"=$5,"updatedAt"=NOW() WHERE "guildId"=$1 AND "leagueId"=$2 AND "seasonId"=$3 AND "membershipId"=$4 AND "leftAt" IS NULL`,[guildId,leagueId,season.id,mId,String(departureType).toUpperCase()]);

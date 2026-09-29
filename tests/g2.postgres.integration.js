@@ -35,7 +35,8 @@ async function main(){
   console.log('PASS G2 canonical projection, stable transfer identity, and departure forfeiture');
  }finally{
   // G2 tables do not all carry FKs, so clean them explicitly before League cascade cleanup.
-  for(const [table,col] of [['legacy_progression_migrations','guildId'],['progression_claims','guildId'],['player_mutations','guildId'],['progression_grants','guildId'],['progression_wallets','guildId'],['membership_tenures','guildId'],['tier_assignments','guildId'],['postseason_matches','guildId'],['postseason_brackets','guildId'],['progression_policy_versions','guildId'],['seasons','guildId']]){
+  await pool.query(`DELETE FROM "postseason_matches" WHERE "bracketId" IN (SELECT id FROM "postseason_brackets" WHERE "guildId"=$1)`,[guildId]).catch(()=>{});
+  for(const [table,col] of [['legacy_progression_migrations','guildId'],['progression_claims','guildId'],['player_mutations','guildId'],['progression_grants','guildId'],['progression_wallets','guildId'],['membership_tenures','guildId'],['tier_assignments','guildId'],['postseason_brackets','guildId'],['progression_policy_versions','guildId'],['seasons','guildId']]){
    await pool.query(`DELETE FROM "${table}" WHERE "${col}"=$1`,[guildId]).catch(()=>{});
   }
   await pool.query(`DELETE FROM communities WHERE "guildId"=$1`,[guildId]).catch(()=>{});
