@@ -210,6 +210,20 @@ function saveJson(filename, data) {
   writeThroughToDb(filename, data).catch(() => null);
 }
 
+async function saveJsonDurable(filename, data) {
+  data = mergeSharedSpaceData(filename, data);
+  filename = scopedFilename(filename);
+  cache.set(filename, data);
+  mirrorToDisk(filename, data);
+  if (process.env.DATABASE_URL) {
+    await ensureDb();
+    if (!(await writeThroughToDb(filename, data, 'durable-intent'))) {
+      throw Object.assign(new Error(`Durable state could not be saved: ${filename}`), { code:'DURABLE_WRITE_FAILED' });
+    }
+  }
+  return true;
+}
+
 const _timers = {};
 function saveJsonDebounced(filename, data, delayMs = 2000) {
   data = mergeSharedSpaceData(filename,data);
@@ -224,7 +238,9 @@ function saveJsonDebounced(filename, data, delayMs = 2000) {
     mirrorToDisk(filename, currentData);
     try {
       const { enqueueStorageSync } = require('../queue/queues');
-      const queued = await enqueueStorageSync(filename, currentData).catch(() => false);
+      const requestCtx = require('../application/requestContext').current();
+      const spaceId = require('../league/spaceContext').current();
+      const queued = await enqueueStorageSync(filename, currentData, { guildId: requestCtx?.guildId || null, spaceId }).catch(() => false);
       if (!queued) await writeThroughToDb(filename, currentData, 'debounced');
     } catch {
       await writeThroughToDb(filename, currentData, 'debounced');
@@ -243,8 +259,38 @@ async function flushPendingWrites() {
   }
   if(failures.length)throw Error(`Pending writes saved to disk but database sync failed: ${failures.join(', ')}`);
 }
+async function flushAllWrites() {
+  for (const timer of Object.values(_timers)) clearTimeout(timer);
+  for (const name of Object.keys(_timers)) delete _timers[name];
+  for (const [name, value] of cache) {
+    mirrorToDisk(name, value);
+    if (process.env.DATABASE_URL) {
+      await ensureDb();
+      if (!(await writeThroughToDb(name, value, 'reset-commit'))) throw new Error(`Reset state not durable: ${name}`);
+    }
+  }
+}
+async function clearLeagueSpaces(leagueIds = []) {
+  const prefixes = [...new Set(leagueIds.map(id=>`space_${encodeURIComponent(String(id))}__`).filter(p=>p!=='space___'))];
+  if (!prefixes.length) return 0;
+  let removed = 0;
+  const filenames = new Set([...cache.keys(), ...fs.readdirSync(DATA_DIR)]);
+  for (const name of filenames) {
+    if (!prefixes.some(prefix=>name.startsWith(prefix))) continue;
+    if (_timers[name]) { clearTimeout(_timers[name]); delete _timers[name]; }
+    cache.delete(name);
+    try { fs.unlinkSync(getFilePath(name)); removed++; }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
+  if (process.env.DATABASE_URL) {
+    const pool = await ensureDb();
+    if (!pool) throw new Error('Database unavailable while clearing league spaces');
+    for (const prefix of prefixes) await pool.query('DELETE FROM "bot_kv" WHERE left(key, length($1)) = $1', [prefix]);
+  }
+  return removed;
+}
 async function closeStore(){if(dbPool){await dbPool.end();dbPool=null;}dbEnabled=false;}
 function getDataDir() { return DATA_DIR; }
 function getDataFilePath(filename) { return getFilePath(filename); }
 
-module.exports = { flushPendingWrites, closeStore, flushSpaceWrites, loadJson, saveJson, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };
+module.exports = { flushPendingWrites, flushAllWrites, clearLeagueSpaces, closeStore, flushSpaceWrites, loadJson, saveJson, saveJsonDurable, saveJsonDebounced, initStore, writeThroughToDb, getDataDir, getDataFilePath };

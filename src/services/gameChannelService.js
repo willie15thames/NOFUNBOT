@@ -358,8 +358,8 @@ async function handleGameChannelMessage(message) {
       const u1 = game.user1Id ? `<@${game.user1Id}>` : game.team1;
       const u2 = game.user2Id ? `<@${game.user2Id}>` : game.team2;
       const prompt = triggeredSearch
-        ? `NOFUNLEAGUE Bot — ${u1} (${game.team1}) and ${u2} (${game.team2}) are searching for Week ${game.week}. Give 1-2 sentences of hype trash talk, tag both, keep it competitive, and remind them to schedule in this channel.`
-        : `NOFUNLEAGUE Bot — ${u1} (${game.team1}) and ${u2} (${game.team2}) just sent the invite or are about to start Week ${game.week}. Give 1-2 sentences of hype trash talk, tag both, and tell them to finish the game and report the result.`;
+        ? `CommishAI — ${u1} (${game.team1}) and ${u2} (${game.team2}) are searching for Week ${game.week}. Give 1-2 sentences of hype trash talk, tag both, keep it competitive, and remind them to schedule in this channel.`
+        : `CommishAI — ${u1} (${game.team1}) and ${u2} (${game.team2}) just sent the invite or are about to start Week ${game.week}. Give 1-2 sentences of hype trash talk, tag both, and tell them to finish the game and report the result.`;
       const res = await aiCall({ model: MODELS.FAST, max_tokens: 120, messages: [{ role: 'user', content: prompt }] });
       const out = res?.content?.[0]?.text?.trim();
       if (out) await ch.send(out).catch(()=>null);
@@ -413,7 +413,7 @@ async function deleteAllGameChannels(guild, reason, opts = {}) {
       const owner = game || gameSessions.findByChannelId(ch.id);
       const targetLeague = opts.leagueId || require('../league/spaceContext').current();
       if (targetLeague && String(owner?.leagueId) !== String(targetLeague)) continue;
-      if (!targetLeague && require('./activeLeagueService').listActiveLeagues().length > 1) throw new Error('Select a league before deleting game channels');
+      if (!targetLeague && require('./activeLeagueService').listOperationalLeagues().length > 1) throw new Error('Select a league before deleting game channels');
       if (keepWeek != null) {
         const week = game ? Number(game.week) : Number(gameSessions.findByChannelId(ch.id)?.week ?? NaN);
         if (week === keepWeek) continue;

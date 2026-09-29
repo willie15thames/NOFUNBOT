@@ -145,10 +145,10 @@ function buildOpenTeamsEmbeds(guild, leagueId) {
 let _boardMsgId = null, _boardChId = null;
 
 async function refreshOpenTeamsBoard(guild) {
-  const hasActiveLeague = activeLeagueService.listActiveLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
+  const hasActiveLeague = activeLeagueService.listOperationalLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
   const hasConfiguredTeams = Array.isArray(_state.openTeamRegistry) && _state.openTeamRegistry.length > 0;
   if (!hasActiveLeague || !hasConfiguredTeams) return { skipped: true, reason: 'no-active-league' };
-  for (const league of activeLeagueService.listActiveLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
+  for (const league of activeLeagueService.listOperationalLeagues().filter(l=>!require('../league/spaceContext').current()||l.id===require('../league/spaceContext').current())) {
     const ch = (league.builtChannelIds || []).map(id=>guild.channels.cache.get(id)).find(c=>c && require('./leagueNamingService').matchesLeagueChannelKey(c.name,'open-teams'));
     if (!ch) continue;
     await upsertBoardMessage({boardKey:`openTeams:${guild.id}:${league.id}`,channel:ch,payload:{embeds:buildOpenTeamsEmbeds(guild,league.id),allowedMentions:{parse:[]}}});
@@ -190,7 +190,7 @@ function _findEntry(nameInput, leagueId) {
 }
 
 async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
-  const activeLeagues = activeLeagueService.listResetOptions(_state);
+  const activeLeagues = activeLeagueService.listJoinableLeagues({ guildId:guild?.id });
   if (!activeLeagues.length) {
     return { success: false, reason: 'No active league has been created yet. The commissioner needs to run `/setup-league` first.' };
   }
@@ -202,11 +202,12 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
 
   const explicitId = options.leagueId || require('../league/spaceContext').current() || (activeLeagues.length === 1 ? activeLeagues[0].id : undefined);
   if (!explicitId && activeLeagues.length > 1) return { success:false, reason:'Select an exact league before claiming a team.' };
+  if (!activeLeagues.some(l => String(l.id) === String(explicitId))) return { success:false, reason:'The selected league is not active in this server.' };
   const entry = _findEntry(teamNameInput, explicitId);
   if (!entry) {
     // Team not found — provide helpful suggestions
     const suggestions = allOpen.slice(0, 5).map(t => t.displayTeam).join(', ');
-    return { success: false, reason: `Team **${teamNameInput}** not found in any league registry.\n\nAvailable teams include: ${suggestions}${allOpen.length > 5 ? '...' : ''}\nUse the autocomplete dropdown to see all options.` };
+    return { success: false, reason: `Team **${teamNameInput}** not found in any league registry.\n\nAvailable teams include: ${suggestions}${allOpen.length > 5 ? '...' : ''}\nUse the league-scoped team buttons or type the exact team name.` };
   }
   if (!entry.isOpen) {
     return { success: false, reason: `**${entry.displayTeam}** is already claimed${entry.ownerId ? ` by <@${entry.ownerId}>` : ''}. Try another team.` };
@@ -226,9 +227,24 @@ async function claimTeamForUser(guild, member, teamNameInput, options = {}) {
   entry.ownerId = member.id;
   try {
     await require('./teamAssignmentService').claim(guild.id,entry,member.id);
+    if (require('../domain/g2/canonicalProjection').enabled()) {
+      await require('../domain/g2/canonicalProjection').projectTeamClaim({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:member.id, timezone:options.timezone||null, displayName:member.displayName||member.user?.username||null });
+    }
     await require('./leagueVisibilityService').grantMemberAccessToLeague(guild, member, _state, entry.leagueId);
   }
-  catch (err) { await require('./teamAssignmentService').release(guild.id,entry,member.id); entry.isOpen = true; entry.ownerId = null; return { success:false, reason:`Access could not be granted: ${err.message}` }; }
+  catch (err) {
+    try {
+      if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamRelease({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:member.id, departureType:'ROLLBACK', forfeit:false });
+      await require('./teamAssignmentService').release(guild.id,entry,member.id);
+    }
+    catch (rollbackErr) {
+      // Keep the reservation visible and fail loudly: a restart will recover
+      // the durable claim, so presenting the slot as open would double-assign.
+      throw Object.assign(new Error('Team assignment requires repair after failed access rollback.'), { code:'TEAM_ASSIGNMENT_REPAIR_REQUIRED', cause:rollbackErr });
+    }
+    entry.isOpen = true; entry.ownerId = null;
+    return { success:false, reason:'Access could not be granted. The team remains open; try again.' };
+  }
   entry.timezone = options.timezone || null;
   const key      = playerKey(entry);
   const candidate = _state.players.get(key);
@@ -256,8 +272,15 @@ async function releaseByUserId(guild, userId, leagueId = null) {
   const entry = entries[0];
   if (!entry) return null;
   if (entry.ownerId) {
-    await require('./leagueVisibilityService').revokeMemberAccess(guild,entry.ownerId,entry.leagueId);
-    await require('./teamAssignmentService').release(guild.id,entry,entry.ownerId);
+    const previousOwner=entry.ownerId;
+    if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamRelease({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:previousOwner, departureType:'LEAVE' });
+    try {
+      await require('./leagueVisibilityService').revokeMemberAccess(guild,previousOwner,entry.leagueId);
+      await require('./teamAssignmentService').release(guild.id,entry,previousOwner);
+    } catch (err) {
+      if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamClaim({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:previousOwner }).catch(()=>null);
+      throw err;
+    }
   }
   entry.isOpen = true; entry.ownerId = null; entry.timezone = null;
   const p = _state.players.get(playerKey(entry));
@@ -271,14 +294,28 @@ async function releaseByUserId(guild, userId, leagueId = null) {
 
 async function releaseByName(guild, teamNameInput, options = {}) {
   const [name, encodedLeague] = String(teamNameInput || '').split('::');
-  const selected = encodedLeague || options.leagueId || require('../league/spaceContext').current();
-  if (!selected && activeLeagueService.listActiveLeagues().length > 1) throw new Error('Select the league for team release');
-  const entry = _findEntry(name, selected || undefined);
+  // Encoded display strings are legacy input, never allowed to override an
+  // explicit canonical scope selected by the application use case.
+  if (options.leagueId && encodedLeague && String(encodedLeague) !== String(options.leagueId)) {
+    throw Object.assign(new Error('Team league does not match the selected league.'), { code:'LEAGUE_SCOPE_MISMATCH' });
+  }
+  const selected = options.leagueId || encodedLeague || require('../league/spaceContext').current();
+  if (!selected) throw Object.assign(new Error('Select the exact league for team release.'), { code:'LEAGUE_REQUIRED' });
+  const resolved = require('./leagueResolverService').resolveLeague(selected, { guildId:guild?.id, mode:'operational' });
+  if (!resolved.ok) throw Object.assign(new Error(resolved.message), { code:resolved.code });
+  const entry = _findEntry(name, resolved.league.id);
   if (!entry) return null;
   const prevOwner = entry.ownerId;
   if (entry.ownerId) {
-    await require('./leagueVisibilityService').revokeMemberAccess(guild,entry.ownerId,entry.leagueId);
-    await require('./teamAssignmentService').release(guild.id,entry,entry.ownerId);
+    const previousOwner=entry.ownerId;
+    if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamRelease({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:previousOwner, departureType:'LEAVE' });
+    try {
+      await require('./leagueVisibilityService').revokeMemberAccess(guild,previousOwner,entry.leagueId);
+      await require('./teamAssignmentService').release(guild.id,entry,previousOwner);
+    } catch (err) {
+      if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamClaim({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:previousOwner }).catch(()=>null);
+      throw err;
+    }
   }
   entry.isOpen = true; entry.ownerId = null; entry.timezone = null;
   const p = _state.players.get(playerKey(entry));
@@ -293,7 +330,7 @@ async function releaseByName(guild, teamNameInput, options = {}) {
 
 
 async function createOrClaimCustomTeam(guild, member, { leagueId=null, teamName, replacementFor=null, logoUrl=null, timezone=null }) {
-  const activeLeagues = activeLeagueService.listResetOptions(_state);
+  const activeLeagues = activeLeagueService.listJoinableLeagues({ guildId:guild?.id });
   if (!activeLeagues.length) {
     return { success: false, reason: 'No active league exists yet. Commissioner must run `/setup-league` first.' };
   }
@@ -336,9 +373,22 @@ async function createOrClaimCustomTeam(guild, member, { leagueId=null, teamName,
   entry.ownerId = member.id;
   try {
     await require('./teamAssignmentService').claim(guild.id,entry,member.id);
+    if (require('../domain/g2/canonicalProjection').enabled()) {
+      const leagueRecord=activeLeagueService.getLeague(entry.leagueId);
+      await require('../domain/g2/canonicalProjection').projectLeague({ guildId:guild.id, league:leagueRecord, teamEntries:[entry] });
+      await require('../domain/g2/canonicalProjection').projectTeamClaim({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:member.id, timezone:timezone||null, displayName:member.displayName||member.user?.username||null });
+    }
     await require('./leagueVisibilityService').grantMemberAccessToLeague(guild, member, _state, entry.leagueId);
   }
-  catch (err) { await require('./teamAssignmentService').release(guild.id,entry,member.id); entry.isOpen = true; entry.ownerId = null; return { success:false, reason:`Access could not be granted: ${err.message}` }; }
+  catch (err) {
+    try {
+      if (require('../domain/g2/canonicalProjection').enabled()) await require('../domain/g2/canonicalProjection').projectTeamRelease({ guildId:guild.id, leagueId:entry.leagueId, entry, userId:member.id, departureType:'ROLLBACK', forfeit:false });
+      await require('./teamAssignmentService').release(guild.id,entry,member.id);
+    }
+    catch (rollbackErr) { throw Object.assign(new Error('Custom team assignment requires repair after failed access rollback.'), { code:'TEAM_ASSIGNMENT_REPAIR_REQUIRED', cause:rollbackErr }); }
+    entry.isOpen = true; entry.ownerId = null;
+    return { success:false, reason:'Access could not be granted. The team remains open; try again.' };
+  }
   entry.timezone = timezone || null;
   const key = playerKey(entry);
   const candidate = _state.players.get(key);

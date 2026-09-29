@@ -69,7 +69,7 @@ function _arm(guild, state, generation) {
 function start({ guild, state } = {}) {
   const scope = require('../league/spaceContext');
   if (guild?.id && !scope.current()) {
-    const leagues = require('./activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');
+    const leagues = require('./activeLeagueService').listProviderTargets({ guildId:guild.id });
     if (leagues.length) return {started:true,spaces:leagues.map(l=>scope.run(l.id,()=>start({guild,state})))};
   }
   if (!guild?.id) return { started: false, reason: 'no-guild' };

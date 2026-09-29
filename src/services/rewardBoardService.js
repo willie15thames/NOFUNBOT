@@ -140,7 +140,7 @@ function buildStatLeadersBoardEmbed() {
   return new EmbedBuilder().setColor(0x0096c7)
     .setTitle(`📊 STAT LEADERS — WEEK ${sl.week}`)
     .addFields(fields)
-    .setFooter({ text: `Week ${sl.week} • NOFUNLEAGUE` }).setTimestamp();
+    .setFooter({ text: `Week ${sl.week} • CommishAI` }).setTimestamp();
 }
 
 
@@ -148,7 +148,7 @@ function buildStatLeadersBoardEmbed() {
 // ── Refresh all boards ──────────────────────────────────────────────────
 async function refresh(guild) {
   if (!_getCh || !_state) { log.warn('refresh() called before init()'); return; }
-  const hasActiveLeague = activeLeagueService.listActiveLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
+  const hasActiveLeague = activeLeagueService.listOperationalLeagues().length > 0 || !!(_state.leagueConfig?.leagueTypeId && _state.leagueConfig?.leagueName);
   const hasMeaningfulData = !!(_state.currentStatLeaders || (_state.potwHistory && _state.potwHistory.length) || (_state.streamMilestones && _state.streamMilestones.length) || (_state.superbowlHistory && _state.superbowlHistory.length) || (_state.yearlyAwardHistory && _state.yearlyAwardHistory.length));
   if (!hasActiveLeague && !hasMeaningfulData) return { skipped: true, reason: 'no-active-league' };
   await Promise.allSettled([

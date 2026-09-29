@@ -10,7 +10,7 @@
 
 'use strict';
 
-const { createProvider } = require('../gameProvider');
+const { createProvider } = require('../providerContract');
 
 module.exports = createProvider({
   key: 'local',

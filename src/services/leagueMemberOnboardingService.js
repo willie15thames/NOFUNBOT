@@ -27,8 +27,8 @@ function findLeagueChannel(guild, league, keys = ['general', 'open-teams', 'anno
   return channels.find(ch => ch?.isTextBased?.()) || null;
 }
 
-function buildTimezoneRow(leagueId, userId) {
-  return timezoneGateService.buildTimezoneSelectRow(`league_member_timezone::${leagueId}::${userId}`);
+function buildTimezoneRow(leagueId, userId, guildId) {
+  return timezoneGateService.buildTimezoneSelectRow(`league_member_timezone::${leagueId}::${userId}`, { guildId, actorId:userId, public:false });
 }
 
 function _profileLeagueState(userId, leagueId) {
@@ -81,12 +81,12 @@ async function notifyMemberAdded({ guild, member, leagueId, teamName = null, act
     message = await channel.send({
       content:`<@${member.id}>`,
       embeds:[embed],
-      components:[buildTimezoneRow(league.id, member.id)],
+      components:[buildTimezoneRow(league.id, member.id, guild.id)],
       allowedMentions:{ users:[member.id], parse:[] },
     }).catch(() => null);
   }
 
-  // DM is supplemental only. The league channel message remains canonical because its select menu
+  // DM is supplemental only. The league channel message remains canonical because its button panel
   // runs with guild/member context and works even when DMs are disabled.
   await member.send?.({
     content:`You were added to **${league.leagueName}**${teamName ? ` as **${teamName}**` : ''}. Open the league in **${guild.name}** and choose your timezone on the welcome card.`,
@@ -95,6 +95,7 @@ async function notifyMemberAdded({ guild, member, leagueId, teamName = null, act
 
   markOnboarding(member.id, league.id, {
     status:'awaiting-timezone',
+    teamStatus: teamName ? 'ASSIGNED' : 'AWAITING_TEAM',
     teamName: teamName || null,
     notifiedAt:Date.now(),
     messageId:message?.id || null,

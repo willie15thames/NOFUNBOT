@@ -40,7 +40,7 @@ const CHANNEL_GUIDES = {
 
   // ── Community / Social ──────────────────────────────────────────
   'general-chat':         { title: '💬 General Chat', description: 'The main hangout. Talk about anything server-related here. Keep it respectful.', color: 0x3498db },
-  'polls':                { title: '📊 Polls & Voting', description: 'Vote-only channel. Use the posted picklists to cast your vote — no free-form chat here.', color: 0xf1c40f },
+  'polls':                { title: '📊 Polls & Voting', description: 'Vote-only channel. Use the posted buttons to cast your vote — no free-form chat here.', color: 0xf1c40f },
   'introductions':        { title: '👤 Introductions', description: 'Introduce yourself to the community. Name, interests, what brought you here.', color: 0x3498db },
   'media-share':          { title: '🖼 Media Share', description: 'Share images, videos, links, and other media with the community.', color: 0x3498db },
   'off-topic':            { title: '🗨 Off-Topic', description: 'Anything that doesn\'t fit elsewhere goes here. Keep it civil.', color: 0x3498db },
@@ -355,7 +355,7 @@ const CHANNEL_GUIDES = {
   'commish-hub-league':   { title: '📋 Commissioner League Hub', description: 'Commissioner league management — hub display, strike management, and league operations.', color: 0x95a5a6 },
 
   // ── Components (V199.1) ─────────────────────────────────────────
-  'mvp-voting':           { title: '⭐ MVP Voting', description: 'Vote for the weekly MVP using the dropdown. One vote per member.', color: 0xf1c40f },
+  'mvp-voting':           { title: '⭐ MVP Voting', description: 'Vote for the weekly MVP using the buttons. One vote per member.', color: 0xf1c40f },
   'availability':         { title: '📆 Availability', description: 'Post your weekly availability. Available, Limited, or Unavailable.', color: 0x3498db },
   'predictions':          { title: '🔮 Predictions', description: 'Pick your winners for the week. Predictions lock when the week advances.', color: 0x9b59b6 },
 
@@ -369,7 +369,7 @@ const CHANNEL_GUIDES = {
 
   // ── Server ops (V199.1) ────────────────────────────────────────
   'patch-notes':          { title: '📄 Patch Notes', description: 'Bot update history and changelog. Read-only — posted automatically.', color: 0x95a5a6 },
-  'community-selector':   { title: '🧩 Community Selector', description: 'Choose the communities you want access to. Use the dropdown to update your spaces.', color: 0x5865f2 },
+  'community-selector':   { title: '🧩 Community Selector', description: 'Choose the communities you want access to. Use the buttons to update your spaces.', color: 0x5865f2 },
   'timezone-gate':        { title: '🕐 Timezone Setup', description: 'Set your timezone to unlock full server access.', color: 0x5865f2 },
 };
 
@@ -384,7 +384,7 @@ const CHANNEL_COMMANDS = {
   'server-guide':         { commands: ['`/manual` — Open the bot manual and PDF'] },
   'how-to-join':          { commands: ['`/join-league` — Request to join a league', '`/select-team` — Claim an open team'] },
   'announcements':        { commands: ['Read-only — staff announcements only'], actions: ['Broadcasts from `/broadcasts` appear here'] },
-  'polls':                { commands: ['`/create-poll` — Create a new poll (Comm)'], actions: ['Vote using the dropdown selector on each poll'] },
+  'polls':                { commands: ['`/create-poll` — Create a new poll (Comm)'], actions: ['Vote using the buttons selector on each poll'] },
 
   // ── Community ───────────────────────────────────────────────
   'general-chat':         { commands: ['@mention the bot to talk with AI', '`/set-timezone` — Set your timezone', '`/player` — Look up a player\'s stats and info'], actions: ['AI responds to @mentions with the member persona'] },
@@ -399,10 +399,10 @@ const CHANNEL_COMMANDS = {
 
   // ── Staff / Admin ───────────────────────────────────────────
   'commissioner-ai':      { commands: ['@mention the bot to talk with commissioner AI', '`/diagnose` — Run full bot diagnostic', '`/health-status` — System health check', '`/audit-log` — View security audit log', '`/workflow` — Inspect workflow status', '`/respond` — Send a bot response to a channel (Comm)'], actions: ['Commissioner AI responds to @mentions with full server awareness', 'Ask "what\'s broken?" for live diagnostic report'] },
-  'admin-hq':             { commands: ['`/diagnose` — Full diagnostic report', '`/health-status` — System health', '`/audit-wiring` — Check bot wiring', '`/security-audit` — Security status', '`/hierarchy-status` — Role hierarchy', '`/lock-bot-access` — Re-lock bot permissions', '`/fix-duplicates` — Remove duplicate categories', '`/add-admin` — Grant admin role (Comm)', '`/remove-admin` — Revoke admin role (Comm)', '`/list-admins` — Show all admins (Comm)', '`/logger` — Configure logging (Comm)', '`/edit-message` — Edit a bot message by ID (Comm)', '`/audit-emojis` — Audit emoji usage (Comm)', '`/sync-emojis` — Sync emoji bank (Comm)', `\`${_cmdPath('process-builder')}\` — Create a managed process (Comm)`, `\`${_cmdPath('process-run')}\` — Execute a managed process (Comm)`] },
+  'admin-hq':             { commands: ['`/diagnose` — Full diagnostic report', '`/health-status` — System health', '`/audit-wiring` — Check bot wiring', '`/security-audit` — Security status', '`/hierarchy-status` — Role hierarchy', '`/lock-bot-access` — Re-lock bot permissions', '`/fix-duplicates` — Remove duplicate categories', '`/add-admin` — Grant admin role (Comm)', '`/remove-admin` — Revoke admin role (Comm)', '`/list-admins` — Show all admins (Comm)', '`/logger` — Configure logging (Comm)', '`/workflow edit-message` — Edit a bot message by ID (Comm)', '`/audit-emojis` — Audit emoji usage (Comm)', '`/sync-emojis` — Sync emoji bank (Comm)', `\`${_cmdPath('process-builder')}\` — Create a managed process (Comm)`, `\`${_cmdPath('process-run')}\` — Execute a managed process (Comm)`] },
   'commish-hub':          { commands: ['`/dashboard` — Server dashboard', '`/member-record` — View/note member records', '`/list-communities` — Show all communities', '`/setup-community` — Create a new community (Comm)', '`/edit-community` — Rename a community (Comm)', '`/delete-community` — Remove a community (Comm)', '`/toggle-team-mode` — Change community team mode (Comm)', '`/toggle-feature` — Enable/disable bot features (Comm)', '`/list-features` — Show feature toggle status (Comm)', '`/post-component` — Post an interactive panel (Comm)', '`/suggestions` — View member suggestions (Comm)', '`/set-bot-identity` — Change bot name/avatar (Comm)', '`/set-bot-tone` — Configure AI personality (Comm)', '`/reset-customization` — Reset tone/identity to defaults (Comm)'], actions: ['Upload screenshots and notes for commissioner reference'] },
   'scoresheets':          { commands: ['`/league-data-ingest` — Import schedule/stats data', '`/schedule-import` — Import a schedule file', '`/report-result` — Submit a game result (Comm)', '`/retract-score` — Retract a submitted score (Comm)', '`/league-export` — Export league data (Comm)'], actions: ['Upload screenshots — bot AI can parse them'] },
-  'setup-wizard':         { commands: ['`/setup-wizard-start` — Reopen the setup wizard', '`/setup-server` — Quick server setup', '`/trash-the-bot` — Full reset (Comm)', '`/initialize-server` — Reinitialize (Comm)', '`/setup-league` — Create a new league (Comm)', '`/delete-league` — Delete an active league (Comm)', '`/reset-league` — Reset and rebuild a league (Comm)', '`/start-season` — Begin the season (Comm)'], actions: ['Use the wizard buttons and dropdowns to configure the server'] },
+  'setup-wizard':         { commands: ['`/setup-wizard-start` — Reopen the setup wizard', '`/setup-server` — Quick server setup', '`/trash-the-bot` — Full reset (Comm)', '`/initialize-server` — Reinitialize (Comm)', '`/setup-league` — Create a new league (Comm)', '`/delete-league` — Delete an active league (Comm)', '`/reset-league` — Reset and rebuild a league (Comm)', '`/start-season` — Begin the season (Comm)'], actions: ['Use the wizard buttons and guided panels to configure the server'] },
 
   // ── League — Scheduling ─────────────────────────────────────
   'weekly-schedule':      { commands: ['`/advance-week` — Post new weekly schedule (Comm)', `\`${_cmdPath('repost-schedule')}\` — Repost current schedule (Comm)`, '`/schedule-load-week` — Load a week from registry (Comm)', '`/release-week` — Release current week results (Comm)', `\`${_cmdPath('schedule-registry-status')}\` — View schedule registry (Comm)`], actions: ['Read-only — schedule posted automatically when week advances'] },
@@ -444,7 +444,7 @@ const CHANNEL_COMMANDS = {
   'commish-hub-league':   { commands: [`\`${_cmdPath('clear-hub')}\` — Clear hub display (Comm)`, `\`${_cmdPath('hub-status')}\` — View hub state (Comm)`, '`/set-hub-week` — Set displayed week (Comm)', '`/clear-strikes` — Reset a member\'s strikes (Comm)'], actions: ['Commissioner league management dashboard'] },
 
   // ── Component channels ──────────────────────────────────────
-  'mvp-voting':           { actions: ['Use the dropdown to vote for weekly MVP', 'One vote per member — change your vote anytime'] },
+  'mvp-voting':           { actions: ['Use the buttons to vote for weekly MVP', 'One vote per member — change your vote anytime'] },
   'availability':         { actions: ['Click 🟢 Available, 🟡 Limited, or 🔴 Unavailable', 'Updates your availability for the current week'] },
   'predictions':          { actions: ['Click "Make Predictions" to pick your winners', 'Predictions lock when the week advances'] },
 
@@ -474,7 +474,7 @@ const CHANNEL_COMMANDS = {
 
   // ── Server ops ──────────────────────────────────────────────
   'patch-notes':          { actions: ['Read-only — bot update history posted automatically'] },
-  'community-selector':   { actions: ['Use the dropdown to choose your communities', 'Selecting a community grants you access to its channels'] },
+  'community-selector':   { actions: ['Use the buttons to choose your communities', 'Selecting a community grants you access to its channels'] },
   'timezone-gate':        { commands: ['`/set-timezone` — Set your timezone'], actions: ['Set your timezone to unlock full server access'] },
 };
 

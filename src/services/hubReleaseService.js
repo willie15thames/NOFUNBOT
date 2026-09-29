@@ -22,25 +22,38 @@ const { getTeamEmoji, getTeamDataByAnyName } = require('../utils/teamUtils');
 const { COMM_ROLE }  = require('../config/env');
 const { postStatLeaders } = require('./statLeaderService');
 const log = makeLogger('hubRelease');
+const schedulerRegistry = require('./schedulerRegistryService');
+const { saveJsonDurable } = require('../storage/jsonStore');
+
+async function persistHubIntent(state) {
+  const { releaseTimerId, potwTimerId, ...durable } = state.hubWeeklyData || {};
+  await saveJsonDurable('hubWeeklyData.json', durable);
+}
 
 // ── Time helpers ──────────────────────────────────────────────
-// Uses UTC offsets directly — works correctly on ANY OS, timezone, or cloud host.
-// PST = UTC-8. PDT = UTC-7. We always target PST (UTC-8) for consistency.
-function msUntilHourPST(targetHour, targetMin) {
-  const nowMs = Date.now();
-  // Current time in PST (UTC-8), expressed as ms since epoch aligned to PST midnight
-  const pstOffsetMs = 8 * 60 * 60 * 1000; // UTC-8
-  const pstNowMs = nowMs - pstOffsetMs;
-  // PST midnight of current day
-  const pstMidnight = Math.floor(pstNowMs / 86400000) * 86400000;
-  // Target time today in PST
-  let targetMs = pstMidnight + (targetHour * 3600 + targetMin * 60) * 1000 + pstOffsetMs;
-  // If we've already passed it, schedule for tomorrow
-  if (targetMs <= nowMs) targetMs += 86400000;
-  return targetMs - nowMs;
+// Business clocks use IANA timezone semantics so Pacific time follows PST/PDT correctly.
+const PACIFIC_ZONE = 'America/Los_Angeles';
+function _partsInZone(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'
+  }).formatToParts(new Date(ms));
+  const o={}; for(const p of parts) if(p.type!=='literal') o[p.type]=Number(p.value);
+  return o;
 }
-function msUntil659pmPST() { return msUntilHourPST(18, 59); }
-function msUntil7pmPST()   { return msUntilHourPST(19, 0);  }
+function _zonedLocalToUtc({year,month,day,hour,minute,second=0}, timeZone) {
+  const desired = Date.UTC(year,month-1,day,hour,minute,second);
+  let guess=desired;
+  for(let i=0;i<4;i+=1){ const p=_partsInZone(guess,timeZone); const represented=Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second); const diff=desired-represented; if(Math.abs(diff)<1000) break; guess+=diff; }
+  return guess;
+}
+function msUntilHourInZone(targetHour,targetMin,timeZone=PACIFIC_ZONE){
+  const now=Date.now(); const p=_partsInZone(now,timeZone);
+  let target=_zonedLocalToUtc({year:p.year,month:p.month,day:p.day,hour:targetHour,minute:targetMin},timeZone);
+  if(target<=now){ const d=new Date(Date.UTC(p.year,p.month-1,p.day)+86400000); target=_zonedLocalToUtc({year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate(),hour:targetHour,minute:targetMin},timeZone); }
+  return target-now;
+}
+function msUntil659pmPST() { return msUntilHourInZone(18,59,PACIFIC_ZONE); }
+function msUntil7pmPST() { return msUntilHourInZone(19,0,PACIFIC_ZONE); }
 
 // ── Hub Release ───────────────────────────────────────────────
 async function runWeeklyRelease(guild, client, state, deps, manual=false) {
@@ -55,12 +68,14 @@ async function runWeeklyRelease(guild, client, state, deps, manual=false) {
   await postStatLeaders(guild, { announce: true });
   await _releaseStandings(guild, state, getCh);
 
-  // Schedule POTW pick
-  if (state.hubWeeklyData.potwTimerId) clearTimeout(state.hubWeeklyData.potwTimerId);
+  // Schedule POTW pick. dueAt is durable; the process timer is only a wake-up.
   const delay = manual ? 1000 : 6*60*1000;
-  state.hubWeeklyData.potwTimerId = setTimeout(
-    () => _selectAndConfirmPOTW(guild, client, state, deps), delay
-  );
+  state.hubWeeklyData.potwDueAt = Date.now() + delay;
+  state.hubWeeklyData.potwAttempts = 0;
+  // Persist the deadline before arming a process-local wake-up. A crash in
+  // this window must not lose the business obligation.
+  await persistHubIntent(state);
+  _armPotwTimer(guild, client, state, deps);
 }
 
 async function _releaseScoresheet(guild, state, getCh) {
@@ -92,10 +107,25 @@ async function _releaseStandings(guild, state, getCh) {
   if (announceCh) await announceCh.send({content:'@everyone',embeds:[embed],allowedMentions:{parse:['everyone']}}).catch(()=>null);
 }
 
+function _armPotwTimer(guild, client, state, deps) {
+  schedulerRegistry.cancel('potw-followup', guild?.id);
+  const dueAt = Number(state.hubWeeklyData?.potwDueAt || 0);
+  if (!dueAt || state.hubWeeklyData?.potwCandidate) { state.hubWeeklyData.potwTimerId = null; return null; }
+  const row = schedulerRegistry.registerTimeout({ key:'potw-followup', guildId:guild?.id, dueAt, durable:true, owner:'hubReleaseService', callback:() => _selectAndConfirmPOTW(guild, client, state, deps) });
+  state.hubWeeklyData.potwTimerId = row.handle;
+  return row;
+}
+
 async function _selectAndConfirmPOTW(guild, client, state, deps) {
+  state.hubWeeklyData.potwTimerId = null;
   const { getCh, aiCall, MODELS } = deps;
   const lines = state.hubWeeklyData.statLines;
-  if (!lines.length) return;
+  if (!lines?.length) {
+    state.hubWeeklyData.potwDueAt = null;
+    await persistHubIntent(state);
+    log.warn('POTW follow-up has no stat lines; commissioner input is required.');
+    return;
+  }
   const week = state.hubWeeklyData.week||'?';
   const summary = lines.map(sl=>`${sl.player} (${sl.team}) — ${sl.stat}: ${sl.value}`).join('\n');
   try {
@@ -104,34 +134,49 @@ async function _selectAndConfirmPOTW(guild, client, state, deps) {
     const raw=res.content[0].text.trim().replace(/^```json\s*/i,'').replace(/```\s*$/i,'');
     const pick=JSON.parse(raw);
     state.hubWeeklyData.potwCandidate=pick;
+    state.hubWeeklyData.potwDueAt=null;
+    state.hubWeeklyData.potwAttempts=0;
+    await persistHubIntent(state);
     const embed=new EmbedBuilder().setColor(0xf1c40f).setTitle(`⭐ AI BEST-IN-LEAGUE PICK — Week ${week} — CONFIRM NEEDED`).setDescription(`**Player:** ${pick.player}\n**Team:** ${pick.team}\n**Key Stat:** ${pick.statLine}\n\n**Reason:** ${pick.reason}\n\nRun \`/potw-confirm action:confirm\` to post this.`).setTimestamp();
     const commRole=COMM_ROLE?guild.roles.cache.get(COMM_ROLE):null;
     if (commRole) for (const [,m] of commRole.members) await m.send({embeds:[embed]}).catch(()=>null);
     const hubCh=getCh(guild,'commishHub');
     if (hubCh) await hubCh.send({embeds:[embed]}).catch(()=>null);
-  } catch (e) { log.error('POTW AI failed:', e.message); }
+  } catch (e) {
+    log.error('POTW AI failed:', e.message);
+    const attempts = Number(state.hubWeeklyData.potwAttempts || 0) + 1;
+    state.hubWeeklyData.potwAttempts = attempts;
+    if (attempts < 3) { state.hubWeeklyData.potwDueAt = Date.now() + 2*60*1000; await persistHubIntent(state); _armPotwTimer(guild, client, state, deps); }
+    else { state.hubWeeklyData.potwDueAt = null; await persistHubIntent(state); log.error('POTW AI exhausted 3 durable attempts; commissioner action required.'); }
+  }
 }
 
-function resetHubWeek(week, state) {
+
+async function resetHubWeek(week, state) {
+  schedulerRegistry.cancelAll('potw-followup');
   if (state.hubWeeklyData.potwTimerId) clearTimeout(state.hubWeeklyData.potwTimerId);
   const timer = state.hubWeeklyData.releaseTimerId;
   state.hubWeeklyData = {
     week, scores:[], statLines:[], standings:null,
     potwCandidate:null, released:false,
-    releaseTimerId:timer, potwTimerId:null,
+    releaseTimerId:timer, potwTimerId:null, potwDueAt:null, potwAttempts:0,
   };
+  await persistHubIntent(state);
 }
 
 function startHubReleaseTimer(guild, client, state, deps) {
+  _armPotwTimer(guild, client, state, deps);
+  schedulerRegistry.cancel('hub-release', guild?.id);
   if (state.hubWeeklyData.releaseTimerId) clearTimeout(state.hubWeeklyData.releaseTimerId);
   const scheduleNext = () => {
     const delay = msUntil659pmPST();
-    log.info(`Release timer: next fire in ${Math.round(delay/60000)}m (6:59pm PST)`);
-    state.hubWeeklyData.releaseTimerId = setTimeout(async () => {
-      if (!state.hubWeeklyData.released && state.hubWeeklyData.scores.length)
-        await runWeeklyRelease(guild, client, state, deps, false);
+    log.info(`Release timer: next fire in ${Math.round(delay/60000)}m (6:59pm America/Los_Angeles)`);
+    const dueAt = Date.now() + delay;
+    const row = schedulerRegistry.registerTimeout({ key:'hub-release', guildId:guild?.id, dueAt, durable:false, owner:'hubReleaseService', callback:async () => {
+      if (!state.hubWeeklyData.released && state.hubWeeklyData.scores.length) await runWeeklyRelease(guild, client, state, deps, false);
       scheduleNext();
-    }, delay);
+    }});
+    state.hubWeeklyData.releaseTimerId = row.handle;
   };
   scheduleNext();
 }
@@ -244,7 +289,7 @@ function startScheduleTimer(guild, state, getCh, getTeamEmoji) {
     state.scheduleState.initialTimerId = null;
   };
   const delay = msUntil7pmPST();
-  log.info(`Schedule timer: automatic mode enabled (gen ${generation}). First fire in ${Math.round(delay/60000)}m, then every ${weekly.advanceHours}h.`);
+  log.info(`Schedule timer: automatic mode enabled (gen ${generation}). First fire in ${Math.round(delay/60000)}m Pacific local time, then every ${weekly.advanceHours}h.`);
   entry.initialTimerId = setTimeout(fire, delay);
   if (entry.initialTimerId?.unref) entry.initialTimerId.unref();
   state.scheduleState.initialTimerId = entry.initialTimerId;
@@ -306,7 +351,7 @@ async function createLeagueStructure(guild, getCh, state, aiCall, MODELS) {
 }
 
 module.exports = {
-  runWeeklyRelease, resetHubWeek, startHubReleaseTimer,
+  runWeeklyRelease, resetHubWeek, startHubReleaseTimer, msUntilHourInZone, PACIFIC_ZONE,
   parseMatchupLines, postScheduleEmbed, startScheduleTimer, stopScheduleTimer, getScheduleTimerStatus,
   postNFLUpdates, createLeagueStructure,
 };

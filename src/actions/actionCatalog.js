@@ -5,7 +5,7 @@
  * PURPOSE: The ONE registered Action Catalog. Every AI-executable action declares: type, owner service, field
  *          schema (types + validation), permission, destructive flag, confirmation policy, idempotency, and its
  *          executor. The commissioner runtime prompt's action list is GENERATED from this file (ai/commissionerPrompt),
- *          the validator enforces it, and the executor runs it — so prompt, validator, executor and tests cannot drift.
+ *          the validator enforces it, and the executor runs it — so catalog-defined model actions share one contract. Other transports converge on the same application use cases.
  * LOOK HERE FIRST WHEN DEBUGGING: ACTIONS, getAction(), requiresConfirmation().
  * RELATED FLOW: actions/actionValidator, actions/actionExecutor, actions/confirmationService, handlers/commissionerHandler.
  * NOTE: To add an action you MUST add its definition + executor here AND a test in tests/ (rule 30). Never add an
@@ -59,7 +59,7 @@ const ACTIONS = [
     description: 'Reset the hub staging week (clears staged scores/stat lines).', fields: { week: { type: 'integer', required: true, min: 1, max: 30 } },
     async execute(f, ctx) {
       const hub = require('../services/hubReleaseService');
-      hub.resetHubWeek(f.week, ctx.state);
+      await hub.resetHubWeek(f.week, ctx.state);
       hub.startHubReleaseTimer(ctx.guild, ctx.client, ctx.state, ctx);
       return { ok: true, message: `✅ Hub week set to **Week ${f.week}**.` };
     },

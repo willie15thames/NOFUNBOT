@@ -11,7 +11,7 @@
 
 'use strict';
 
-const { createProvider, notConfigured } = require('./gameProvider');
+const { createProvider, notConfigured } = require('./providerContract');
 const { fetchExternal } = require('../utils/httpIntake');
 
 function _target(key, envUrl, envToken) {

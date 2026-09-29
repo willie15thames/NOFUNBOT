@@ -12,6 +12,7 @@ const { createHash } = require('crypto');
 const { getPrisma } = require('../storage/prisma');
 const { makeLogger, RUN_ID } = require('../utils/logger');
 const { toBoolean } = require('../config/featureFlags');
+const { redactString } = require('../utils/redact');
 
 const log = makeLogger('runtimeIncident');
 const recent = new Map();
@@ -22,17 +23,7 @@ function enabled(env = process.env) {
   return toBoolean(env.RUNTIME_INCIDENT_CAPTURE_ENABLED, true);
 }
 
-function sanitizeText(value, max = 3500) {
-  let s = String(value ?? '');
-  s = s
-    .replace(/postgres(?:ql)?:\/\/[^\s"'`]+/gi, '[REDACTED_DATABASE_URL]')
-    .replace(/redis:\/\/[^\s"'`]+/gi, '[REDACTED_REDIS_URL]')
-    .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+/gi, '$1[REDACTED]')
-    .replace(/((?:api[_-]?key|token|secret|password|webhook[_-]?secret|provider[_-]?secret)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_KEY]')
-    .replace(/\b[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_TOKEN]');
-  return s.slice(0, max);
-}
+function sanitizeText(value, max = 3500) { return redactString(value, max); }
 
 function stableMessage(value) {
   return sanitizeText(value, 1000)

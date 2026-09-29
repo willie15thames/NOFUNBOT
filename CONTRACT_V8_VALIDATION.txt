@@ -1,0 +1,43 @@
+NOFUNBOT Contract v8 validation snapshot
+Date: 2026-09-28
+
+PASS  changelog guard: package 21.11.0-rc.3 present
+PASS  contract v8 static gate: 207 source files checked
+PASS  undefined executable identifier scan
+PASS  contractV8.regression.test.js: 9 passed, 0 failed
+PASS  JavaScript syntax scan: 263 files, 0 failures
+PASS  production StringSelectMenuBuilder count: 0
+
+Environment limitation:
+- A clean `npm ci` in the artifact container timed out while downloading/installing dependencies.
+- Therefore the full npm test / TypeScript / release verify / deploy preflight must be rerun after clean extraction on the target Mac or CI runner.
+
+Required promotion commands:
+  npm ci
+  npm test
+  npm run tsc
+  npm run release:verify
+  npm run deploy:preflight
+
+Do not deploy if any command fails.
+
+=== FINAL G0/G1 COMPLETION PASS — 2026-09-28 ===
+PASS node --check: 263 JavaScript files, 0 syntax failures
+PASS node scripts/contract-v8-static-check.js: 207 source files checked
+PASS node scripts/check-undefined-identifiers.js
+PASS npm run tsc -- --pretty false
+
+FULL DEPENDENCY GATE STATUS:
+The extracted ZIP does not ship node_modules. npm ci was attempted but did not complete in this artifact environment.
+The partial dependency tree was removed. Run on target/CI:
+  npm ci
+  npm test
+  npm run tsc
+  npm run release:verify
+  npm run deploy:preflight
+
+FINAL PATCHED INVARIANTS:
+- setDataSourceMode rejects unknown values (no silent coercion)
+- league resolver distinguishes archived/archiving/wrong-guild/ambiguous/not-found lifecycle outcomes
+- join-league uses canonical joinable records only; synthetic reset/recovery id="current" is excluded
+- static Contract v8 gate protects all three invariants

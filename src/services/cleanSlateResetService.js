@@ -8,7 +8,7 @@ const log = makeLogger('cleanSlateReset');
 function jsonLeagueIdsForGuild(guildId) {
   const gid = String(guildId || '');
   try {
-    return require('./activeLeagueService').listActiveLeagues()
+    return require('./activeLeagueService').listLeagueRecords()
       .filter(row => String(row?.guildId || '') === gid || !row?.guildId)
       .map(row => String(row.id || '').trim())
       .filter(Boolean);
@@ -23,12 +23,8 @@ async function resetDatabaseGuild(guildId, extraLeagueIds = []) {
     // Operational incident telemetry and the currently-running initialize background job
     // intentionally survive this reset. User-facing state/history does not.
     const safe = async (model, where = { guildId: gid }) => {
-      try {
-        if (prisma[model]?.deleteMany) return await prisma[model].deleteMany({ where });
-      } catch (e) {
-        log.warn(`DB reset ${model}: ${e.message}`);
-      }
-      return null;
+      if (!prisma[model]?.deleteMany) throw new Error(`DB reset model unavailable: ${model}`);
+      return prisma[model].deleteMany({ where });
     };
 
     // Capture every league id owned by this guild before Community cascades delete them.
@@ -39,9 +35,7 @@ async function resetDatabaseGuild(guildId, extraLeagueIds = []) {
         select: { id: true },
       });
       for (const row of rows || []) if (row?.id) leagueIds.add(String(row.id));
-    } catch (e) {
-      log.warn(`DB reset league discovery: ${e.message}`);
-    }
+    } catch (e) { throw new Error(`DB reset league discovery failed: ${e.message}`); }
 
     // Provider control-plane tables intentionally have no guildId. Clear them using
     // the league ids that belong to this guild, including legacy JSON-backed ids.
@@ -51,6 +45,27 @@ async function resetDatabaseGuild(guildId, extraLeagueIds = []) {
       await safe('providerSyncRun', where);
       await safe('providerConnection', where);
     }
+    // Old critical-store journals are keyed by guild/league rather than a
+    // relational guildId column. They must not survive a clean slate and later
+    // replay an active removal or community deletion into a fresh build.
+    for (const prefix of [`v204:active-removals:${gid}:`, `v204:community-delete:${gid}:`]) {
+      await prisma.botKv.deleteMany({ where:{ key:{ startsWith:prefix } } });
+    }
+
+    // These domain tables carry guild IDs but have no cascade path from
+    // Community. Clear dependent records first or they can hydrate after reset.
+    const claims = await prisma.progressionClaim.findMany({where:{guildId:gid},select:{id:true}});
+    const grants = await prisma.progressionGrant.findMany({where:{guildId:gid},select:{id:true}});
+    const brackets = await prisma.postseasonBracket.findMany({where:{guildId:gid},select:{id:true}});
+    if (claims.length || grants.length) await safe('entitlementConsumption', {OR:[
+      {claimId:{in:claims.map(x=>x.id)}}, {grantId:{in:grants.map(x=>x.id)}}
+    ]});
+    if (brackets.length) await safe('postseasonMatch', {bracketId:{in:brackets.map(x=>x.id)}});
+    for (const model of [
+      'playerMutation','progressionClaim','progressionWallet','progressionGrant',
+      'tierAssignment','progressionPolicyVersion','membershipTenure','providerTeamMapping',
+      'postseasonBracket','season','operationFence',
+    ]) await safe(model);
 
     // Clear guild-owned user-facing persistence. Avoid GuildLock and BackgroundJob so
     // the reset command can safely finish its own transaction/job lifecycle.
@@ -79,7 +94,7 @@ async function resetDatabaseGuild(guildId, extraLeagueIds = []) {
       toneProfile: null,
       memberToneProfile: null,
       commToneProfile: null,
-      botName: 'myBot',
+      botName: 'CommishAI',
       allowGifReplies: true,
       requireTimezone: false,
       serverInitialized: false,
@@ -105,9 +120,7 @@ async function resetDatabaseGuild(guildId, extraLeagueIds = []) {
         update: defaults,
         create: { guildId: gid, ...defaults },
       });
-    } catch (e) {
-      log.warn(`DB reset serverConfig: ${e.message}`);
-    }
+    } catch (e) { throw new Error(`DB reset serverConfig failed: ${e.message}`); }
     return true;
   }, false);
 }
@@ -116,19 +129,36 @@ async function resetGuild(guildId, state) {
   const summary = {};
   // Capture legacy/non-Prisma ids before removing the JSON registry.
   const knownLeagueIds = jsonLeagueIdsForGuild(guildId);
+  const scheduler = require('./schedulerRegistryService');
+  for (const job of scheduler.list(guildId)) scheduler.cancel(job.key, guildId);
+  summary.cancelledTimers = true;
 
   summary.directConversation = require('./conversationContextService').clearGuild(guildId);
   summary.ambientConversation = require('./ambientConversationService').clearGuild(guildId);
   summary.mediaContext = require('./mediaContextService').clearGuild(guildId);
+  summary.componentSessions = require('./componentSessionService').clearGuild(guildId);
+  summary.gameSessions = require('../league/gameSessionService').clearGuild(guildId, knownLeagueIds);
   summary.activeLeagues = require('./activeLeagueService').clearGuild(guildId, { includeLegacyUnscoped: true });
   await require('./managedSpaceService').clearGuild(guildId); summary.managedSpaces = true;
   await require('./lifetimeHistoryService').clearGuild(guildId); summary.lifetimeHistory = true;
-  try { require('./memberLedgerService').resetAll(); summary.memberLedger = true; } catch { summary.memberLedger = false; }
-  try { require('./memberProfileService').resetAll(); summary.memberProfiles = true; } catch { summary.memberProfiles = false; }
-  try { require('./serverSettingsService').resetInstallationDefaults(); summary.serverSettings = true; } catch { summary.serverSettings = false; }
-  try { require('./serverRulesService').resetProfile(); summary.serverRules = true; } catch { summary.serverRules = false; }
-  try { require('./wizardPreferencesService').resetPrefs(); summary.wizardPrefs = true; } catch { summary.wizardPrefs = false; }
-  try { require('./wizardStateService').resetState({ installationMode: true, currentStep: 'mode' }); summary.wizardState = true; } catch { summary.wizardState = false; }
+  // These are the authoritative records used by startup recovery. Clearing
+  // only JSON projections would let old owners and access hydrate back in.
+  const critical = require('../storage/criticalStore');
+  await critical.clear(`v204:assignments:${guildId}`);
+  await critical.clear(`v204:memberships:${guildId}`);
+  for (const leagueId of knownLeagueIds) await critical.clear(`v204:active-removals:${guildId}:${leagueId}`);
+  summary.criticalMembershipAndAssignments = true;
+  const resetFailures = [];
+  const criticalReset = (name, fn) => {
+    try { fn(); summary[name] = true; }
+    catch (err) { summary[name] = false; resetFailures.push({ name, error:String(err?.message || err) }); }
+  };
+  criticalReset('memberLedger', () => require('./memberLedgerService').resetAll());
+  criticalReset('memberProfiles', () => require('./memberProfileService').resetAll());
+  criticalReset('serverSettings', () => require('./serverSettingsService').resetInstallationDefaults());
+  criticalReset('serverRules', () => require('./serverRulesService').resetProfile());
+  criticalReset('wizardPrefs', () => require('./wizardPreferencesService').resetPrefs());
+  criticalReset('wizardState', () => require('./wizardStateService').resetState({ installationMode: true, currentStep: 'mode' }));
 
   // Clear remaining file-backed bot memory that can resurrect old setup/league decisions.
   for (const [file, value] of Object.entries({
@@ -142,13 +172,29 @@ async function resetGuild(guildId, state) {
     'pendingAttrBoosts.json': {},
     'pendingOffenses.json': {},
     'pendingTrades.json': {},
+    'polls.json': { polls:{} },
+    'communities.json': {},
+    'waitlist.json': {},
+    'suggestions.json': {},
     'scheduleStateRuntime.json': {},
     'spaceState.json': {},
   })) {
-    try { saveJson(file, value); } catch {}
+    try { saveJson(file, value); } catch (err) { resetFailures.push({ name:`file:${file}`, error:String(err?.message || err) }); }
   }
 
+  try {
+    summary.leagueSpaceFiles = await require('../storage/jsonStore').clearLeagueSpaces(knownLeagueIds);
+    await require('../storage/jsonStore').flushAllWrites();
+  } catch (err) { resetFailures.push({ name:'durable-state', error:String(err?.message || err) }); }
+
   summary.database = await resetDatabaseGuild(guildId, knownLeagueIds);
+  if (!summary.database) resetFailures.push({ name:'database', error:'database reset did not confirm success' });
+  if (resetFailures.length) {
+    const err = new Error(`Clean-slate reset incomplete: ${resetFailures.map(x => x.name).join(', ')}`);
+    err.code = 'CLEAN_SLATE_INCOMPLETE';
+    err.failures = resetFailures;
+    throw err;
+  }
   return summary;
 }
 

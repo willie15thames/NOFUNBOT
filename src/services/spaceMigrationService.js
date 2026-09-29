@@ -8,7 +8,7 @@ async function migrate(guildId,state){
   if(s.status==='ACTIVE'&&s.builtChannelIds)registry.upsertLeague({...s,leagueName:s.leagueName||s.name});
   else if(['ARCHIVED','REPAIR_REQUIRED'].includes(s.status))registry.removeLeague(s.id);
  }
- const all=registry.listActiveLeagues();
+ const all=registry.listLeagueRecords();
  const match=all.filter(l=>l.id===state.leagueConfig.leagueId||l.leagueName===state.leagueConfig.leagueName);
  const marker=`v204Migration_${guildId}.json`;
  if(!store.loadJson(marker,null)){

@@ -6,7 +6,7 @@
 const critical=require('../storage/criticalStore');
 const syncRuns=require('./providerSyncRunService');
 const connections=require('./providerConnectionService');
-function leagueId(){try{const id=require('../league/spaceContext').current();if(id)return String(id);}catch{}try{const rows=require('./activeLeagueService').listActiveLeagues();if(rows.length===1)return String(rows[0].id);}catch{}return 'default';}
+function leagueId(){try{const id=require('../league/spaceContext').current();if(id)return String(id);}catch{}try{const rows=require('./activeLeagueService').listProviderTargets();if(rows.length===1)return String(rows[0].id);}catch{}return 'default';}
 async function run({guild,state,provider,trigger='manual',processImports,pullSync}){
   const lid=leagueId(), key=`provider-sync:${guild?.id||'global'}:${lid}`;
   const locked=await critical.withExclusive(key,async()=>{

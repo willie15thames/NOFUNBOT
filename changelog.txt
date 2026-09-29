@@ -411,3 +411,20 @@ V1 PUBLIC SURFACE + RUNTIME OBSERVABILITY
 - Added catches for process, Discord client/shard, interaction, provider HTTP, background-job, queue-worker, and league-build failures.
 - Fixed managed-space capacity logic so ARCHIVING/REPAIR_REQUIRED records do not consume live league slots and stale PREPARING reservations self-archive.
 - Clarified Base server UX: `/setup-league` creates an independent managed league; a league-enabled community is not a prerequisite.
+
+
+CONTRACT V8 G0/G1 IMPLEMENTATION — 2026-09-28
+- Added canonical league resolver/selectors and migrated high-integrity team/game actions to explicit league scope.
+- Added centralized autocomplete lifecycle with one response attempt and incident telemetry.
+- Removed production StringSelectMenuBuilder usage; choice UI now renders button panels backed by ComponentSession.
+- Added ComponentSession actor/guild/TTL authority and button choice rendering.
+- Added canonical teamAssignmentUseCase and converged slash + natural-language team assignment on it.
+- Preserved successful membership when optional team assignment fails and records AWAITING_TEAM onboarding state.
+- Added truthful workflow wireStatus/fail-fast metadata and dormant labeling for unconnected definitions.
+- Added AI runtime orchestrator with AbortController timeout/retry ownership.
+- Added R-mode Open House engagement policy with excluded operational channels, cooldowns, burst caps, and opt-out.
+- Added bounded multimodal concurrency, scheduler registry integration, restart-safe POTW due-at handling, and IANA Pacific business clock.
+- Added centralized secret redaction and Contract-v8 static release gate.
+- Fixed poll button refresh undefined `guild` reference found by undefined-identifier scan.
+- Bundled v8 Master Implementation Contract and explicit implementation-status report.
+- G2 progression/postseason and G3 scale/refactor remain gated future work and are not silently activated.

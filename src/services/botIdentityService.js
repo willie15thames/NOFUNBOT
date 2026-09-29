@@ -34,7 +34,7 @@ async function applyBotIdentity(client, guild) {
     const settings = serverSettings.getSettings();
     if (!client?.user) return { ok:false, reason:'client user unavailable' };
 
-    const desiredName = String(settings.botName || 'myBot').trim().slice(0, 32) || 'myBot';
+    const desiredName = String(settings.botName || 'CommishAI').trim().slice(0, 32) || 'CommishAI';
     let desiredAvatarUrl = null;
     const avatarMode = String(settings.avatarMode || '').toLowerCase();
     if (avatarMode === 'url' || avatarMode === 'emoji_url') desiredAvatarUrl = settings.avatarUrl || null;
@@ -64,7 +64,7 @@ async function applyBotIdentity(client, guild) {
         const beforeNick = String(me.nickname || me.displayName || '');
         if (beforeNick !== desiredName) {
           try {
-            await me.setNickname(desiredName, 'NOFUNLEAGUE bot identity sync');
+            await me.setNickname(desiredName, 'CommishAI bot identity sync');
           } catch (err) {
             nicknameError = err.message;
           }

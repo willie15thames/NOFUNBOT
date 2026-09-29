@@ -12,6 +12,7 @@
  */
 
 'use strict';
+const { timingSafeStringEqual } = require('../../../utils/secureCompare');
 
 const importRuns = require('../../../league/importRunService');
 const { makeLogger } = require('../../../utils/logger');
@@ -23,14 +24,8 @@ const MAX_BODY_BYTES = 256 * 1024;
 
 function _secret() { return String(process.env.NEONSPORTZ_WEBHOOK_SECRET || '').trim(); }
 function _tokenMap() { try { const v=JSON.parse(String(process.env.NEONSPORTZ_WEBHOOK_TOKENS_JSON||'{}')); return v&&typeof v==='object'?v:{}; } catch { return {}; } }
-function resolveRouteToken(token) { const presented=String(token||'').trim(); try { const managed=require('../../../services/providerConnectionService').resolveRouteToken(PROVIDER,presented); if(managed.valid)return {valid:true,leagueId:managed.leagueId,mode:'connection-registry'}; } catch {} for (const [leagueId, configured] of Object.entries(_tokenMap())) { if (_timingSafeEqual(presented, String(configured||'').trim())) return {valid:true,leagueId:String(leagueId),mode:'env-map'}; } return {valid:false,leagueId:null}; }
+function resolveRouteToken(token) { const presented=String(token||'').trim(); try { const managed=require('../../../services/providerConnectionService').resolveRouteToken(PROVIDER,presented); if(managed.valid)return {valid:true,leagueId:managed.leagueId,mode:'connection-registry'}; } catch {} for (const [leagueId, configured] of Object.entries(_tokenMap())) { if (timingSafeStringEqual(presented, String(configured||'').trim())) return {valid:true,leagueId:String(leagueId),mode:'env-map'}; } return {valid:false,leagueId:null}; }
 
-function _timingSafeEqual(a, b) {
-  const crypto = require('crypto');
-  const ba = Buffer.from(String(a || '')), bb = Buffer.from(String(b || ''));
-  if (ba.length !== bb.length || !ba.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
 
 /**
  * @param {object} req { headers:{[lowercase]:string}, body:Buffer|string, query?:{token?} }
@@ -41,7 +36,7 @@ function receiveImportCompleted(req = {}) {
   const secret = _secret();
   const route = resolveRouteToken(req.routeToken || req.query?.token || '');
   const presented = headers['x-neonsportz-secret'] || headers['x-webhook-secret'] || headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
-  const headerAuthorized = !!secret && _timingSafeEqual(presented, secret);
+  const headerAuthorized = !!secret && timingSafeStringEqual(presented, secret);
   const allowUnsigned = String(process.env.NEONSPORTZ_ALLOW_UNSIGNED_WEBHOOK || '').toLowerCase() === 'true';
   if (!route.valid && !headerAuthorized && !allowUnsigned) return { status: secret || Object.keys(_tokenMap()).length ? 401 : 503, body: { ok: false, reason: secret || Object.keys(_tokenMap()).length ? 'unauthorized' : 'webhook-not-configured' } };
 
@@ -102,7 +97,7 @@ async function receiveImportCompletedDurable(req = {}) {
   const secret = _secret();
   const route = resolveRouteToken(req.routeToken || req.query?.token || '');
   const presented = headers['x-neonsportz-secret'] || headers['x-webhook-secret'] || headers['authorization']?.replace(/^Bearer\s+/i,'') || '';
-  const headerAuthorized = !!secret && _timingSafeEqual(presented, secret);
+  const headerAuthorized = !!secret && timingSafeStringEqual(presented, secret);
   const allowUnsigned = String(process.env.NEONSPORTZ_ALLOW_UNSIGNED_WEBHOOK || '').toLowerCase() === 'true';
   if (!route.valid && !headerAuthorized && !allowUnsigned) return { status: secret || Object.keys(_tokenMap()).length ? 401 : 503, body:{ ok:false, reason:secret || Object.keys(_tokenMap()).length ? 'unauthorized' : 'webhook-not-configured' } };
   const size = Buffer.isBuffer(req.body) ? req.body.length : Buffer.byteLength(String(req.body ?? ''),'utf8');

@@ -412,7 +412,7 @@ async function postBaseGuideMessages(guild) {
   }
 
   const settings = serverSettings.getSettings();
-  const hasLeague = require('./activeLeagueService').listActiveLeagues().length > 0;
+  const hasLeague = require('./activeLeagueService').listOperationalLeagues().length > 0;
   const guideTitle = '🧭 Server Guide';
   // V199 FIX: Append commands/actions block to every core channel guide
   const _cmdBlock = channelGuideService.getCommandsBlock;
@@ -421,7 +421,7 @@ async function postBaseGuideMessages(guild) {
     replaceBotPosts(rules, { color: 0x4da3ff, title: '📖 Server Rules', description: `${buildServerRulesText()}${_cmdBlock('rules')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(guide, { color: 0x5865f2, title: guideTitle, description: `${templateLogic.buildBaseGuideText(settings)}\n\n• Staff-only tools stay hidden from members.\n• Trash talk is allowed. Slurs and hateful nonsense are not.${_cmdBlock('server-guide')}`, timestamp: new Date().toISOString() }),
     replaceBotPosts(join, { color: 0x2ecc71, title: '✅ How to Join', description: `${templateLogic.buildHowToJoinText(settings, hasLeague)}${_cmdBlock('how-to-join')}`, timestamp: new Date().toISOString() }),
-    replaceBotPosts(polls, { color: 0xf1c40f, title: '📊 Polls & Voting', description: `This channel is vote-only.\n\n• Members use the posted picklists to vote\n• No free-form chat here\n• Staff can post or refresh votes here${_cmdBlock('polls')}`, timestamp: new Date().toISOString() }),
+    replaceBotPosts(polls, { color: 0xf1c40f, title: '📊 Polls & Voting', description: `This channel is vote-only.\n\n• Members use the posted vote buttons to vote\n• No free-form chat here\n• Staff can post or refresh votes here${_cmdBlock('polls')}`, timestamp: new Date().toISOString() }),
   ]);
 
   // ── V187: Register all template channels with guideLifecycle for idle-triggered guide posting ──
@@ -625,7 +625,7 @@ async function initializeBaseStructure(guild, state, options = {}) {
     findOrCreateText(guild, welcomeCat, 'how-to-join', 'How new members join the server and reach the right areas.', { readOnly: true }),
     findOrCreateText(guild, welcomeCat, 'announcements', 'Commissioner and bot announcements only.', { readOnly: true }),
     findOrCreateText(guild, communityCat, 'general-chat', 'General server chat and member discussion.', {}),
-    findOrCreateText(guild, communityCat, 'polls', 'Community polls and votes. Members vote through poll picklists only.', { readOnly: true }),
+    findOrCreateText(guild, communityCat, 'polls', 'Community polls and votes. Members vote through poll buttons only.', { readOnly: true }),
     findOrCreateText(guild, disciplineCat, 'active-check', 'Member activity checks and roll calls.', {}),
     findOrCreateText(guild, disciplineCat, 'warnings-log', 'Commissioner/admin warnings and discipline record.', { readOnly: true }),
     findOrCreateText(guild, disciplineCat, 'boot-log', 'Boot/removal actions and discipline trail.', { readOnly: true }),

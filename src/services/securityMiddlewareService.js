@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 /**
  * securityMiddlewareService.js
  *
@@ -24,6 +25,7 @@
  */
 
 const { makeLogger } = require('../utils/logger');
+const { redactString, redactValue } = require('../utils/redact');
 const { prismaSafe } = require('../storage/prisma');
 const log = makeLogger('security');
 
@@ -83,9 +85,9 @@ async function guardInteraction(interaction) {
       const msg = `⏳ Slow down — you are using this too fast. Try again in **${rl.resetIn}s**.`;
       if (!interaction.replied && !interaction.deferred) {
         if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) {
-          await interaction.reply({ content: msg, flags: 64 }).catch(() => null);
+          await interactionExecution.for(interaction).reply({ content: msg, flags: 64 }).catch(() => null);
         } else {
-          await interaction.reply({ content: msg, flags: 64 }).catch(() => null);
+          await interactionExecution.for(interaction).reply({ content: msg, flags: 64 }).catch(() => null);
         }
       }
     } catch {}
@@ -153,12 +155,13 @@ const MAX_AUDIT_BUFFER = 500;
  * otherwise buffers in memory.
  */
 async function auditLog({ action, userId, guildId, targetId, details, severity = 'info' }) {
+  const safeDetails = details == null ? null : redactValue(details);
   const entry = {
-    action: String(action || 'unknown'),
+    action: redactString(action || 'unknown', 120),
     userId: userId ? String(userId) : null,
     guildId: guildId ? String(guildId) : null,
     targetId: targetId ? String(targetId) : null,
-    details: details ? String(details).slice(0, 500) : null,
+    details: safeDetails == null ? null : redactString(typeof safeDetails === 'string' ? safeDetails : JSON.stringify(safeDetails), 500),
     severity: String(severity),
     timestamp: new Date(),
   };
@@ -171,7 +174,7 @@ async function auditLog({ action, userId, guildId, targetId, details, severity =
   prismaSafe(prisma => prisma.auditLog.create({ data: entry }), null).catch(() => null);
 
   if (severity === 'warn' || severity === 'critical') {
-    log.warn(`[AUDIT] ${action} user=${userId} guild=${guildId} target=${targetId} — ${details}`);
+    log.warn(`[AUDIT] ${entry.action} user=${userId} guild=${guildId} target=${targetId} — ${entry.details}`);
   } else {
     log.info(`[AUDIT] ${action} user=${userId}`);
   }
@@ -210,7 +213,7 @@ async function denyWithAudit(interaction, reason) {
   const cmd = interaction.commandName || interaction.customId;
   await auditLog({ action: 'permission-denied', userId, guildId, details: `${cmd}: ${reason}`, severity: 'warn' });
   if (!interaction.replied && !interaction.deferred) {
-    await interaction.reply({ content: `❌ ${reason}`, flags: 64 }).catch(() => null);
+    await interactionExecution.for(interaction).reply({ content: `❌ ${reason}`, flags: 64 }).catch(() => null);
   }
 }
 

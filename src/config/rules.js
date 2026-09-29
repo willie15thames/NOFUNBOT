@@ -10,7 +10,7 @@
 
 'use strict';
 
-const SERVER_RULE_TEXT = `# 🎉 NOFUNLEAGUE Server Rules
+const SERVER_RULE_TEXT = `# 🎉 CommishAI Server Rules
 
 ## Keep it fun
 • Trash talk is allowed. This server is not church. People are going to talk shit.
@@ -93,7 +93,7 @@ const LEAGUE_RULE_PRESETS = {
 
 ## Structure
 • This is a bot-managed custom league
-• Team identities, standings, schedules, and playoff tracking run through Mybot
+• Team identities, standings, schedules, and playoff tracking run through CommishAI
 
 ## Scheduling
 • 48 hour game windows unless staff changes the timer

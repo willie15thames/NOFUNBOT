@@ -10,8 +10,10 @@
 
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 
-const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
+const buttonChoices = require('./buttonChoiceService');
 const { loadJson, saveJsonDebounced } = require('../storage/jsonStore');
 
 const FILE = 'polls.json';
@@ -31,18 +33,15 @@ function _buildEmbed(poll) {
     .setColor(0xf1c40f)
     .setTitle('📊 Poll')
     .setDescription(`**${poll.question}**\n\n${lines.join('\n')}`)
-    .setFooter({ text: 'Use the picklist below to vote. One vote per person.' })
+    .setFooter({ text: 'Use the buttons below to vote. One vote per person.' })
     .setTimestamp();
 }
-function _buildRow(pollId, poll) {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(`poll_vote::${pollId}`)
-      .setPlaceholder('Cast your vote...')
-      .setMinValues(1)
-      .setMaxValues(1)
-      .addOptions(poll.options.map((opt, i) => ({ label: opt.slice(0,100), value: opt, description: `Option ${i+1}` })))
-  );
+function _buildRows(pollId, poll, guildId = null) {
+  return buttonChoices.createChoiceRows({
+    guildId, public:true, flow:'poll-vote', legacyCustomId:`poll_vote::${pollId}`,
+    minValues:1, maxValues:1,
+    options: poll.options.map((opt, i) => ({ label: opt.slice(0,80), value: opt, description:`Option ${i+1}` })),
+  }).rows;
 }
 
 async function createPoll(guild, question, options) {
@@ -53,7 +52,7 @@ async function createPoll(guild, question, options) {
   const all = getAll();
   const pollId = `poll_${Date.now()}`;
   const poll = { id: pollId, question: String(question || '').trim().slice(0, 300), options: cleanOpts, votes: {}, createdAt: Date.now(), channelId: pollsCh.id, messageId: null };
-  const msg = await pollsCh.send({ embeds:[_buildEmbed(poll)], components:[_buildRow(pollId, poll)], allowedMentions:{ parse:[] } });
+  const msg = await pollsCh.send({ embeds:[_buildEmbed(poll)], components:_buildRows(pollId, poll, guild.id), allowedMentions:{ parse:[] } });
   poll.messageId = msg.id;
   all.polls[pollId] = poll;
   saveAll(all);
@@ -65,13 +64,13 @@ async function handleVote(interaction) {
   const choice = interaction.values?.[0];
   const all = getAll();
   const poll = all.polls[pollId];
-  if (!poll) return interaction.reply({ content:'⚠️ This poll no longer exists.', flags:64 });
+  if (!poll) return interactionExecution.for(interaction).reply({ content:'⚠️ This poll no longer exists.', flags:64 });
   poll.votes[String(interaction.user.id)] = choice;
   all.polls[pollId] = poll;
   saveAll(all);
   const msg = interaction.message;
-  await msg.edit({ embeds:[_buildEmbed(poll)], components:[_buildRow(pollId, poll)] }).catch(()=>null);
-  return interaction.reply({ content:`✅ Your vote has been recorded: **${choice}**`, flags:64 });
+  await msg.edit({ embeds:[_buildEmbed(poll)], components:_buildRows(pollId, poll, interaction.guildId || interaction.guild?.id || null) }).catch(()=>null);
+  return interactionExecution.for(interaction).reply({ content:`✅ Your vote has been recorded: **${choice}**`, flags:64 });
 }
 
 module.exports = { createPoll, handleVote };

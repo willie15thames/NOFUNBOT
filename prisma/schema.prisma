@@ -557,3 +557,286 @@ model ProviderImportReceipt {
   @@index([providerKey, status, receivedAt])
   @@map("provider_import_receipts")
 }
+
+model ProviderTeamMapping {
+  id             String   @id
+  guildId        String
+  leagueId       String
+  providerKey    String
+  teamId         String
+  externalTeamId String
+  mappedBy       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([leagueId, providerKey, teamId])
+  @@unique([leagueId, providerKey, externalTeamId])
+  @@map("provider_team_mappings")
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract v8 G2/G3 — canonical progression/postseason + scale hardening
+// PostgreSQL is authoritative for NOFUNBOT-owned progression/season state.
+// ─────────────────────────────────────────────────────────────────────────────
+model Season {
+  id                String   @id
+  guildId           String
+  leagueId          String
+  ordinal           Int?
+  year              Int?
+  state             String   @default("PRESEASON_SETUP")
+  providerSeasonKey String?
+  policyVersionId   String?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([leagueId, ordinal])
+  @@index([guildId, leagueId, state])
+  @@map("seasons")
+}
+
+model ProgressionPolicyVersion {
+  id          String   @id
+  guildId     String
+  leagueId    String
+  seasonId    String
+  version     Int
+  effectiveAt DateTime
+  policy      Json
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  @@unique([seasonId, version])
+  @@index([guildId, leagueId, seasonId])
+  @@map("progression_policy_versions")
+}
+
+model TierAssignment {
+  id          String   @id
+  guildId     String
+  leagueId    String
+  seasonId    String
+  teamId      String
+  tier        String
+  mode        String
+  sourceSeed  String?
+  manualActor String?
+  finalizedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([seasonId, teamId])
+  @@index([guildId, leagueId, seasonId])
+  @@map("tier_assignments")
+}
+
+model ProgressionGrant {
+  id              String   @id
+  guildId         String
+  leagueId        String
+  seasonId        String
+  ownerType       String
+  ownerId         String
+  rewardType      String
+  quantity        Int      @default(1)
+  points          Int      @default(0)
+  sourceType      String
+  sourceId        String   @default("")
+  status          String   @default("AVAILABLE")
+  expiresAt       DateTime?
+  policyVersionId String
+  metadata        Json?    @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([seasonId, ownerType, ownerId, rewardType, sourceType, sourceId])
+  @@index([guildId, leagueId, seasonId, ownerType, ownerId, status])
+  @@map("progression_grants")
+}
+
+model ProgressionWallet {
+  id         String   @id
+  guildId    String
+  leagueId   String
+  seasonId   String
+  ownerType  String
+  ownerId    String
+  currency   String
+  earned     Int      @default(0)
+  spent      Int      @default(0)
+  forfeited  Int      @default(0)
+  locked     Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([seasonId, ownerType, ownerId, currency])
+  @@index([guildId, leagueId, seasonId])
+  @@map("progression_wallets")
+}
+
+model ProgressionClaim {
+  id                 String   @id
+  guildId            String
+  leagueId           String
+  seasonId           String
+  membershipId       String
+  teamId             String
+  playerId           String
+  grantId            String?
+  walletId           String?
+  policyVersionId    String
+  idempotencyKey     String
+  requestedMutations Json
+  status             String   @default("PENDING")
+  actorId            String
+  approvedBy         String?
+  requestedAt        DateTime @default(now())
+  approvedAt         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([guildId, idempotencyKey])
+  @@index([guildId, leagueId, seasonId, membershipId, status])
+  @@map("progression_claims")
+}
+
+model PlayerMutation {
+  id                   String   @id
+  guildId              String
+  leagueId             String
+  seasonId             String
+  membershipId         String?
+  teamId               String
+  playerId             String
+  claimId              String
+  mutationType         String
+  attributeKey         String?
+  points               Int      @default(0)
+  before               Json?
+  after                Json?
+  providerVerification Json?
+  status               String   @default("APPLIED")
+  actorId              String
+  appliedAt            DateTime
+  createdAt            DateTime @default(now())
+
+  @@index([guildId, leagueId, seasonId, teamId, playerId])
+  @@index([claimId])
+  @@map("player_mutations")
+}
+
+model EntitlementConsumption {
+  id         String   @id
+  grantId    String
+  claimId    String
+  mutationId String
+  quantity   Int      @default(1)
+  consumedAt DateTime @default(now())
+
+  @@unique([grantId, claimId])
+  @@unique([mutationId])
+  @@map("entitlement_consumptions")
+}
+
+model MembershipTenure {
+  id            String   @id
+  guildId       String
+  leagueId      String
+  seasonId      String?
+  membershipId  String
+  userId        String
+  teamId        String?
+  joinedAt      DateTime
+  leftAt        DateTime?
+  departureType String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([guildId, leagueId, userId, leftAt])
+  @@index([membershipId, leftAt])
+  @@map("membership_tenures")
+}
+
+model PostseasonBracket {
+  id        String   @id
+  guildId   String
+  leagueId  String
+  seasonId  String
+  format    String
+  seedCount Int
+  seeds     Json
+  status    String   @default("DRAFT")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([seasonId])
+  @@index([guildId, leagueId, status])
+  @@map("postseason_brackets")
+}
+
+model PostseasonMatch {
+  id             String   @id
+  bracketId      String
+  seasonId       String
+  round          Int
+  slot           Int
+  homeTeamId     String?
+  awayTeamId     String?
+  winnerTeamId   String?
+  status         String   @default("PENDING")
+  advancesToId   String?
+  providerGameId String?
+  resultEvidence Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([bracketId, round, slot])
+  @@index([seasonId, status])
+  @@map("postseason_matches")
+}
+
+model OperationFence {
+  guildId   String
+  key       String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@id([guildId, key])
+  @@index([expiresAt])
+  @@map("operation_fences")
+}
+
+model CompatibilityPath {
+  compatId         String   @id
+  owner            String
+  replacement      String
+  removalCondition String
+  deadlineRelease  String
+  hits             BigInt   @default(0)
+  lastHitAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("compatibility_paths")
+}
+
+model LegacyProgressionMigration {
+  id         String   @id
+  guildId    String
+  leagueId   String
+  seasonId   String?
+  sourceType String
+  sourceId   String
+  userId     String?
+  status     String   @default("REVIEW_REQUIRED")
+  payload    Json
+  resolution Json?    @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([guildId, sourceType, sourceId])
+  @@index([guildId, leagueId, seasonId, status])
+  @@map("legacy_progression_migrations")
+}

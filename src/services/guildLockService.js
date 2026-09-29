@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 /**
  * guildLockService.js
  * 
@@ -21,7 +22,7 @@
  * Usage:
  *   const lock = require('./guildLockService');
  *   const acquired = await lock.acquire(guildId, 'trash-the-bot', userId);
- *   if (!acquired) return interaction.reply({ content: '⏳ Already running...', flags:64 });
+ *   if (!acquired) return interactionExecution.for(interaction).reply({ content: '⏳ Already running...', flags:64 });
  *   try { ... } finally { await lock.release(guildId, 'trash-the-bot'); }
  */
 

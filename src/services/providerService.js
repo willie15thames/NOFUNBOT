@@ -7,10 +7,10 @@ const registry=require('../providers/gameProvider');
 const runtime=require('../league/runtimeService');
 function _leagueId(){
   try{const scoped=require('../league/spaceContext').current();if(scoped)return String(scoped);}catch{}
-  try{const rows=require('./activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event');if(rows.length===1)return String(rows[0].id);}catch{}
+  try{const rows=require('./activeLeagueService').listProviderTargets();if(rows.length===1)return String(rows[0].id);}catch{}
   return null;
 }
-function _hasAmbiguousLeagueScope(){try{return require('./activeLeagueService').listActiveLeagues().filter(x=>x.kind!=='event').length>1;}catch{return false;}}
+function _hasAmbiguousLeagueScope(){try{return require('./activeLeagueService').listProviderTargets().length>1;}catch{return false;}}
 function getActiveProvider(){
   registry.bootstrap();
   const lid=_leagueId();

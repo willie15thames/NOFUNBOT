@@ -26,7 +26,7 @@ module.exports = {
     const activeLeagueService = require('../services/activeLeagueService');
     const { startHubReleaseTimer, startScheduleTimer } = require('../services/hubReleaseService');
 
-    const hasActiveLeague = activeLeagueService.listActiveLeagues().length > 0 || !!(
+    const hasActiveLeague = activeLeagueService.listOperationalLeagues().length > 0 || !!(
       state.leagueConfig?.leagueTypeId &&
       state.leagueConfig?.leagueName &&
       Array.isArray(state.openTeamRegistry) &&

@@ -1,7 +1,7 @@
 {
-  "name": "nofunleague-bot",
+  "name": "commishai-bot",
   "version": "21.11.0-rc.3",
-  "description": "NOFUNLEAGUE Madden 26 Franchise Discord Bot",
+  "description": "CommishAI AI-powered Discord league operations platform",
   "main": "index.js",
   "scripts": {
     "build": "tsc",
@@ -24,7 +24,7 @@
     "repair:deps": "npm ci",
     "start:railway": "sh scripts/railway-start.sh",
     "start:health": "node health-server.js",
-    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && npm test",
+    "release:verify": "node scripts/changelog-guard.js && node scripts/doctor.js && node scripts/command-contract-check.js && node scripts/check-undefined-identifiers.js && node scripts/contract-v8-static-check.js && node scripts/contract-v8-g2-g3-check.js && node scripts/dependency-cycle-check.js && npm test",
     "deploy:preflight": "node scripts/predeploy-check.js",
     "deploy:context": "node scripts/release-context.js",
     "infra:check": "node scripts/check-infra.js",
@@ -35,9 +35,14 @@
     "static:undefined": "node scripts/check-undefined-identifiers.js",
     "command:contract": "node scripts/command-contract-check.js",
     "schema:check": "node scripts/schema-readiness.js",
-    "test:postgres": "node tests/postgres.integration.js",
+    "test:postgres": "node tests/postgres.integration.js && node tests/g2.postgres.integration.js",
     "verify:local": "node scripts/verify-local.js",
-    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh"
+    "release:v2047:final": "bash scripts/v2047-final-release-gate.sh",
+    "contract:v8:static": "node scripts/contract-v8-static-check.js",
+    "contract:v8:g2g3": "node scripts/contract-v8-g2-g3-check.js && node tests/contractV8G2G3.regression.test.js",
+    "static:cycles": "node scripts/dependency-cycle-check.js",
+    "test:g2:postgres": "node tests/g2.postgres.integration.js",
+    "g2:certify": "node scripts/g2-release-certify.js"
   },
   "engines": {
     "node": ">=20.18.1"

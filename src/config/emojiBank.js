@@ -175,7 +175,7 @@ async function syncEmojis(guild, league = 'all') {
       const filePath = path.join(__dirname, '..', '..', 'emojis', pack.dir, info.file);
       if (!fs.existsSync(filePath)) { results.failed.push(`${info.name} — file missing`); continue; }
       try {
-        await guild.emojis.create({ attachment: filePath, name: info.name, reason: 'NOFUNLEAGUE emoji sync' });
+        await guild.emojis.create({ attachment: filePath, name: info.name, reason: 'CommishAI emoji sync' });
         results.uploaded.push(info.name);
         await new Promise(r => setTimeout(r, 1200)); // rate limit
       } catch (err) { results.failed.push(`${info.name} — ${err.message}`); }

@@ -157,7 +157,7 @@ function markStatus(importId, status, patch = {}) {
     const row = store.runs[idx];
     require('../storage/prisma').prismaSafe(async p => {
       if (!p.providerImportReceipt) return null;
-      return p.providerImportReceipt.update({ where:{ id:importId }, data:{ status, error:row.error || null, completedAt:row.completedAt ? new Date(row.completedAt) : null } });
+      return p.providerImportReceipt.update({ where:{ id:importId }, data:{ status, stage:row.stage || undefined, error:row.error || null, completedAt:row.completedAt ? new Date(row.completedAt) : null } });
     }, null).catch(() => null);
   } catch {}
   return store.runs[idx];
@@ -265,7 +265,7 @@ async function markStatusDurable(importId, status, patch = {}) {
     const { getPrisma } = require('../storage/prisma');
     const p = getPrisma();
     if (p?.providerImportReceipt) {
-      await p.providerImportReceipt.update({ where:{ id:importId }, data:{ status, error:patch.error || null, completedAt:[IMPORT_STATUS.VALIDATED,IMPORT_STATUS.FAILED,IMPORT_STATUS.DUPLICATE,IMPORT_STATUS.APPLIED].includes(status)?new Date():undefined, meta:local?.meta || undefined } });
+      await p.providerImportReceipt.update({ where:{ id:importId }, data:{ status, stage:local?.stage || undefined, error:patch.error || null, completedAt:[IMPORT_STATUS.VALIDATED,IMPORT_STATUS.FAILED,IMPORT_STATUS.DUPLICATE,IMPORT_STATUS.APPLIED].includes(status)?new Date():undefined, meta:local?.meta || undefined } });
     }
   } catch {}
   return local;

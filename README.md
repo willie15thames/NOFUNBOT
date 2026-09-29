@@ -1,6 +1,6 @@
-# NOFUNBOT v204.7
+# CommishAI v204.7
 
-NOFUNBOT is a Discord league-operations bot for Madden-style franchise communities. v204.7 adds a league-scoped provider connection framework, passive conversation awareness with explicit-mention speech gating, a broader deterministic natural-language planner, and a simplified three-mode server-structure model.
+CommishAI is a Discord league-operations platform for Madden-style franchise communities. v204.7 adds a league-scoped provider connection framework, passive conversation awareness with explicit-mention speech gating, a broader deterministic natural-language planner, and a simplified three-mode server-structure model.
 
 ## Quick start
 
@@ -21,7 +21,7 @@ Production deployments should use PostgreSQL and Redis, a persistent `BOT_DATA_D
 
 v204.7 has exactly three structure modes:
 
-- **Base Structure**: core NOFUNBOT/server lanes only. No template and no subtemplate is selected or silently defaulted.
+- **Base Structure**: core CommishAI/server lanes only. No template and no subtemplate is selected or silently defaulted.
 - **Template Structure**: one curated template plus a relevant built-in subtemplate when that family uses one.
 - **Custom Structure**: commissioner-selected templates and optional subtemplates are composed and deduplicated before creation.
 
@@ -42,14 +42,14 @@ Passive observation:
 - is channel-local and bounded by TTL/message limits;
 - excludes DMs, bots/webhooks, and configured sensitive staff/ops lanes.
 
-Conversational speech still requires an explicit `@myBot` mention. Replying to an old bot message, being in a special channel, or merely continuing the conversation does not authorize the bot to speak.
+Conversational speech still requires an explicit `@CommishAI` mention. Replying to an old bot message, being in a special channel, or merely continuing the conversation does not authorize the bot to speak.
 
 Example:
 
 ```text
 Paul: Ravens defense is ridiculous this year.
 Sam: Their secondary is carrying them.
-@myBot who do you think is the key player?
+@CommishAI who do you think is the key player?
 ```
 
 Only the final message invokes AI. The earlier messages are untrusted context, not instructions.
@@ -87,13 +87,13 @@ The deterministic planner is an adapter into existing domain services. It does n
 Examples:
 
 ```text
-@myBot put Paul on the Ravens
-@myBot release the Ravens
-@myBot show league status
-@myBot refresh open teams
-@myBot sync league data now
-@myBot test the NeonSportz connection
-@myBot put the provider in manual fallback
+@CommishAI put Paul on the Ravens
+@CommishAI release the Ravens
+@CommishAI show league status
+@CommishAI refresh open teams
+@CommishAI sync league data now
+@CommishAI test the NeonSportz connection
+@CommishAI put the provider in manual fallback
 ```
 
 Entity resolution asks a clarification only when there is a real ambiguity. If one active league contains the requested Ravens team, that league is selected. If more than one valid Ravens team exists, the bot asks which league rather than guessing.

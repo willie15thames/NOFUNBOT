@@ -10,6 +10,8 @@
 
 'use strict';
 
+const { redactValue } = require('./redact');
+
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 const LOG_LEVEL = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.info;
 const LOG_FORMAT = String(process.env.LOG_FORMAT || 'pretty').toLowerCase();
@@ -30,13 +32,7 @@ function timestamp() {
 }
 
 function normalizeArgs(args) {
-  return args.map(value => {
-    if (value instanceof Error) {
-      return { name: value.name, message: value.message, stack: value.stack };
-    }
-    if (typeof value === 'object' && value !== null) return value;
-    return String(value);
-  });
+  return args.map(value => redactValue(value));
 }
 
 function log(level, module, ...args) {

@@ -70,7 +70,7 @@ async function runStartupHealthCheck() {
     name: 'Redis / BullMQ (REDIS_URL)',
     ok: !!redisUrl && redis.reachable,
     value: !redisUrl ? 'NOT SET — queue worker unavailable' : redis.reachable ? 'connected ✅' : `set but unreachable — ${redis.reason}`,
-    fix: !redisUrl ? 'Add Railway Redis and reference its REDIS_URL.' : !redis.reachable ? 'Verify REDIS_URL points to the Railway Redis service and is reachable from NOFUNBOT.' : null,
+    fix: !redisUrl ? 'Add Railway Redis and reference its REDIS_URL.' : !redis.reachable ? 'Verify REDIS_URL points to the Railway Redis service and is reachable from CommishAI.' : null,
     blocking: !!flags.enableQueueWorker,
   });
 
@@ -126,7 +126,7 @@ async function runStartupHealthCheck() {
   const ready = blockingFailures.length === 0;
   log.info('');
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log.info('  NOFUNLEAGUE startup health check');
+  log.info('  CommishAI startup health check');
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   for (const r of results) {
     const icon = r.ok ? '✅' : '⚠️ ';

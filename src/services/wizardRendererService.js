@@ -26,7 +26,8 @@
  *   buildFlowGuidePayload()                → the initial guide screen
  */
 
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const buttonChoices = require('./buttonChoiceService');
 const { makeLogger } = require('../utils/logger');
 const log = makeLogger('wizardRenderer');
 
@@ -105,81 +106,53 @@ function _buildNavRow(stage, disabledNext = false, isEditMode = false) {
   );
 }
 
+function _choiceLauncher(customId, label, options, { minValues = 1, maxValues = 1, disabled = false } = {}) {
+  return buttonChoices.createChoiceLauncher({
+    public:true, flow:`wizard:${customId}`, legacyCustomId:customId, options, minValues, maxValues, disabled,
+    launchLabel:label, launchStyle:ButtonStyle.Secondary, pageSize:10,
+  }).row;
+}
+
 function _buildStructureModeRow(settings) {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('bot_structure_mode_select')
-      .setPlaceholder(settings.customStructureMode ? `Structure mode: ${String(settings.customStructureMode).toUpperCase()}` : 'Choose structure mode (required)...')
-      .addOptions([
-        { label: 'Base Structure', value: 'base', description: 'Core bot/server lanes only. No template or subtemplate.' },
-        { label: 'Template Structure', value: 'template', description: 'Choose one template and its relevant subtemplate.' },
-        { label: 'Custom Structure', value: 'custom', description: 'Mix multiple templates and optional subtemplates.' },
-        { label: 'Clear structure selection', value: '__clear__', description: 'Clear the saved structure choice' },
-      ])
-  );
+  const label = settings.customStructureMode ? `Structure: ${String(settings.customStructureMode).toUpperCase()}` : 'Choose Structure';
+  return _choiceLauncher('bot_structure_mode_select', label, [
+    { label:'Base Structure', value:'base', description:'Core bot/server lanes only. No template or subtemplate.' },
+    { label:'Template Structure', value:'template', description:'Choose one template and its relevant subtemplate.' },
+    { label:'Custom Structure', value:'custom', description:'Mix multiple templates and optional subtemplates.' },
+    { label:'Clear Structure', value:'__clear__', description:'Clear the saved structure choice' },
+  ]);
 }
 
 function _buildTemplateRow(settings) {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('bot_server_template_select')
-      .setPlaceholder(settings.serverTemplate ? `Template: ${templateLogic.getTemplateProfile(settings).baseName || templateLogic.getTemplateProfile(settings).name}` : 'Choose server template (required)...')
-      .addOptions([{ label: 'Clear template selection', value: '__clear__', description: 'Clear the saved template choice' }, ...getTemplateOptions()])
-  );
+  const profile = settings.serverTemplate ? templateLogic.getTemplateProfile(settings) : null;
+  return _choiceLauncher('bot_server_template_select', settings.serverTemplate ? `Template: ${profile?.baseName || profile?.name || settings.serverTemplate}` : 'Choose Template',
+    [{ label:'Clear Template', value:'__clear__', description:'Clear the saved template choice' }, ...getTemplateOptions()]);
 }
 
 function _buildSubtemplateRow(settings) {
   const opts = settings.serverTemplate ? getTemplateSubtemplateOptions(settings.serverTemplate) : [];
-  const placeholder = opts.length
-    ? (settings.serverSubtemplate ? `Subtemplate: ${resolveTemplateProfile(settings).subtemplateName || settings.serverSubtemplate}` : 'Choose subtemplate for more precise build...')
-    : 'No subtemplate required for this template';
-  const options = opts.length
-    ? [{ label: 'Clear subtemplate selection', value: '__clear__', description: 'Clear the saved subtemplate choice' }, ...opts]
-    : [{ label: 'No subtemplate needed', value: '__none__', description: 'This template can build without a subtemplate choice' }];
-  const menu = new StringSelectMenuBuilder().setCustomId('bot_server_subtemplate_select').setPlaceholder(placeholder).addOptions(options);
-  if (!opts.length) menu.setDisabled(true);
-  return new ActionRowBuilder().addComponents(menu);
+  const options = opts.length ? [{ label:'Clear Subtemplate', value:'__clear__', description:'Clear the saved subtemplate choice' }, ...opts] : [{ label:'No subtemplate needed', value:'__none__', description:'This template can build without a subtemplate choice', disabled:true }];
+  const label = settings.serverSubtemplate ? `Subtemplate: ${resolveTemplateProfile(settings).subtemplateName || settings.serverSubtemplate}` : (opts.length ? 'Choose Subtemplate' : 'No Subtemplate Needed');
+  return _choiceLauncher('bot_server_subtemplate_select', label, options, { disabled:!opts.length });
 }
 
 function _buildAudienceRow(settings) {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('init_age_rating')
-      .setPlaceholder(settings.audienceRating ? `Audience: ${String(settings.audienceRating).toUpperCase()}` : 'Choose audience level (required)...')
-      .addOptions([
-        { label: 'G', value: 'g', description: 'Soft and family-safe bot behavior' },
-        { label: 'PG', value: 'pg', description: 'Mild edge with broader tone choices' },
-        { label: 'PG-13', value: 'pg13', description: 'Sharper banter with more character options' },
-        { label: 'R', value: 'r', description: 'Most aggressive tone range, still no hateful slurs' },
-        { label: 'Clear audience selection', value: '__clear__', description: 'Clear the saved audience level' },
-      ])
-  );
+  return _choiceLauncher('init_age_rating', settings.audienceRating ? `Audience: ${String(settings.audienceRating).toUpperCase()}` : 'Choose Audience', [
+    { label:'G', value:'g', description:'Soft and family-safe bot behavior' },
+    { label:'PG', value:'pg', description:'Mild edge with broader tone choices' },
+    { label:'PG-13', value:'pg13', description:'Sharper banter with more character options' },
+    { label:'R', value:'r', description:'Aggressive competitive trash talk with safety boundaries' },
+    { label:'Clear Audience', value:'__clear__', description:'Clear the saved audience level' },
+  ]);
 }
 
 function _buildToneRow(customId, placeholder, settings) {
   const opts = _toneOptionList(settings).slice(0, 24);
-  if (!opts.length) {
-    return new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(customId)
-        .setPlaceholder('Set audience level first to unlock tone options...')
-        .setDisabled(true)
-        .addOptions([{ label: 'Set audience level first', value: '__none__', description: 'Choose G / PG / PG-13 / R above' }])
-    );
-  }
   const lane = customId === 'commissioner_tone_profile' ? 'commissioner' : 'member';
   const savedTones = serverSettings.getEffectiveToneProfile(settings, lane);
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(customId)
-      .setPlaceholder(savedTones.length ? `Tones: ${savedTones.slice(0, 3).join(', ')}${savedTones.length > 3 ? '...' : ''}` : placeholder)
-      .setMinValues(1)
-      .setMaxValues(Math.min(7, opts.length))
-      .addOptions([
-        { label: 'Clear tone selection', value: '__clear__', description: 'Reset tones for this lane' },
-        ...opts.map(name => ({ label: name, value: name, description: `Tone: ${name}` })),
-      ])
-  );
+  const label = savedTones.length ? `${lane === 'commissioner' ? 'Commissioner' : 'Member'} Tones: ${savedTones.length}` : placeholder;
+  const options = opts.length ? [{ label:'Clear Tone Selection', value:'__clear__', description:'Reset tones for this lane' }, ...opts.map(name => ({ label:name, value:name, description:`Tone: ${name}`, default:savedTones.includes(name) }))] : [{ label:'Set audience level first', value:'__none__', description:'Choose G / PG / PG-13 / R first', disabled:true }];
+  return _choiceLauncher(customId, label, options, { minValues:opts.length ? 1 : 0, maxValues:Math.min(7, Math.max(1, opts.length)), disabled:!opts.length });
 }
 
 function _buildPreferenceToggleRow(settings) {
@@ -235,13 +208,7 @@ function _buildCustomMixGamingRow(settings) {
     { label: '📱 Mobile Gaming Club',    value: 'gaming:mobile',       description: 'Squads, metas, clans, updates' },
     { label: '🎲 Variety Gaming Lounge', value: 'gaming:variety',      description: 'Co-op nights, recommendations, LFG' },
   ];
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('custom_mix_gaming')
-      .setPlaceholder(active ? '🎮 Gaming ✅ selected' : '🎮 Gaming spaces (pick any)')
-      .setMinValues(0).setMaxValues(Math.min(opts.length, 12))
-      .addOptions(opts.map(o => ({ ...o, default: sels.has(o.value) })))
-  );
+  return _choiceLauncher('custom_mix_gaming', active ? '🎮 Gaming Spaces ✅' : '🎮 Gaming Spaces', opts.map(o => ({ ...o, default:sels.has(o.value) })), { minValues:0, maxValues:Math.min(opts.length, 12) });
 }
 
 function _buildCustomMixSportsRow(settings) {
@@ -257,13 +224,7 @@ function _buildCustomMixSportsRow(settings) {
     { label: '🏌 Golf Club',              value: 'sports:golf',         description: 'Course chat, scores, fantasy golf' },
     { label: '🥊 Combat Sports',          value: 'sports:combat',       description: 'UFC, boxing, wrestling events' },
   ];
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('custom_mix_sports')
-      .setPlaceholder(active ? '🏆 Sports ✅ selected' : '🏆 Sports spaces (pick any)')
-      .setMinValues(0).setMaxValues(Math.min(opts.length, 8))
-      .addOptions(opts.map(o => ({ ...o, default: sels.has(o.value) })))
-  );
+  return _choiceLauncher('custom_mix_sports', active ? '🏆 Sports Spaces ✅' : '🏆 Sports Spaces', opts.map(o => ({ ...o, default:sels.has(o.value) })), { minValues:0, maxValues:Math.min(opts.length, 8) });
 }
 
 function _buildCustomMixCommunityRow(settings) {
@@ -281,13 +242,7 @@ function _buildCustomMixCommunityRow(settings) {
     { label: '🌐 Language Exchange',     value: 'community:language',  description: 'Practice, swap, culture, vocab' },
     { label: '💚 Wellness / Support',    value: 'community:wellness',  description: 'Quiet, kind, safe harbor spaces' },
   ];
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('custom_mix_community')
-      .setPlaceholder(active ? '👥 Community ✅ selected' : '👥 Community spaces (pick any)')
-      .setMinValues(0).setMaxValues(Math.min(opts.length, 10))
-      .addOptions(opts.map(o => ({ ...o, default: sels.has(o.value) })))
-  );
+  return _choiceLauncher('custom_mix_community', active ? '👥 Community Spaces ✅' : '👥 Community Spaces', opts.map(o => ({ ...o, default:sels.has(o.value) })), { minValues:0, maxValues:Math.min(opts.length, 10) });
 }
 
 function _buildCustomMixMediaRow(settings) {
@@ -305,13 +260,7 @@ function _buildCustomMixMediaRow(settings) {
     { label: '🤼 Pro Wrestling',         value: 'media:wrestling',     description: 'Events, results, fantasy booking' },
     { label: '📰 News & Current Events', value: 'media:news',          description: 'Headlines, discussion, fact checks' },
   ];
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('custom_mix_media')
-      .setPlaceholder(active ? '📺 Media & Fandom ✅ selected' : '📺 Media & Fandom spaces (pick any)')
-      .setMinValues(0).setMaxValues(Math.min(opts.length, 10))
-      .addOptions(opts.map(o => ({ ...o, default: sels.has(o.value) })))
-  );
+  return _choiceLauncher('custom_mix_media', active ? '📺 Media & Fandom ✅' : '📺 Media & Fandom', opts.map(o => ({ ...o, default:sels.has(o.value) })), { minValues:0, maxValues:Math.min(opts.length, 10) });
 }
 
 
@@ -319,13 +268,8 @@ function _buildCustomMixMediaRow(settings) {
 
 function _buildCustomTemplateSelectionRow(settings) {
   const selected = new Set(Array.isArray(settings.customTemplateSelections) ? settings.customTemplateSelections : []);
-  const opts = getTemplateOptions().map(o => ({ ...o, default: selected.has(o.value) }));
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('bot_custom_template_select')
-      .setPlaceholder(selected.size ? `Templates selected: ${selected.size}` : 'Pick one or more templates...')
-      .setMinValues(1).setMaxValues(Math.min(8, opts.length)).addOptions(opts)
-  );
+  const opts = getTemplateOptions().map(o => ({ ...o, default:selected.has(o.value) }));
+  return _choiceLauncher('bot_custom_template_select', selected.size ? `Templates Selected: ${selected.size}` : 'Choose Custom Templates', opts, { minValues:1, maxValues:Math.min(8, Math.max(1, opts.length)) });
 }
 function _buildCustomSubtemplateSelectionRow(settings) {
   const templates = Array.isArray(settings.customTemplateSelections) ? settings.customTemplateSelections : [];
@@ -334,19 +278,11 @@ function _buildCustomSubtemplateSelectionRow(settings) {
   for (const tk of templates) {
     const templateLabel = getTemplateOptions().find(o => o.value === tk)?.label || tk;
     for (const sub of getTemplateSubtemplateOptions(tk)) {
-      if (opts.length >= 25) break;
       const value = `${tk}:${sub.value}`;
-      opts.push({ label: `${templateLabel} • ${sub.label}`.slice(0, 100), value, description: sub.description, default: selected.has(value) });
+      opts.push({ label:`${templateLabel} • ${sub.label}`.slice(0,80), value, description:sub.description, default:selected.has(value) });
     }
-    if (opts.length >= 25) break;
   }
-  const menu = new StringSelectMenuBuilder().setCustomId('bot_custom_subtemplate_select');
-  if (!opts.length) {
-    menu.setPlaceholder('Pick templates first; subtemplates are optional').setDisabled(true).addOptions([{ label: 'No subtemplates available yet', value: '__none__' }]);
-  } else {
-    menu.setPlaceholder(selected.size ? `Subtemplates selected: ${selected.size}` : 'Optional: pick relevant subtemplates...').setMinValues(0).setMaxValues(Math.min(12, opts.length)).addOptions(opts);
-  }
-  return new ActionRowBuilder().addComponents(menu);
+  return _choiceLauncher('bot_custom_subtemplate_select', selected.size ? `Subtemplates Selected: ${selected.size}` : 'Choose Optional Subtemplates', opts.length ? opts : [{label:'No subtemplates available',value:'__none__',disabled:true}], { minValues:0, maxValues:Math.min(12, Math.max(1,opts.length)), disabled:!opts.length });
 }
 
 function _buildMainEmbed(guild, note, settings, prefs) {
@@ -356,7 +292,7 @@ function _buildMainEmbed(guild, note, settings, prefs) {
   const theme = templateTheme.getThemePreset(settings);
 
   const isEdit = !!settings.serverInitialized;
-  const title = isEdit ? '🛠️ myBot Setup Wizard • EDIT MODE' : '🛠️ myBot Setup Wizard';
+  const title = isEdit ? '🛠️ CommishAI Setup Wizard • EDIT MODE' : '🛠️ CommishAI Setup Wizard';
 
   const stage = wizardState.getCurrentStep() || 'mode';
   const stageMeta = stageRegistry.getStage(stage);
@@ -482,7 +418,7 @@ function buildErrorPayload(errMessage) {
   return {
     embeds: [new EmbedBuilder()
       .setColor(0xe74c3c)
-      .setTitle('🛠️ myBot Setup Wizard')
+      .setTitle('🛠️ CommishAI Setup Wizard')
       .setDescription(`⚠️ Wizard build error: ${errMessage}\n\nPress **Reset** below to restart setup cleanly.`)
       .setTimestamp()],
     components: [new ActionRowBuilder().addComponents(

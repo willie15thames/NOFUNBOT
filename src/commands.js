@@ -171,11 +171,13 @@ new SlashCommandBuilder()
   // ── Teams ──
   new SlashCommandBuilder()
     .setName('register-team').setDescription('Link a Discord user to a franchise slot (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this franchise slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Original Madden franchise slot, e.g. Ravens').setRequired(true).setAutocomplete(true))
     .addUserOption(o => o.setName('user').setDescription('The Discord user who owns this slot').setRequired(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('set-team-identity').setDescription('Set a custom city/name for a franchise slot (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this franchise slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('original-team').setDescription('Original Madden slot to rename, e.g. Chargers').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('location').setDescription('New city name, e.g. Sacramento').setRequired(true))
     .addStringOption(o => o.setName('name').setDescription('New team name, e.g. Kings').setRequired(true))
@@ -183,6 +185,7 @@ new SlashCommandBuilder()
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('add-open-team').setDescription('Add a team to the open registry (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League to add this team slot to').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('base-team').setDescription('Original Madden slot name, e.g. Chargers').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('display-team').setDescription('What to show on the board, e.g. Sacramento Kings').setRequired(true))
     .addStringOption(o => o.setName('replaces-team').setDescription('Optional: what slot this custom/imported team replaces').setAutocomplete(true))
@@ -190,10 +193,12 @@ new SlashCommandBuilder()
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('remove-open-team').setDescription('Remove a team from the open registry (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name (base or display) to remove').setRequired(true).setAutocomplete(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('set-team-logo').setDescription('Set or update a team logo URL (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('logo-url').setDescription('Discord CDN image URL').setRequired(true))
     .setDefaultMemberPermissions(P),
@@ -205,15 +210,19 @@ new SlashCommandBuilder()
   .setName('join-league').setDescription('Join an active league through the guided join flow')
   .addStringOption(o => o.setName('league').setDescription('Optional: choose a specific active league').setAutocomplete(true)),
 new SlashCommandBuilder()
-  .setName('select-team').setDescription('Claim an open team as your own')
-    .addStringOption(o => o.setName('team').setDescription('Team name you want to claim').setRequired(true).setAutocomplete(true))
+  .setName('select-team').setDescription('Claim an open team in a specific league')
+    .addStringOption(o => o.setName('league').setDescription('Optional: choose with buttons if omitted').setRequired(false).setAutocomplete(true))
+    .addStringOption(o => o.setName('team').setDescription('Optional: choose with buttons if omitted').setRequired(false).setAutocomplete(true))
     .addStringOption(o => o.setName('timezone').setDescription('Optional if you already saved a timezone during onboarding').setRequired(false)),
   new SlashCommandBuilder()
     .setName('release-team').setDescription('Release a team back to open status (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League that owns this team slot').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team').setDescription('Team name to release').setRequired(true).setAutocomplete(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('open-teams').setDescription('Show the current open teams board'),
+  new SlashCommandBuilder()
+    .setName('active-leagues').setDescription('Show active leagues and their current status'),
 
   // ── Rules ──
   new SlashCommandBuilder()
@@ -243,6 +252,7 @@ new SlashCommandBuilder()
   // ── Games ──
   new SlashCommandBuilder()
     .setName('create-game').setDescription('Open a private game channel for a matchup (Commissioner only)')
+    .addStringOption(o => o.setName('league').setDescription('League for this matchup').setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName('week').setDescription('Week number 1-18').setRequired(true))
     .addStringOption(o => o.setName('team1').setDescription('Home team').setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName('team2').setDescription('Away team').setRequired(true).setAutocomplete(true))
@@ -257,7 +267,8 @@ new SlashCommandBuilder()
     .addStringOption(o => o.setName('winner').setDescription('Winning team').setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName('winner-score').setDescription('Winner points scored').setRequired(true))
     .addStringOption(o => o.setName('loser').setDescription('Losing team').setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName('loser-score').setDescription('Loser points scored').setRequired(true)),
+    .addIntegerOption(o => o.setName('loser-score').setDescription('Loser points scored').setRequired(true))
+    .addStringOption(o => o.setName('league').setDescription('League for this result (optional inside a game channel)').setAutocomplete(true)),
 
   // ── Stats / Awards ──
   new SlashCommandBuilder()
@@ -494,50 +505,12 @@ new SlashCommandBuilder()
 
   // ── Attribute boost ──
   new SlashCommandBuilder()
-    .setName('claim-attr-boost').setDescription('Submit an attribute boost request for commissioner approval')
-    .addStringOption(o => o.setName('team').setDescription('Your team').setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName('player').setDescription('Player name to receive the boost').setRequired(true))
-    .addStringOption(o => o.setName('source').setDescription('What earned this boost').setRequired(true)
-      .addChoices(
-        { name: 'Stream Reward',       value: 'stream'    },
-        { name: 'Player of the Week',  value: 'potw'      },
-        { name: 'Super Bowl Champion', value: 'superbowl' },
-        { name: 'Yearly Award',        value: 'yearly'    },
-      ))
-    .addStringOption(o => o.setName('attr1-category').setDescription('Attribute category for boost 1').setRequired(true)
-      .addChoices(
-        { name: 'Throw Accuracy (SAC/MAC/DAC/TOR/TUP)', value: 'throw_acc'   },
-        { name: 'Throw Power - auto (THP)',              value: 'throw_pow'   },
-        { name: 'Play Action - auto (PAC)',              value: 'play_action' },
-        { name: 'Awareness / IQ (AWR/PRC/PUR)',          value: 'awareness'   },
-        { name: 'Route Running (SRR/MRR/DRR/REL)',       value: 'route'       },
-        { name: 'Catching (CTH/CIT/SPC)',                value: 'catching'    },
-        { name: 'Ball Carrier (TRK/BTK/STA/SPM/JKM)',   value: 'ballcarrier' },
-        { name: 'Blocking (RBK/PBK/IBK/RBP/PBP)',       value: 'blocking'    },
-        { name: 'Pass Rush / DL (BSH/PWM/FNM/HTP)',     value: 'passrush'    },
-        { name: 'Coverage (MCV/ZCV/PRS/CIT/PRC)',        value: 'coverage'    },
-        { name: 'Hit Power - auto (HTP)',                value: 'hit_power'   },
-        { name: 'Tackle - auto (TAK)',                   value: 'tackle'      },
-        { name: 'Kicking (KPW/KAC)',                     value: 'kicking'     },
-      ))
-    .addStringOption(o => o.setName('attribute1').setDescription('Type the 3-letter code e.g. SAC - skip for auto categories').setAutocomplete(true))
-    .addStringOption(o => o.setName('attr2-category').setDescription('Attribute category for optional second boost')
-      .addChoices(
-        { name: 'Throw Accuracy (SAC/MAC/DAC/TOR/TUP)', value: 'throw_acc'   },
-        { name: 'Throw Power - auto (THP)',              value: 'throw_pow'   },
-        { name: 'Play Action - auto (PAC)',              value: 'play_action' },
-        { name: 'Awareness / IQ (AWR/PRC/PUR)',          value: 'awareness'   },
-        { name: 'Route Running (SRR/MRR/DRR/REL)',       value: 'route'       },
-        { name: 'Catching (CTH/CIT/SPC)',                value: 'catching'    },
-        { name: 'Ball Carrier (TRK/BTK/STA/SPM/JKM)',   value: 'ballcarrier' },
-        { name: 'Blocking (RBK/PBK/IBK/RBP/PBP)',       value: 'blocking'    },
-        { name: 'Pass Rush / DL (BSH/PWM/FNM/HTP)',     value: 'passrush'    },
-        { name: 'Coverage (MCV/ZCV/PRS/CIT/PRC)',        value: 'coverage'    },
-        { name: 'Hit Power - auto (HTP)',                value: 'hit_power'   },
-        { name: 'Tackle - auto (TAK)',                   value: 'tackle'      },
-        { name: 'Kicking (KPW/KAC)',                     value: 'kicking'     },
-      ))
-    .addStringOption(o => o.setName('attribute2').setDescription('Type the 3-letter code for the second boost (optional)').setAutocomplete(true)),
+    .setName('claim-attr-boost').setDescription('Claim verified attribute points from an earned grant')
+    .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName('grant-id').setDescription('Available entitlement ID').setRequired(true))
+    .addStringOption(o => o.setName('player-id').setDescription('Provider player ID').setRequired(true))
+    .addStringOption(o => o.setName('attribute').setDescription('Editable attribute key').setRequired(true))
+    .addIntegerOption(o => o.setName('points').setDescription('Rating points to spend').setMinValue(1).setMaxValue(99).setRequired(true)),
 
   // ── Discipline ──
   new SlashCommandBuilder()
@@ -577,7 +550,7 @@ new SlashCommandBuilder()
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('setup-league').setDescription('Build the full league channel structure - run once on a fresh server (Commissioner only)')
-    .addStringOption(o => o.setName('league-name').setDescription('Custom name for your league (e.g. "NOFUNLEAGUE S3")').setRequired(true))
+    .addStringOption(o => o.setName('league-name').setDescription('Custom name for your league (e.g. "CommishAI League S3")').setRequired(true))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
   .setName('delete-league')
@@ -617,7 +590,7 @@ new SlashCommandBuilder()
   .setName('customize-server-rules').setDescription('Open the optional base server rules customizer (Commissioner only)')
   .setDefaultMemberPermissions(P),
 new SlashCommandBuilder()
-  .setName('create-poll').setDescription('Post a vote-only picklist poll in #polls (Commissioner only)')
+  .setName('create-poll').setDescription('Post a button-based poll in #polls (Commissioner only)')
   .addStringOption(o => o.setName('question').setDescription('Poll question').setRequired(true))
   .addStringOption(o => o.setName('options').setDescription('Comma-separated options, 2 to 5').setRequired(true))
   .setDefaultMemberPermissions(P),
@@ -689,10 +662,14 @@ new SlashCommandBuilder()
   .addStringOption(o => o.setName('tones').setDescription('Shared tones, comma-separated, up to 7').setRequired(false))
   .addStringOption(o => o.setName('member-tones').setDescription('Member tones, comma-separated, up to 7').setRequired(false))
   .addStringOption(o => o.setName('commissioner-tones').setDescription('Commissioner tones, comma-separated, up to 7').setRequired(false))
+  .addBooleanOption(o => o.setName('open-house').setDescription('R mode: let the bot join high-signal banter without requiring @mention').setRequired(false))
+  .addChannelOption(o => o.setName('open-house-channel').setDescription('Add a social channel to R-mode Open House').setRequired(false))
+  .addBooleanOption(o => o.setName('clear-open-house-channels').setDescription('Clear explicit Open House channels and use safe social-channel auto detection').setRequired(false))
+  .addIntegerOption(o => o.setName('open-house-burst-limit').setDescription('Maximum ambient replies per channel in five minutes').setMinValue(1).setMaxValue(10).setRequired(false))
   .setDefaultMemberPermissions(P),
 
 new SlashCommandBuilder()
-  .setName('manual').setDescription('Open the role-aware myBot manual and PDF')
+  .setName('manual').setDescription('Open the role-aware CommishAI manual and PDF')
   .addStringOption(o => o.setName('section').setDescription('Open a specific manual section')
     .addChoices(
       { name: 'Overview', value: 'overview' },
@@ -704,13 +681,7 @@ new SlashCommandBuilder()
     )),
 new SlashCommandBuilder()
   .setName('set-timezone').setDescription('Update your scheduling timezone for your claimed team(s)')
-  .addStringOption(o => o.setName('timezone').setDescription('Pick your timezone').setRequired(true)
-    .addChoices(
-      { name: 'Pacific Time (PST/PDT)', value: 'America/Los_Angeles' },
-      { name: 'Mountain Time (MST/MDT)', value: 'America/Denver' },
-      { name: 'Central Time (CST/CDT)', value: 'America/Chicago' },
-      { name: 'Eastern Time (EST/EDT)', value: 'America/New_York' },
-    )),
+  .addStringOption(o => o.setName('timezone').setDescription('IANA timezone or common alias, e.g. America/Los_Angeles, PST, EST').setRequired(true)),
 new SlashCommandBuilder()
   .setName('team-registry-status').setDescription('Show the synced team ownership registry status (Commissioner only)')
   .setDefaultMemberPermissions(P),
@@ -851,11 +822,14 @@ new SlashCommandBuilder()
     .addSubcommand(sc => sc.setName('configure').setDescription('Save team role tracking preference')
       .addBooleanOption(o => o.setName('use-team-roles').setDescription('Track team roles for owners')))
     .addSubcommand(sc => sc.setName('assign').setDescription('Assign a team to a member')
+      .addStringOption(o => o.setName('league').setDescription('League that owns the team').setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName('team').setDescription('Team slot to assign').setRequired(true).setAutocomplete(true))
       .addUserOption(o => o.setName('user').setDescription('Member to assign').setRequired(true)))
     .addSubcommand(sc => sc.setName('free').setDescription('Release a claimed team back open')
+      .addStringOption(o => o.setName('league').setDescription('League that owns the team').setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName('team').setDescription('Team slot to free').setRequired(true).setAutocomplete(true)))
-    .addSubcommand(sc => sc.setName('open').setDescription('Show the current open teams board'))
+    .addSubcommand(sc => sc.setName('open').setDescription('Show the current open teams board')
+      .addStringOption(o => o.setName('league').setDescription('Optional league to show').setAutocomplete(true)))
     .setDefaultMemberPermissions(P),
   new SlashCommandBuilder()
     .setName('waitlist').setDescription('Manage the league waitlist')
@@ -901,7 +875,81 @@ new SlashCommandBuilder()
   new SlashCommandBuilder()
     .setName('player').setDescription('Look up imported player or owner records')
     .addSubcommand(sc => sc.setName('get').setDescription('Search one player').addStringOption(o => o.setName('query').setDescription('Player name to search').setRequired(true)))
-    .addSubcommand(sc => sc.setName('list').setDescription('List imported players').addStringOption(o => o.setName('team').setDescription('Optional team filter'))),
+    .addSubcommand(sc => sc.setName('list').setDescription('List imported players').addStringOption(o => o.setName('team').setDescription('Optional team filter')))
+    .addSubcommandGroup(g => g.setName('progression').setDescription('Season progression and postseason')
+      .addSubcommand(sc => sc.setName('open-season').setDescription('Create a canonical preseason (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addIntegerOption(o => o.setName('year').setDescription('Season year').setRequired(true)))
+      .addSubcommand(sc => sc.setName('set-policy').setDescription('Save a versioned policy (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('policy-json').setDescription('Full progression policy JSON').setRequired(true))
+        .addBooleanOption(o => o.setName('confirm-retroactive').setDescription('Confirm in-progress policy override and audit it')))
+      .addSubcommand(sc => sc.setName('tiers').setDescription('Finalize season team tiers (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('seed-or-manual').setDescription('Random seed or JSON team-ID-to-tier map')))
+      .addSubcommand(sc => sc.setName('initial-grant').setDescription('Mint one team initial package (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('team-id').setDescription('Canonical team ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('initial-all').setDescription('Mint every team initial package (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('sync-tenures').setDescription('Reconcile canonical team membership (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('migrate-legacy').setDescription('Cut over legacy rewards/claims into G2 (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('grant-reward').setDescription('Grant earned member points (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addUserOption(o => o.setName('member').setDescription('Recipient').setRequired(true))
+        .addIntegerOption(o => o.setName('points').setDescription('Earned attribute points').setMinValue(1).setRequired(true))
+        .addStringOption(o => o.setName('source-id').setDescription('Unique verified event/award ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('state').setDescription('Advance explicit season lifecycle (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('next').setDescription('Next state').setRequired(true).addChoices(
+          {name:'Preseason active',value:'PRESEASON_ACTIVE'},{name:'Regular season',value:'REGULAR_SEASON'},
+          {name:'Postseason seeding',value:'POSTSEASON_SEEDING'},{name:'Postseason active',value:'POSTSEASON_ACTIVE'},
+          {name:'Offseason',value:'OFFSEASON'},{name:'Archived',value:'ARCHIVED'})))
+      .addSubcommand(sc => sc.setName('seed-bracket').setDescription('Create seeded bracket (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('seeds-json').setDescription('Array of {teamId,seed}').setRequired(true)))
+      .addSubcommand(sc => sc.setName('bracket-result').setDescription('Apply verified provider postseason result (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('match-id').setDescription('Bracket match ID').setRequired(true))
+        .addStringOption(o => o.setName('provider-game-id').setDescription('Provider schedule game ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('map-team').setDescription('Map provider team ID to canonical team (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('team-id').setDescription('Canonical team ID').setRequired(true))
+        .addStringOption(o => o.setName('provider').setDescription('Roster provider key').setRequired(true).addChoices({name:'Madden Companion export',value:'companion_export'},{name:'NeonSportz',value:'neonsportz'},{name:'Custom URL',value:'custom_endpoint'}))
+        .addStringOption(o => o.setName('external-team-id').setDescription('Provider team ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('approve-claim').setDescription('Approve after a newer provider roster import (commissioner)')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('claim-id').setDescription('Pending claim ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('claim-special').setDescription('Request an earned dev trait or age reset')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('grant-id').setDescription('Your available trait or age reset grant').setRequired(true))
+        .addStringOption(o => o.setName('player-id').setDescription('Provider player ID').setRequired(true))
+        .addStringOption(o => o.setName('target-trait').setDescription('Policy-listed target trait (trait grants only)')))
+      .addSubcommand(sc => sc.setName('cancel-claim').setDescription('Cancel your pending attribute claim')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true))
+        .addStringOption(o => o.setName('claim-id').setDescription('Pending claim ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('rewards').setDescription('Show your canonical grants and wallet')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true)))
+      .addSubcommand(sc => sc.setName('policy').setDescription('Show effective progression policy for a season')
+        .addStringOption(o => o.setName('league').setDescription('Exact league ID').setRequired(true))
+        .addStringOption(o => o.setName('season').setDescription('Season ID').setRequired(true)))) ,
   new SlashCommandBuilder()
     .setName('logger').setDescription('Configure game channel logging (Commissioner only)')
     .addSubcommand(sc => sc.setName('configure').setDescription('Set the game log output channel').addChannelOption(o => o.setName('channel').setDescription('Channel for game logs').setRequired(true)))

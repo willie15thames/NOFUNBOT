@@ -54,6 +54,7 @@ const GROUPED_ALIASES = Object.freeze([
   { legacy: 'ignite-bot',               container: 'workflow',      group: 'bot',       name: 'ignite',               kind: 'sub' },
   { legacy: 'bot-status',               container: 'workflow',      group: 'bot',       name: 'status',               kind: 'sub' },
   { legacy: 'post-server-guide',        container: 'workflow',      group: 'guide',     name: 'republish',            kind: 'sub' },
+  { legacy: 'edit-message',             container: 'workflow',      group: null,        name: 'edit-message',         kind: 'sub' },
 ]);
 
 const GROUP_DESCRIPTIONS = Object.freeze({

@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const compatibilityRegistry = require('./infrastructure/compatibilityRegistry');
 // src/state.js
 // All shared mutable state in one place. No circular deps.
 // Loaded once at startup by index.js. Every service reads/writes from here.
@@ -32,6 +33,7 @@ const ocrGameResults = [];
 // Previously these were empty Maps — any restart wiped all pending actions.
 const _savedTrades   = loadJson('pendingTrades.json', {});
 const _savedBoosts   = loadJson('pendingAttrBoosts.json', {});
+if (_savedBoosts && Object.keys(_savedBoosts).length) void compatibilityRegistry.hit(null,'legacy-pending-attr-boosts');
 const _savedOffenses = loadJson('pendingOffenses.json', {});
 
 const pendingTrades     = new Map(Object.entries(_savedTrades));
@@ -131,7 +133,7 @@ const rewardsBoardIds = { potwMsgId:null, yearlyMsgId:null, streamMsgId:null, sb
 // ── League config (PER-LEAGUE RULES + HISTORY) ────────────────
 const leagueConfig = {
   leagueTypeId: null,           // Current league type (e.g., 'madden_franchise')
-  leagueName: null,             // Custom league name for searching/documentation (e.g., 'NOFUNLEAGUE S3')
+  leagueName: null,             // Custom league name for searching/documentation (e.g., 'CommishAI League S3')
   game: null,                   // Game type (e.g., 'madden', 'nba2k')
   rulesText: DEFAULT_RULE_TEXT, // Full rules text
   rulesUpdatedAt: null,         // Timestamp of last rule update

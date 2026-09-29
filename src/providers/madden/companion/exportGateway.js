@@ -12,6 +12,7 @@
  */
 
 'use strict';
+const { timingSafeStringEqual } = require('../../../utils/secureCompare');
 
 const importRuns = require('../../../league/importRunService');
 const { parseExportBody } = require('./parser');
@@ -100,10 +101,10 @@ function resolveLeagueToken(token) {
   let managedConfigured = false;
   try { managedConfigured = require('../../../services/providerConnectionService').listConnections().some(c => c.providerKey === PROVIDER && c.hasRouteToken); } catch {}
   for (const [leagueId, configured] of Object.entries(map)) {
-    if (_timingSafeEqual(presented, String(configured || '').trim())) return { valid:true, leagueId:String(leagueId), mode:'map' };
+    if (timingSafeStringEqual(presented, String(configured || '').trim())) return { valid:true, leagueId:String(leagueId), mode:'map' };
   }
   const single = String(process.env.COMPANION_EXPORT_TOKEN || '').trim();
-  if (single && _timingSafeEqual(presented, single)) return { valid:true, leagueId:String(process.env.PROVIDER_HTTP_SPACE_ID || '').trim() || null, mode:'legacy-single' };
+  if (single && timingSafeStringEqual(presented, single)) return { valid:true, leagueId:String(process.env.PROVIDER_HTTP_SPACE_ID || '').trim() || null, mode:'legacy-single' };
   // A configured gateway must hide whether a presented token is valid.
   // Keep the configuration mode even on mismatch so callers return 404, not
   // the misleading 503 "gateway-not-configured" response.
@@ -114,12 +115,6 @@ function resolveLeagueToken(token) {
   };
 }
 
-function _timingSafeEqual(a, b) {
-  const crypto = require('crypto');
-  const ba = Buffer.from(String(a || '')), bb = Buffer.from(String(b || ''));
-  if (ba.length !== bb.length || !ba.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
 
 /**
  * @param {object} req { leagueToken, contentType, body(Buffer|string), contentLength, headers? }

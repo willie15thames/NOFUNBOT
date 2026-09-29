@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const interactionExecution = require('../services/interactionExecutionContext');
 const processBuilderService = require('../services/processBuilderService');
 const processManagementService = require('../services/processManagementService');
 // src/routing/interactionRouter.js
@@ -18,7 +19,7 @@ let _buildInProgress = false;
 // Central interaction handler. Routes all slash commands, buttons, autocomplete.
 // No business logic lives here — every case delegates to a service or handler.
 
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, ChannelType, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
 const { makeLogger, setInteractionContext, clearContext } = require('../utils/logger');
 const { isAdminMember, sanitize, norm, canBotModerate, safeFetchMember, buildDisplayTeam } = require('../utils/helpers');
 const { COMM_ROLE, COMMISSIONER_IDS } = require('../config/env');
@@ -28,12 +29,17 @@ const { getTeamEmoji, getDevEmoji, getTeamDataByAnyName, findPlayerByUserId,
 const { saveJsonDebounced, loadJson } = require('../storage/jsonStore');
 const { prismaSafe } = require('../storage/prisma');
 const log = makeLogger('interaction');
-const { protectInteraction, safeInitialReply, safeEdit, safeDeferred } = require('../services/interactionRouterService');
+const { protectInteraction, safeInitialReply, safeEdit, safeDeferred, safeAutocompleteRespond } = require('../services/interactionRouterService');
+const autocompleteService = require('../services/autocompleteService');
+const componentSessions = require('../services/componentSessionService');
+const buttonChoiceService = require('../services/buttonChoiceService');
 const statusCardService = require('../services/statusCardService');
 const sendMessageService = require('../services/sendMessageService');
 const backgroundJobService = require('../services/backgroundJobService');
 const fs = require('fs');
 const activeLeagueService = require('../services/activeLeagueService');
+const leagueResolver = require('../services/leagueResolverService');
+const teamAssignmentUseCase = require('../application/teamAssignmentUseCase');
 const teamRegistry = require('../services/teamRegistryService');
 const leagueVisibility = require('../services/leagueVisibilityService');
 const { normalizeTimezone } = require('../services/timezoneService');
@@ -129,7 +135,7 @@ function _guardBotKilledCommand(interaction) {
   const status = String(serverSettings.getSettings().botStatus || 'active').toLowerCase();
   if (status !== 'killed') return false;
   if (new Set(['ignite-bot','bot-status','kill-bot','trash-the-bot']).has(cmd)) return false;
-  interaction.reply({
+  interactionExecution.for(interaction).reply({
     content: '🛑 Bot is currently killed. Only `/workflow bot ignite`, `/workflow bot status`, `/workflow bot kill`, and `/trash-the-bot` are available right now.',
     flags:64,
   }).catch(() => null);
@@ -140,7 +146,7 @@ function _guardInstallationModeCommand(interaction) {
   const cmd = interaction.commandName;
   if (!_isInstallationMode()) return false;
   if (INSTALLATION_MODE_ALLOWLIST.has(cmd)) return false;
-  interaction.reply({
+  interactionExecution.for(interaction).reply({
     content: `⚠️ **${interaction.guild?.name || 'This server'}** is still in installation mode. Finish the base setup in \`/setup-wizard-start\` and press **Initialize / Build Server Now** before using \`/${cmd}\`.`,
     flags:64,
   }).catch(() => null);
@@ -170,7 +176,7 @@ function _guardMemberTimezoneCommand(interaction) {
   if (isAdminMember(interaction.member, COMM_ROLE, _dynamicCommissioners())) return false;
   if (_timezoneRequiredCommandAllowed(cmd)) return false;
   if (!_memberTimezoneMissing(interaction.member)) return false;
-  interaction.reply({
+  interactionExecution.for(interaction).reply({
     content: '🕒 Save your timezone first with `/set-timezone timezone:<your-zone>` or tell me `my timezone is PST` before using member tools here.',
     flags:64,
   }).catch(() => null);
@@ -198,7 +204,7 @@ async function _promptTimezoneForGuildMembers(guild, opts = {}) {
         .setTitle('🕒 Timezone Prompt')
         .setDescription('Set your timezone with the button below or tell the bot `my timezone is PST`. This keeps schedules, reminders, and nickname sync clean.')
         .setTimestamp()],
-      components: [timezoneGateService.buildTimezoneSelectRow()],
+      components: [timezoneGateService.buildTimezoneSelectRow('timezone_onboarding_select', { guildId:guild.id, actorId:member.id, public:false })],
       allowedMentions: { users: [member.id], parse: [] },
     }).catch(() => null);
   }
@@ -219,7 +225,7 @@ function _guardInstallationModeComponent(interaction) {
   if (cid === 'setup_type_select') return false;
   if (cid === 'setup_season_select') return false;
   if (cid.startsWith('setup_')) {
-    interaction.reply({
+    interactionExecution.for(interaction).reply({
       content: '⚠️ Server setup is not finished yet. Build the base server from **#setup-wizard** before opening league setup.',
       flags:64,
     }).catch(() => null);
@@ -235,28 +241,51 @@ async function handleInteraction(interaction) {
   const result=await require('../storage/criticalStore').withExclusive(`v204:structure:${interaction.guild.id}`,()=>_handleInteractionWithContext(interaction));
   if(result.acquired)return result.value;
   const payload={content:'A server structure update is already running. Wait for it to finish before trying again.',flags:64};
-  return interaction.deferred||interaction.replied?interaction.editReply(payload):interaction.reply(payload);
+  return interaction.deferred||interaction.replied?interactionExecution.for(interaction).editReply(payload):interactionExecution.for(interaction).reply(payload);
 }
 async function _handleInteractionWithContext(interaction) {
+  if (!interaction.guild?.id) {
+    if (interaction.isAutocomplete?.()) return autocompleteService.respond(interaction, [], { resolverStage:'guild-required' });
+    return interaction.reply?.({ content:'Use this control inside a server.', flags:64 });
+  }
   const context=require('../league/spaceContext');
   const registry=require('../services/activeLeagueService');
   const league=registry.findLeagueForChannel(interaction.channel);
-  const all=registry.listActiveLeagues().filter(x=>x.kind!=='event');
+  const all=registry.listOperationalLeagues({ guildId:interaction.guild.id }).filter(x=>x.kind!=='event');
   const globalCommand=/^(setup-|delete-league|reset-league|initialize-server|trash-the-bot|member-record|join-league|select-team)/.test(interaction.commandName||'') || /^(setup_|join_)/.test(interaction.customId||'');
   const id=globalCommand?null:(league?.id || (all.length===1?all[0].id:null));
-  return context.run(id,async()=>{
+  const requestContext = require('../application/requestContext');
+  return requestContext.run({
+    guildId: interaction.guild.id,
+    leagueId: id || null,
+    actorId: interaction.user?.id || 'system',
+    channelId: interaction.channelId || interaction.channel?.id || null,
+    interactionId: interaction.id || null,
+  }, () => context.run(id,async()=>{
     if(league && !isAdminMember(interaction.member,COMM_ROLE,_dynamicCommissioners())) {
       const allowed=await require('../services/leagueVisibilityService').hasMembership(interaction.guild.id,interaction.user.id,league.id);
       const legacyMember=_state.openTeamRegistry.some(t=>t.leagueId===league.id&&t.ownerId===interaction.user.id);
-      if(!allowed&&!legacyMember)return interaction.reply({content:'Join this league or event before using its controls.',flags:64});
+      if(!allowed&&!legacyMember) {
+        if (interaction.isAutocomplete?.()) return autocompleteService.respond(interaction, [], { resolverStage:'membership-required' });
+        return interactionExecution.for(interaction).reply({content:'Join this league or event before using its controls.',flags:64});
+      }
     }
     try{return await _handleInteractionScoped(interaction);}
     finally{_state.flushSpace?.();await require('../storage/jsonStore').flushSpaceWrites();}
-  });
+  }));
 }
 
 async function _handleInteractionScoped(interaction) {
   try { require('../services/commandAliasService').resolveInteractionAlias(interaction); } catch {} // V203: idempotent
+  // Autocomplete is a distinct Discord interaction lifecycle. It only supports respond().
+  // Handle it before chat-input safety wrapping so a missing reply/followUp method can never break option loading.
+  if (interaction.isAutocomplete?.()) {
+    try { return await _handleAutocomplete(interaction); }
+    catch (err) {
+      log.warn(`autocomplete failed for ${interaction.commandName || '?'}: ${err.message}`);
+      return safeAutocompleteRespond(interaction, []);
+    }
+  }
   protectInteraction(interaction);
   const _startMs = Date.now();
   // Generate a short correlation ID for this interaction — ties all logs together
@@ -271,7 +300,6 @@ async function _handleInteractionScoped(interaction) {
   log.info(`[router] ${_interactionType} — ${interaction.customId || interaction.commandName || '?'} id=${_ixId}`);
   try {
 
-if (interaction.isAutocomplete()) return _handleAutocomplete(interaction);
 if (interaction.isModalSubmit?.()) return _handleModal(interaction);
 if (interaction.isButton() || interaction.isStringSelectMenu?.()) return _handleButton(interaction);
 if (interaction.isMessageContextMenuCommand?.()) return _handleMessageContextMenu(interaction);
@@ -343,40 +371,87 @@ const guildLock               = require('../services/guildLockService');
 
 // ── Autocomplete ──────────────────────────────────────────────
 async function _handleAutocomplete(interaction) {
-  const focused    = interaction.options.getFocused().toLowerCase().trim();
-  const optionName = interaction.options.getFocused(true).name;
-  const cmd        = interaction.commandName;
+  const _acStartedAt = Date.now();
+  const _acFocus = autocompleteService.focused(interaction);
+  const focused = _acFocus.value.toLowerCase().trim();
+  const optionName = _acFocus.name;
+  const cmd = interaction.commandName;
+  const respond = (choices, resolverStage = 'router') => autocompleteService.respond(interaction, choices, {
+    startedAt:_acStartedAt, optionName, focusedLength:_acFocus.value.length, resolverStage,
+  });
 
 if (cmd === 'join-league' && optionName === 'league') {
   try {
-    const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+    const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
     const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-    return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
+    return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to join', value: '_none_' }]);
   } catch (err) {
     log.warn('join-league autocomplete failed:', err.message);
-    return interaction.respond([{ name:'Use /join-league to open the league picker', value:'_none_' }]).catch(() => null);
+    return respond([{ name:'Use /join-league to open the league picker', value:'_none_' }]).catch(() => null);
   }
 }
 
 if (cmd === 'add-member-to-league' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
 }
 
 if (cmd === 'league-export' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No active leagues', value:'_none_' }]);
 }
 
-if (cmd === 'add-member-to-league' && optionName === 'team') {
-  const leagueId = interaction.options.getString('league');
-  if (!leagueId || leagueId === '_none_') return interaction.respond([{ name:'Choose a league first', value:'_none_' }]);
-  const teams = openTeamsService.getOpenTeamsForLeague(leagueId) || [];
+if (['add-member-to-league','select-team'].includes(cmd) && optionName === 'team') {
+  const leagueInput = interaction.options.getString('league');
+  const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:interaction.guildId, mode:'joinable' });
+  if (!resolved.ok) return respond([{ name:'Choose an active league first', value:'_none_' }]);
+  const teams = openTeamsService.getOpenTeamsForLeague(resolved.league.id) || [];
   const opts = teams.map(t => ({ name:`${t.displayTeam} — ${t.baseTeam}`.slice(0,100), value:String(t.baseTeam).slice(0,100) }))
     .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(opts.length ? opts : [{ name:'⚠️ No open teams in this league', value:'_none_' }]);
+  return respond(opts.length ? opts : [{ name:'⚠️ No open teams in this league', value:'_none_' }]);
+}
+
+if (cmd === 'select-team' && optionName === 'league') {
+  const opts = activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
+  const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return respond(filtered.length ? filtered : [{ name:'⚠️ No joinable leagues', value:'_none_' }]);
+}
+
+// Contract v8: all high-integrity team management carries canonical league scope as a first-class option.
+// Autocomplete is convenience only; command execution re-resolves the league and team before mutation.
+const LEAGUE_SCOPED_TEAM_COMMANDS = new Set(['register-team','set-team-identity','add-open-team','remove-open-team','set-team-logo','release-team','create-game','report-result','teams','claim-attr-boost']);
+if (optionName === 'league' && LEAGUE_SCOPED_TEAM_COMMANDS.has(cmd)) {
+  const rows = cmd === 'register-team'
+    ? activeLeagueService.listJoinableLeagues({ guildId:interaction.guildId })
+    : activeLeagueService.listOperationalLeagues({ guildId:interaction.guildId });
+  const opts = rows.map(activeLeagueService.formatResetChoice)
+    .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused))
+    .slice(0,25);
+  return respond(opts.length ? opts : [{ name:'⚠️ No eligible leagues', value:'_none_' }], 'league-scope');
+}
+
+const SCOPED_TEAM_OPTIONS = new Set(['team','team1','team2','winner','loser','original-team','base-team','replaces-team']);
+if (LEAGUE_SCOPED_TEAM_COMMANDS.has(cmd) && SCOPED_TEAM_OPTIONS.has(optionName)) {
+  let leagueInput = interaction.options.getString('league');
+  if (!leagueInput && cmd === 'report-result') leagueInput = _state.games.get(interaction.channelId)?.leagueId || null;
+  const mode = cmd === 'register-team' ? 'joinable' : 'operational';
+  const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:interaction.guildId, mode });
+  if (!resolved.ok) return respond([{ name:'Choose the league first', value:'_none_' }], 'team-scope');
+  const leagueId = resolved.league.id;
+  let rows = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(leagueId));
+  let sub = null;
+  if (cmd === 'teams') { try { sub = interaction.options.getSubcommand(false); } catch {} }
+  const openOnly = cmd === 'register-team' || (cmd === 'teams' && sub === 'assign');
+  const claimedOnly = cmd === 'release-team' || cmd === 'create-game' || cmd === 'report-result' || (cmd === 'teams' && sub === 'free');
+  if (openOnly) rows = rows.filter(t => t.isOpen);
+  if (claimedOnly) rows = rows.filter(t => !t.isOpen);
+  const opts = rows.map(t => ({
+    name:`${t.isOpen ? '✅' : '❌'} ${t.displayTeam}${norm(t.displayTeam) !== norm(t.baseTeam) ? ` (${t.baseTeam})` : ''}`.slice(0,100),
+    value:String(t.baseTeam).slice(0,100),
+  })).filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
+  return respond(opts.length ? opts : [{ name:'⚠️ No matching teams in this league', value:'_none_' }], 'team-scope');
 }
 
 
@@ -386,19 +461,19 @@ if (cmd === 'set-bot-identity' && optionName === 'imported-emoji') {
     .map(e => ({ name: `${e.name}`.slice(0,100), value: e.name }))
     .filter(o => !focused || o.name.toLowerCase().includes(focused))
     .slice(0,25);
-  return interaction.respond(opts.length ? opts : [{ name:'⚠️ No imported emojis found', value:'_none_' }]);
+  return respond(opts.length ? opts : [{ name:'⚠️ No imported emojis found', value:'_none_' }]);
 }
 
 if (cmd === 'delete-league' && optionName === 'league') {
-  const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+  const opts = activeLeagueService.listResettableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
   const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-  return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to delete', value: '_none_' }]);
+  return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to delete', value: '_none_' }]);
 }
 
   if (cmd === 'reset-league' && optionName === 'league') {
-    const opts = activeLeagueService.listResetOptions(_state).map(activeLeagueService.formatResetChoice);
+    const opts = activeLeagueService.listResettableLeagues({ guildId:interaction.guildId }).map(activeLeagueService.formatResetChoice);
     const filtered = opts.filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused)).slice(0,25);
-    return interaction.respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to reset', value: '_none_' }]);
+    return respond(filtered.length ? filtered : [{ name: '⚠️ No active leagues to reset', value: '_none_' }]);
   }
 
   const COMMUNITY_OPTIONS = new Set(['name','community']);
@@ -408,7 +483,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
       .map(c => ({ name: `${c.name} — ${c.type}`.slice(0,100), value: c.name }))
       .filter(o => !focused || o.name.toLowerCase().includes(focused) || o.value.toLowerCase().includes(focused))
       .slice(0,25);
-    return interaction.respond(options.length ? options : [{ name:'⚠️ No saved communities', value:'_none_' }]);
+    return respond(options.length ? options : [{ name:'⚠️ No saved communities', value:'_none_' }]);
   }
 
   const TEAM_OPTIONS = ['team','team1','team2','winner','loser','your-team','target-team','original-team','base-team','display-team'];
@@ -430,18 +505,18 @@ if (cmd === 'delete-league' && optionName === 'league') {
       }
       // If no claimed teams found, show a helpful empty-state
       if (!allTeams.size) {
-        return interaction.respond([{ name: '⚠️ No claimed teams to release', value: '_none_' }]);
+        return respond([{ name: '⚠️ No claimed teams to release', value: '_none_' }]);
       }
     }
     // For select-team: only show OPEN teams after at least one league has been created
     else if (cmd === 'select-team') {
       const activeLeagues = activeLeagueService.listResetOptions(_state);
       if (!activeLeagues.length) {
-        return interaction.respond([{ name: '⚠️ No active league yet — commissioner must run /setup-league first', value: '_none_' }]);
+        return respond([{ name: '⚠️ No active league yet — commissioner must run /setup-league first', value: '_none_' }]);
       }
       const openTeams = _state.openTeamRegistry.filter(t => t.isOpen);
       if (!openTeams.length) {
-        return interaction.respond([{ name: '⚠️ No teams configured or all slots are filled', value: '_none_' }]);
+        return respond([{ name: '⚠️ No teams configured or all slots are filled', value: '_none_' }]);
       }
       for (const t of openTeams) {
         const leagueTag = t.leagueName ? ` [${t.leagueName}]` : (t.leagueId ? ` [${t.leagueId}]` : '');
@@ -477,7 +552,7 @@ if (cmd === 'delete-league' && optionName === 'league') {
       }
     }
 
-    return interaction.respond(
+    return respond(
       [...allTeams.values()].filter(t => !focused || t.name.toLowerCase().includes(focused) || t.value.toLowerCase().includes(focused)).slice(0, 25)
     );
   }
@@ -488,11 +563,11 @@ if (cmd === 'delete-league' && optionName === 'league') {
       : interaction.options.getString('attr2-category')||'';
     if (catKey && isSingleAttrCategory(catKey)) {
       const only = ATTRS_BY_CATEGORY[catKey][0];
-      return interaction.respond([{name:`✅ AUTO — ${only.full}`,value:only.abbr}]);
+      return respond([{name:`✅ AUTO — ${only.full}`,value:only.abbr}]);
     }
-    return interaction.respond(getAttrSuggestions(focused, catKey));
+    return respond(getAttrSuggestions(focused, catKey));
   }
-  return interaction.respond([]);
+  return respond([]);
 }
 
 
@@ -659,12 +734,12 @@ async function _ackLongInteraction(interaction, startingText = '⏳ Working...')
   try {
     if (interaction.isChatInputCommand?.()) {
       if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply({ flags:64 });
+        await interactionExecution.for(interaction).deferReply({ flags:64 });
         return 'deferred';
       }
     } else {
       if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferUpdate();
+        await interactionExecution.for(interaction).deferUpdate();
         return 'update';
       }
     }
@@ -676,12 +751,12 @@ async function _ackLongInteraction(interaction, startingText = '⏳ Working...')
 
 async function _updateLongInteraction(interaction, ackMode, payload) {
   if (ackMode === 'deferred' || ackMode === 'replied') {
-    try { return await interaction.editReply(payload); } catch (_err) {}
-    try { return await interaction.followUp(payload); } catch (_err) {}
+    try { return await interactionExecution.for(interaction).editReply(payload); } catch (_err) {}
+    try { return await interactionExecution.for(interaction).followUp(payload); } catch (_err) {}
     return null;
   }
-  try { return await interaction.reply(payload); } catch (_err) {}
-  try { return await interaction.followUp(payload); } catch (_err) {}
+  try { return await interactionExecution.for(interaction).reply(payload); } catch (_err) {}
+  try { return await interactionExecution.for(interaction).followUp(payload); } catch (_err) {}
   return null;
 }
 
@@ -722,11 +797,11 @@ async function _sendSetupWizardNudge(_ch, _userId, _reason = 'Setup wizard is re
 
 async function _deferSetupWizardInteraction(interaction) {
   try {
-    await interaction.deferReply({ flags:64 });
+    await interactionExecution.for(interaction).deferReply({ flags:64 });
     return 'reply';
   } catch {}
   try {
-    await interaction.deferUpdate();
+    await interactionExecution.for(interaction).deferUpdate();
     return 'update';
   } catch {}
   return 'none';
@@ -734,12 +809,12 @@ async function _deferSetupWizardInteraction(interaction) {
 
 async function _finishSetupWizardInteraction(interaction, ackMode, payload) {
   if (ackMode === 'reply' && (interaction.deferred || interaction.replied)) {
-    return interaction.editReply(payload).catch(() => null);
+    return interactionExecution.for(interaction).editReply(payload).catch(() => null);
   }
   if (ackMode === 'update') {
-    return interaction.followUp(payload).catch(() => null);
+    return interactionExecution.for(interaction).followUp(payload).catch(() => null);
   }
-  return interaction.reply(payload).catch(() => null);
+  return interactionExecution.for(interaction).reply(payload).catch(() => null);
 }
 
 // Apply a wizard payload after deferUpdate has ALREADY been called.
@@ -749,10 +824,10 @@ async function _applyWizardPayload(interaction, payload) {
   delete cleanPayload.files; // safety: never send files from wizard
   // Prefer update() when the interaction has not yet been acknowledged.
   if (!interaction.deferred && !interaction.replied && (interaction.isButton?.() || interaction.isStringSelectMenu?.())) {
-    try { return await interaction.update(cleanPayload); } catch (_e) {}
+    try { return await interactionExecution.for(interaction).update(cleanPayload); } catch (_e) {}
   }
   if (interaction.deferred || interaction.replied) {
-    try { return await interaction.editReply(cleanPayload); } catch (_e) {}
+    try { return await interactionExecution.for(interaction).editReply(cleanPayload); } catch (_e) {}
   }
   if (interaction.message?.editable) {
     try { return await interaction.message.edit(cleanPayload); } catch (_e) {}
@@ -778,7 +853,7 @@ async function _safeWizardUpdate(interaction, payload) {
   if (hasNewFile && ch) {
     try {
       if (!interaction.deferred && !interaction.replied && (interaction.isButton?.() || interaction.isStringSelectMenu?.())) {
-        await interaction.deferUpdate();
+        await interactionExecution.for(interaction).deferUpdate();
       }
     } catch (_e) {}
     const oldMsg = interaction.message;
@@ -794,12 +869,12 @@ async function _safeWizardUpdate(interaction, payload) {
   const cleanPayload = { ...payload };
   delete cleanPayload.files;
   if (!interaction.deferred && !interaction.replied && (interaction.isButton?.() || interaction.isStringSelectMenu?.())) {
-    try { return await interaction.update(cleanPayload); } catch (_e) {}
+    try { return await interactionExecution.for(interaction).update(cleanPayload); } catch (_e) {}
   }
   if (interaction.message?.editable) {
     try { return await interaction.message.edit(cleanPayload); } catch (_e) {}
   }
-  try { return await interaction.editReply(cleanPayload); } catch (_e) {}
+  try { return await interactionExecution.for(interaction).editReply(cleanPayload); } catch (_e) {}
   if (ch) {
     const activeId = wizardStateService.getActiveMessageId();
     if (activeId) {
@@ -816,19 +891,19 @@ async function _safeWizardUpdate(interaction, payload) {
 async function _safeAcknowledgeWizardTap(interaction) {
   // All callers are button/select interactions — always deferUpdate
   // deferReply fallback removed: it creates ghost messages on button interactions
-  try { await interaction.deferUpdate(); return 'update'; } catch (_e) {}
+  try { await interactionExecution.for(interaction).deferUpdate(); return 'update'; } catch (_e) {}
   return 'none';
 }
 
 async function _followUpWizardTap(interaction, ackMode, content) {
   const payload = { content, flags:64 };
   if (ackMode === 'reply' && (interaction.deferred || interaction.replied)) {
-    return interaction.editReply(payload).catch(() => null);
+    return interactionExecution.for(interaction).editReply(payload).catch(() => null);
   }
   if (ackMode === 'update') {
-    return interaction.followUp(payload).catch(() => null);
+    return interactionExecution.for(interaction).followUp(payload).catch(() => null);
   }
-  return interaction.reply(payload).catch(() => null);
+  return interactionExecution.for(interaction).reply(payload).catch(() => null);
 }
 
 function _starterNoteForMode(mode) {
@@ -844,13 +919,13 @@ function _starterNoteForMode(mode) {
 async function _updateStarterMessageFromButton(interaction, note) {
   const payload = wizardRendererService.buildWizardPayload(null, note);
   try {
-    await interaction.update(payload);
+    await interactionExecution.for(interaction).update(payload);
     return 'updated';
   } catch (err) {
     log.warn('starter button update failed:', err.message);
   }
   try {
-    await interaction.deferUpdate();
+    await interactionExecution.for(interaction).deferUpdate();
     if (interaction.message?.editable) {
       await interaction.message.edit(payload);
       return 'deferred';
@@ -860,7 +935,7 @@ async function _updateStarterMessageFromButton(interaction, note) {
     log.warn('starter button defer/edit failed:', err.message);
   }
   try {
-    await interaction.reply({ content: '✅ Setup selection saved. Scroll this lane for the refreshed wizard cards.', flags:64 });
+    await interactionExecution.for(interaction).reply({ content: '✅ Setup selection saved. Scroll this lane for the refreshed wizard cards.', flags:64 });
     return 'reply';
   } catch (err) {
     log.warn('starter button reply failed:', err.message);
@@ -917,7 +992,7 @@ function _buildBotIdentityModal(settings = serverSettings.getSettings()) {
   const modal = new ModalBuilder().setCustomId('bot_identity_modal').setTitle('Configure Bot Identity');
   modal.addComponents(
     new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('bot_name').setLabel('Bot display name').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('myBot').setValue(String(settings.botName || 'myBot').slice(0, 32))
+      new TextInputBuilder().setCustomId('bot_name').setLabel('Bot display name').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('CommishAI').setValue(String(settings.botName || 'CommishAI').slice(0, 32))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder().setCustomId('avatar_url').setLabel('Avatar URL (optional)').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('https://... image url').setValue(String(settings.avatarMode === 'url' ? (settings.avatarUrl || '') : '').slice(0, 400))
@@ -934,27 +1009,27 @@ async function _handleMessageContextMenu(interaction) {
   // Auth check — commissioners only
   const isComm = () => isAdminMember(interaction.member, COMM_ROLE, _dynamicCommissioners());
   if (!isComm()) {
-    return interaction.reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
   }
 
   const targetMsg = interaction.targetMessage;
   if (!targetMsg) {
-    return interaction.reply({ content: '❌ Could not resolve the target message.', flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: '❌ Could not resolve the target message.', flags:64 }).catch(() => null);
   }
 
   // Only allow acting on bot's own messages
   const botId = guild?.members?.me?.id || interaction.applicationId;
   if (targetMsg.author?.id !== botId) {
-    return interaction.reply({ content: '❌ You can only edit or delete messages posted by this bot.', flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: '❌ You can only edit or delete messages posted by this bot.', flags:64 }).catch(() => null);
   }
 
   if (name === 'Delete Bot Message') {
     try {
       await targetMsg.delete();
-      return interaction.reply({ content: '🗑️ Bot message deleted.', flags:64 }).catch(() => null);
+      return interactionExecution.for(interaction).reply({ content: '🗑️ Bot message deleted.', flags:64 }).catch(() => null);
     } catch (err) {
       log.error('Delete bot message failed:', err.message, err.stack);
-      return interaction.reply({ content: safeUserError(err, '❌ Could not delete that bot message. Check permissions and try again.'), flags:64 }).catch(() => null);
+      return interactionExecution.for(interaction).reply({ content: safeUserError(err, '❌ Could not delete that bot message. Check permissions and try again.'), flags:64 }).catch(() => null);
     }
   }
 
@@ -986,35 +1061,90 @@ async function _handleButton(interaction) {
   const cid    = interaction.customId;
   const isComm = () => isAdminMember(interaction.member, COMM_ROLE, _dynamicCommissioners());
 
+  // Button-first choice adapter. The custom ID contains only an opaque session/option key;
+  // canonical values remain server-side in ComponentSession. Legacy select handlers are
+  // reused through a synthetic select interaction until each flow is migrated to its own controller.
+  if (String(cid || '').startsWith('uiopen:')) {
+    const sessionId = String(cid).split(':')[1] || '';
+    const session = componentSessions.get(sessionId);
+    const access = componentSessions.access(session, interaction);
+    if (!access.ok) {
+      const msg = access.reason === 'wrong-user' ? '❌ This control belongs to another member.' : '⌛ This control expired. Reopen the panel.';
+      return interactionExecution.for(interaction).reply({ content:msg, flags:64 }).catch(() => null);
+    }
+    return interactionExecution.for(interaction).update({ components:buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+  }
+  if (String(cid || '').startsWith('ui:')) {
+    const [, sessionId, action, optionKey] = String(cid).split(':');
+    const session = componentSessions.get(sessionId);
+    const access = componentSessions.access(session, interaction);
+    if (!access.ok) {
+      const msg = access.reason === 'wrong-user' ? '❌ This control belongs to another member.' : '⌛ This control expired. Reopen the command or panel.';
+      return interactionExecution.for(interaction).reply({ content: msg, flags:64 }).catch(() => null);
+    }
+    if (action === 'prev' || action === 'next') {
+      componentSessions.setPage(session, session.page + (action === 'next' ? 1 : -1));
+      return interactionExecution.for(interaction).update({ components: buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+    }
+    if (action === 'page') return interactionExecution.for(interaction).deferUpdate().catch(() => null);
+    if (action === 'pick') {
+      const toggled = componentSessions.toggle(session, optionKey, access.userId);
+      if (!toggled.ok) {
+        if (toggled.reason === 'max-values') return interactionExecution.for(interaction).reply({ content:`⚠️ You can choose at most ${session.maxValues}.`, flags:64 }).catch(() => null);
+        return interactionExecution.for(interaction).reply({ content:'⚠️ That option is no longer available.', flags:64 }).catch(() => null);
+      }
+      if (session.maxValues > 1 || session.minValues === 0) {
+        return interactionExecution.for(interaction).update({ components: buttonChoiceService.renderSession(session, access.userId) }).catch(() => null);
+      }
+    }
+    if (action === 'done' || action === 'pick') {
+      const values = componentSessions.values(session, access.userId);
+      if (values.length < session.minValues) return interactionExecution.for(interaction).reply({ content:`⚠️ Choose at least ${session.minValues} option(s) first.`, flags:64 }).catch(() => null);
+      const synthetic = new Proxy(interaction, {
+        get(target, prop) {
+          if (prop === 'customId') return session.legacyCustomId;
+          if (prop === 'values') return values;
+          if (prop === 'isStringSelectMenu') return () => true;
+          if (prop === 'isButton') return () => false;
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      if (!session.public) componentSessions.remove(session.id);
+      return _handleButton(synthetic);
+    }
+    return interactionExecution.for(interaction).deferUpdate().catch(() => null);
+  }
+
   if (_guardInstallationModeComponent(interaction)) return;
 
 // V202: application-enforced confirmation for destructive commissioner-AI actions.
 // Only the original requester may confirm; commissioner-AI authorization is re-checked with the SAME gate the handler uses.
 if (cid.startsWith('aiact_confirm::') || cid.startsWith('aiact_cancel::')) {
   const confirmationService = require('../actions/confirmationService');
-  const { isCommissionerAiAuthorized } = require('../handlers/commissionerHandler');
+  const { isCommissionerAiAuthorized } = require('../services/commissionerAuthorizationService');
   const token = cid.split('::')[1] || '';
   if (!isCommissionerAiAuthorized(interaction.member, interaction.user.id)) {
-    return interaction.reply({ content: '❌ Only an authorized commissioner can confirm AI actions.', flags:64 });
+    return interactionExecution.for(interaction).reply({ content: '❌ Only an authorized commissioner can confirm AI actions.', flags:64 });
   }
   if (cid.startsWith('aiact_cancel::')) {
     const c = confirmationService.cancel(token, interaction.user.id);
-    if (!c.ok) return interaction.reply({ content: c.reason === 'wrong-user' ? '❌ Only the commissioner who made the request can cancel it.' : '⚠️ This request already expired or was handled.', flags:64 });
-    return interaction.update({ content: `${String(interaction.message?.content || '').slice(0, 1800)}\n\n🚫 Cancelled — nothing was executed.`, components: [] }).catch(() => null);
+    if (!c.ok) return interactionExecution.for(interaction).reply({ content: c.reason === 'wrong-user' ? '❌ Only the commissioner who made the request can cancel it.' : '⚠️ This request already expired or was handled.', flags:64 });
+    return interactionExecution.for(interaction).update({ content: `${String(interaction.message?.content || '').slice(0, 1800)}\n\n🚫 Cancelled — nothing was executed.`, components: [] }).catch(() => null);
   }
   const consumed = confirmationService.consume(token, interaction.user.id, guild?.id);
   if (!consumed.ok) {
     const why = consumed.reason === 'wrong-user' ? '❌ Only the commissioner who made the request can confirm it.' : consumed.reason === 'expired' ? '⌛ This confirmation expired — ask again.' : '⚠️ This request was already handled.';
-    return interaction.reply({ content: why, flags:64 });
+    return interactionExecution.for(interaction).reply({ content: why, flags:64 });
   }
-  await interaction.update({ content: `${String(interaction.message?.content || '').slice(0, 1800)}\n\n✅ Confirmed by <@${interaction.user.id}> — executing…`, components: [], allowedMentions: { parse: [] } }).catch(() => null);
+  await interactionExecution.for(interaction).update({ content: `${String(interaction.message?.content || '').slice(0, 1800)}\n\n✅ Confirmed by <@${interaction.user.id}> — executing…`, components: [], allowedMentions: { parse: [] } }).catch(() => null);
   const actionExecutor = require('../actions/actionExecutor');
   const outcome = await actionExecutor.runConfirmed(consumed.entry, {
     guild, channelId: interaction.channelId, actorId: interaction.user.id, actorTag: interaction.user.tag,
     requestId: `confirm:${token}`, state: _state, client: _client, getCh: _getCh, aiCall: _aiCall, MODELS: _MODELS,
   });
   const text = actionExecutor.formatResults(outcome) || 'No actions were executed.';
-  return interaction.followUp({ content: text.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => null);
+  return interactionExecution.for(interaction).followUp({ content: text.slice(0, 1990), allowedMentions: { parse: [] } }).catch(() => null);
 }
 
 if (interaction.isStringSelectMenu?.() && cid === 'timezone_onboarding_select') {
@@ -1032,18 +1162,18 @@ if (interaction.isStringSelectMenu?.() && cid === 'timezone_onboarding_select') 
 }
 
 if (cid === 'timezone_onboarding_button') {
-  return interaction.reply({ content:'Use the timezone dropdown in this channel to choose one of the four main US timezones.', flags:64 });
+  return interactionExecution.for(interaction).reply({ content:'Use the timezone buttons in this channel, or run `/set-timezone` with any supported IANA timezone.', flags:64 });
 }
 
 if (cid === 'setup_wizard_seed_refresh') {
   if (!isComm()) {
     if (!interaction.deferred && !interaction.replied && (interaction.isButton?.() || interaction.isStringSelectMenu?.())) {
-      return interaction.update({ content: '❌ Commissioners only.', embeds: [], components: [] }).catch(() => null);
+      return interactionExecution.for(interaction).update({ content: '❌ Commissioners only.', embeds: [], components: [] }).catch(() => null);
     }
-    return interaction.followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
   }
   try {
-    await interaction.deferUpdate().catch(() => null);
+    await interactionExecution.for(interaction).deferUpdate().catch(() => null);
     const setupCh = await _ensureSetupWizardChannel(guild, { reveal: true }).catch(() => interaction.channel || null);
     const nextStage = 'mode';
     wizardStateService.patch({ installationMode: true, currentStep: nextStage, lastAdvancedAt: Date.now(), lastGuideRefreshAt: Date.now() });
@@ -1063,7 +1193,7 @@ if (cid === 'setup_wizard_seed_refresh') {
   } catch (err) {
     log.error('setup_wizard_seed_refresh failed:', err.message, err.stack);
     try {
-      await interaction.followUp({
+      await interactionExecution.for(interaction).followUp({
         embeds: [new EmbedBuilder()
           .setColor(0xe74c3c)
           .setTitle('⚡ Start Setup')
@@ -1077,8 +1207,8 @@ if (cid === 'setup_wizard_seed_refresh') {
 }
 
 if (cid === 'bot_setup_back') {
-  try { await interaction.deferUpdate(); } catch (_e) {}
-  if (!isComm()) return interaction.followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
   const result = wizardStateService.retreatStep();
   const prev = result.step || 'flow';
   wizardPrefs.savePrefs({ wizardStage: prev }); // keep in sync until wizardPrefs fully retired
@@ -1086,8 +1216,8 @@ if (cid === 'bot_setup_back') {
 }
 
 if (cid === 'bot_setup_reset') {
-  try { await interaction.deferUpdate(); } catch (_e) {}
-  if (!isComm()) return interaction.followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
   serverSettings.resetInstallationDefaults();
   serverRulesService.resetProfile();
   wizardStateService.resetState({ installationMode: true, currentStep: 'flow', lastTrashAt: Date.now() });
@@ -1096,7 +1226,7 @@ if (cid === 'bot_setup_reset') {
 }
 
 if (cid === 'wizard_next') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   try {
   const wiz = wizardStateService.getState();
   const settings = serverSettings.getSettings();
@@ -1104,12 +1234,12 @@ if (cid === 'wizard_next') {
 
   if (currentStep === 'mode') {
     if (!settings.customStructureMode) {
-      return interaction.followUp({ content:'⚠️ Choose a structure strategy before continuing.', flags:64 }).catch(() => null);
+      return interactionExecution.for(interaction).followUp({ content:'⚠️ Choose a structure strategy before continuing.', flags:64 }).catch(() => null);
     }
     if (settings.customStructureMode === 'template') {
-      if (!settings.serverTemplate) return interaction.followUp({ content:'⚠️ Choose a server template before continuing.', flags:64 }).catch(() => null);
+      if (!settings.serverTemplate) return interactionExecution.for(interaction).followUp({ content:'⚠️ Choose a server template before continuing.', flags:64 }).catch(() => null);
       const subOpts = getTemplateSubtemplateOptions(settings.serverTemplate);
-      if (subOpts.length && !settings.serverSubtemplate) return interaction.followUp({ content:'⚠️ Choose a subtemplate before continuing.', flags:64 }).catch(() => null);
+      if (subOpts.length && !settings.serverSubtemplate) return interactionExecution.for(interaction).followUp({ content:'⚠️ Choose a subtemplate before continuing.', flags:64 }).catch(() => null);
     }
     const nextStage = settings.customStructureMode === 'custom' ? 'custom_structure' : 'tone';
     wizardStateService.patch({ currentStep: nextStage, lastAdvancedAt: Date.now() });
@@ -1121,7 +1251,7 @@ if (cid === 'wizard_next') {
   }
   if (currentStep === 'custom_structure') {
     if (!Array.isArray(settings.customTemplateSelections) || !settings.customTemplateSelections.length) {
-      return interaction.followUp({ content:'⚠️ Choose at least one template for Custom Structure before continuing.', flags:64 }).catch(() => null);
+      return interactionExecution.for(interaction).followUp({ content:'⚠️ Choose at least one template for Custom Structure before continuing.', flags:64 }).catch(() => null);
     }
     wizardStateService.patch({ currentStep: 'tone', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'tone' });
@@ -1129,7 +1259,7 @@ if (cid === 'wizard_next') {
   }
   if (currentStep === 'tone') {
     if (!settings.audienceRating) {
-      return interaction.followUp({ content:'⚠️ Choose an audience level before continuing (G / PG / PG-13 / R).', flags:64 }).catch(() => null);
+      return interactionExecution.for(interaction).followUp({ content:'⚠️ Choose an audience level before continuing (G / PG / PG-13 / R).', flags:64 }).catch(() => null);
     }
     if (!serverSettings.getEffectiveToneProfile(settings, 'member').length) {
       const defaults = serverSettings.getAllowedTonesForAudience
@@ -1154,7 +1284,7 @@ if (cid === 'wizard_next') {
   } catch (wizardErr) {
     log.error('wizard_next failed:', wizardErr.message, wizardErr.stack);
     try {
-      return await interaction.followUp({
+      return await interactionExecution.for(interaction).followUp({
         content: `❌ Wizard step failed: ${wizardErr.message}. Try clicking again or use **Reset** to restart.`,
         flags:64,
       });
@@ -1163,7 +1293,7 @@ if (cid === 'wizard_next') {
 }
 
 if (cid === 'init_server_confirm') {
-  return interaction.reply({ content:'ℹ️ `/initialize-server` now runs immediately and opens the setup wizard lane without the extra confirm step.', flags:64 });
+  return interactionExecution.for(interaction).reply({ content:'ℹ️ `/initialize-server` now runs immediately and opens the setup wizard lane without the extra confirm step.', flags:64 });
 }
 
   
@@ -1185,26 +1315,26 @@ if (interaction.isStringSelectMenu?.() && cid === 'community_membership_select')
 }
 
 if (interaction.isStringSelectMenu?.() && cid === 'init_age_rating') {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-    try { await interaction.deferUpdate(); } catch (_e) {}
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+    try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
     const chosen = interaction.values[0];
     serverSettings.saveSettings({ ...serverSettings.getSettings(), audienceRating: chosen === '__clear__' ? '' : chosen });
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, chosen === '__clear__' ? 'Audience selection cleared.' : `Audience set to **${String(chosen).toUpperCase()}**. Tone choices have been refreshed for that rating.`));
   }
 
 if (interaction.isStringSelectMenu?.() && cid === 'bot_avatar_emoji_select') {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const picked = interaction.values[0];
   const found = guild?.emojis?.cache?.find(e => e.name === picked || String(e.name||'').toLowerCase() === String(picked).toLowerCase());
-  if (!found) return interaction.reply({ content:'❌ Imported emoji not found.', flags:64 });
+  if (!found) return interactionExecution.for(interaction).reply({ content:'❌ Imported emoji not found.', flags:64 });
   serverSettings.setBotIdentity({ avatarMode: 'emoji_url', avatarUrl: found.imageURL({ extension: 'png', size: 256 }), avatarEmoji: found.name });
   await botIdentityService.applyBotIdentity(_client, guild).catch(()=>null);
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Imported emoji avatar saved: **${found.name}**.`));
 }
 
 if (interaction.isStringSelectMenu?.() && cid === 'bot_server_template_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
   const nextSettings = { ...serverSettings.getSettings(), serverTemplate: selected === '__clear__' ? '' : selected, serverSubtemplate: '' };
   serverSettings.saveSettings(nextSettings);
@@ -1217,16 +1347,16 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_server_template_select') 
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, msg));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_server_subtemplate_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
   const nextVal = (selected === '__clear__' || selected === '__none__') ? '' : selected;
   serverSettings.saveSettings({ ...serverSettings.getSettings(), serverSubtemplate: nextVal });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, nextVal ? `Subtemplate saved: **${resolveTemplateProfile(serverSettings.getSettings()).subtemplateName || nextVal}**.` : 'Subtemplate selection cleared.'));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const selected = interaction.values[0];
   const mode = selected === '__clear__' ? '' : selected;
   const current = serverSettings.getSettings();
@@ -1242,13 +1372,13 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_mode_select') {
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, selected === '__clear__' ? 'Structure mode selection cleared.' : `Structure mode saved: **${String(selected).toUpperCase()}**.`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_structure_arrangement_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customArrangementMode: interaction.values[0] });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Custom arrangement saved: **${String(interaction.values[0]).toUpperCase()}**.`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_template_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const current = serverSettings.getSettings();
   const templates = interaction.values.filter(v => v !== '__none__');
   const validSubs = (current.customSubtemplateSelections || []).filter(v => templates.includes(String(v).split(':')[0]));
@@ -1256,24 +1386,24 @@ if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_template_select') 
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Saved **${templates.length}** custom template(s).`));
 }
 if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_subtemplate_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const values = interaction.values.filter(v => v !== '__none__');
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customSubtemplateSelections: values });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Saved **${values.length}** custom subtemplate(s).`));
 }
 
 if (interaction.isStringSelectMenu?.() && cid === 'bot_custom_catalog_select') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customCatalogSelections: interaction.values });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Saved **${interaction.values.length}** custom selection(s).`));
 }
 
 // Mix-and-match custom selects — each group merges into customCatalogSelections
 if (interaction.isStringSelectMenu?.() && ['custom_mix_gaming','custom_mix_sports','custom_mix_community','custom_mix_media'].includes(cid)) {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64}).catch(() => null);
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64}).catch(() => null);
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   try {
     const current = serverSettings.getSettings();
     const existing = Array.isArray(current.customCatalogSelections) ? current.customCatalogSelections : [];
@@ -1289,35 +1419,35 @@ if (interaction.isStringSelectMenu?.() && ['custom_mix_gaming','custom_mix_sport
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, note));
   } catch (err) {
     log.error(`${cid} mix handler failed:`, err.message);
-    return interaction.followUp({ content:safeUserError(err, '❌ Selection failed. Try again in a moment.'), flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).followUp({ content:safeUserError(err, '❌ Selection failed. Try again in a moment.'), flags:64 }).catch(() => null);
   }
 }
 
 if (interaction.isStringSelectMenu?.() && cid === 'init_tone_profile') {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
     serverSettings.setToneProfile(interaction.values);
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `Shared tone saved: **${serverSettings.getToneSummary(serverSettings.getSettings())}**.`));
   }
 
 if (interaction.isStringSelectMenu?.() && cid === 'member_tone_profile') {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-    try { await interaction.deferUpdate(); } catch (_e) {}
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+    try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
     const vals = interaction.values.includes('__clear__') ? [] : interaction.values;
     serverSettings.setToneProfile(vals, serverSettings.getSettings().useSharedToneProfile ? 'shared' : 'member');
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, vals.length ? `Member AI tone saved: **${serverSettings.getToneSummary(serverSettings.getSettings(), 'member')}**.` : 'Member AI tone selection cleared.'));
   }
 
 if (interaction.isStringSelectMenu?.() && cid === 'commissioner_tone_profile') {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-    try { await interaction.deferUpdate(); } catch (_e) {}
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+    try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
     const vals = interaction.values.includes('__clear__') ? [] : interaction.values;
     serverSettings.setToneProfile(vals, 'commissioner');
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, vals.length ? `Commissioner AI tone saved: **${serverSettings.getToneSummary(serverSettings.getSettings(), 'commissioner')}**.` : 'Commissioner AI tone selection cleared.'));
   }
 
 if (cid === 'bot_toggle_same_tone') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const current = serverSettings.getSettings();
   const next = !current.useSharedToneProfile;
   const shared = (current.memberToneProfile && current.memberToneProfile.length ? current.memberToneProfile : current.toneProfile) || [];
@@ -1326,16 +1456,16 @@ if (cid === 'bot_toggle_same_tone') {
 }
 
 if (cid === 'bot_toggle_gifs') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const current = serverSettings.getSettings();
   serverSettings.saveSettings({ ...current, allowGifReplies: !current.allowGifReplies, setupCompletedAt: Date.now() });
   return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, `GIF replies are now **${serverSettings.getSettings().allowGifReplies ? 'ON' : 'OFF'}**.`));
 }
 
 if (cid === 'bot_toggle_timezone_gate') {
-  try { await interaction.deferUpdate(); } catch (_e) {}
-  if (!isComm()) return interaction.followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).followUp({ content:'❌ Commissioners only.', flags:64 }).catch(() => null);
   try {
     const next = !serverSettings.getSettings().requireTimezone;
     serverSettings.saveSettings({ ...serverSettings.getSettings(), requireTimezone: next, setupCompletedAt: Date.now() });
@@ -1363,25 +1493,25 @@ if (cid === 'bot_toggle_timezone_gate') {
     return _applyWizardPayload(interaction, wizardRendererService.buildWizardPayload(guild, statusMsg));
   } catch (err) {
     log.error('bot_toggle_timezone_gate failed:', err.message, err.stack);
-    return interaction.followUp({ content: safeUserError(err, '❌ Timezone gate toggle failed. Check the logs and try again.'), flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).followUp({ content: safeUserError(err, '❌ Timezone gate toggle failed. Check the logs and try again.'), flags:64 }).catch(() => null);
   }
 }
 
 if (cid === 'bot_automation_status') {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
-  try { await interaction.deferUpdate(); } catch (_e) {}
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
+  try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
   const onboardingAuto = onboardingAutoService;
   await onboardingAuto.postAutomationStatus(guild).catch(() => null);
   const autoSettings = onboardingAuto.getSettings();
   const settings = serverSettings.getSettings();
   const embed = onboardingAuto.buildAutomationStatusEmbed(settings, autoSettings);
-  try { return await interaction.followUp({ embeds: [embed], flags:64 }); } catch (_e) {}
+  try { return await interactionExecution.for(interaction).followUp({ embeds: [embed], flags:64 }); } catch (_e) {}
   return null;
 }
 
 if (cid === 'bot_identity_upload_help') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  await interaction.deferUpdate().catch(() => null);
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  await interactionExecution.for(interaction).deferUpdate().catch(() => null);
   const setupCh = await _ensureSetupWizardChannel(guild, { reveal: true }).catch(() => null);
   const prompt = setupCh
     ? await setupCh.send({ content:'🖼️ Upload one supported image in **#setup-wizard** now. Accepted: **PNG, JPG, JPEG, WEBP, GIF**. Files like PDF, DOC, TXT, PY, ZIP, and other non-image uploads are rejected.', allowedMentions:{ parse: [] } }).catch(() => null)
@@ -1391,7 +1521,7 @@ if (cid === 'bot_identity_upload_help') {
 }
 
 if (cid === 'bot_setup_standard') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   wizardStateService.patch({ installationMode: true, currentStep: 'mode' });
   wizardPrefs.savePrefs({ selectedSetupMode: 'standard', standardSelected: true, customSelected: false, wizardStage: 'mode' });
   serverSettings.saveSettings({ ...serverSettings.getSettings(), customStructureMode: 'base' });
@@ -1399,7 +1529,7 @@ if (cid === 'bot_setup_standard') {
 }
 
 if (cid === 'bot_setup_custom') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   wizardStateService.patch({ installationMode: true, currentStep: 'mode' });
   wizardPrefs.savePrefs({ selectedSetupMode: 'custom', standardSelected: false, customSelected: true, wizardStage: 'mode' });
   if (!serverSettings.getSettings().customStructureMode) serverSettings.saveSettings({ ...serverSettings.getSettings(), customStructureMode: 'custom' });
@@ -1413,15 +1543,15 @@ if (cid === 'bot_setup_custom') {
   if (interaction.isStringSelectMenu?.() && cid.startsWith('league_member_timezone::')) {
     const [, leagueId, targetUserId] = cid.split('::');
     if (String(interaction.user.id) !== String(targetUserId)) {
-      return interaction.reply({ content:'❌ This onboarding card belongs to another member.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'❌ This onboarding card belongs to another member.', flags:64 });
     }
     const picked = interaction.values?.[0] || '';
     const result = await _saveMemberTimezoneAndSync(interaction.member, picked, { channelId:interaction.channelId, advanceWizard:false, refreshWizard:false });
-    if (!result.ok) return interaction.reply({ content:'❌ Invalid timezone choice.', flags:64 });
+    if (!result.ok) return interactionExecution.for(interaction).reply({ content:'❌ Invalid timezone choice.', flags:64 });
     leagueMemberOnboarding.markTimezoneComplete(interaction.user.id, leagueId, result.timezone, result.nicknameSync);
     const league = activeLeagueService.getLeague(leagueId);
     const team = nicknamePolicy.getDisplayForLeague(_state, interaction.user.id, leagueId);
-    return interaction.update({
+    return interactionExecution.for(interaction).update({
       content:`<@${interaction.user.id}>`,
       embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ ${league?.leagueName || 'League'} onboarding complete`).setDescription(`**League:** ${league?.leagueName || leagueId}\n**Team:** ${team || 'Not selected yet'}\n**Timezone:** ${result.label}\n\n${team ? 'You are ready for scheduling and league activity.' : 'Your timezone is saved. Use `/select-team` to claim an available team in this league.'}`).setTimestamp()],
       components:[],
@@ -1436,7 +1566,7 @@ if (cid === 'bot_setup_custom') {
 
 
 if (cid === 'bot_setup_apply_custom') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   const ackMode = await _safeAcknowledgeWizardTap(interaction);
   wizardStateService.patch({ installationMode: true });
   wizardPrefs.savePrefs({ selectedSetupMode: 'custom', customSelected: true, standardSelected: false });
@@ -1444,10 +1574,10 @@ if (cid === 'bot_setup_apply_custom') {
 }
 
 if (cid === 'bot_setup_initialize') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   // Mutex: prevent double-fire from double-click or Railway retry
   if (_buildInProgress) {
-    try { await interaction.deferUpdate(); } catch (_e) {}
+    try { await interactionExecution.for(interaction).deferUpdate(); } catch (_e) {}
     return null;
   }
   _buildInProgress = true;
@@ -1475,7 +1605,7 @@ if (cid === 'bot_setup_initialize') {
     }
     let interactionUpdated = false;
     if (!interaction.deferred && !interaction.replied && (interaction.isButton?.() || interaction.isStringSelectMenu?.())) {
-      interactionUpdated = await interaction.update({ content: null, embeds: [new EmbedBuilder().setColor(0xf59e0b).setTitle('🏗️ Building Server...').setDescription('Creating channels, applying permissions, syncing identity, and publishing patch notes. This takes 15-30 seconds.').setTimestamp()], components: [] }).then(() => true).catch(() => false);
+      interactionUpdated = await interactionExecution.for(interaction).update({ content: null, embeds: [new EmbedBuilder().setColor(0xf59e0b).setTitle('🏗️ Building Server...').setDescription('Creating channels, applying permissions, syncing identity, and publishing patch notes. This takes 15-30 seconds.').setTimestamp()], components: [] }).then(() => true).catch(() => false);
     }
     // V187 FIX: Only send a separate progress message if the interaction update didn't work.
     // Previously BOTH fired, creating two "Building Server..." embeds.
@@ -1600,7 +1730,7 @@ Bot display synced to: **${identityResult.displayName}**` : '';
 }
 
 if (cid === 'bot_identity_config') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   return interaction.showModal(_buildBotIdentityModal());
 }
 
@@ -1614,31 +1744,31 @@ if (cid.startsWith('poll_vote::')) {
 if (cid.startsWith('comp_avail::')) {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('availability');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
   const status = cid.split('::')[1]; // available, limited, unavailable
   const week = _state.scheduleState?.week || 1;
   compReg.recordAvailability(interaction.user.id, week, status);
-  return interaction.reply({ content: `✅ Your availability for Week ${week} is set to **${status}**.`, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: `✅ Your availability for Week ${week} is set to **${status}**.`, flags: 64 });
 }
 
 if (cid.startsWith('comp_mvp::')) {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('mvp-voting');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
   const week = parseInt(cid.split('::')[1], 10) || _state.scheduleState?.week || 1;
   const pick = interaction.values?.[0];
-  if (!pick) return interaction.reply({ content: '⚠️ No selection detected.', flags: 64 });
+  if (!pick) return interactionExecution.for(interaction).reply({ content: '⚠️ No selection detected.', flags: 64 });
   compReg.recordMvpVote(week, interaction.user.id, pick);
-  return interaction.reply({ content: `✅ Your MVP vote for Week ${week} has been recorded: <@${pick}>`, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: `✅ Your MVP vote for Week ${week} has been recorded: <@${pick}>`, flags: 64 });
 }
 
 if (cid === 'comp_rule_ack') {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('rule-ack');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
   const alreadyAcked = compReg.hasAcknowledgedRules(interaction.user.id);
   compReg.recordRuleAck(interaction.user.id);
-  if (alreadyAcked) return interaction.reply({ content: '✅ You have already acknowledged the rules. Thank you!', flags: 64 });
+  if (alreadyAcked) return interactionExecution.for(interaction).reply({ content: '✅ You have already acknowledged the rules. Thank you!', flags: 64 });
   // Grant access role if configured
   try {
     const settings = require('../services/serverSettingsService').getSettings();
@@ -1648,13 +1778,13 @@ if (cid === 'comp_rule_ack') {
       await interaction.member.roles.add(role, 'Rule acknowledgment').catch(() => null);
     }
   } catch {}
-  return interaction.reply({ content: '✅ Rules acknowledged! You now have full server access.', flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: '✅ Rules acknowledged! You now have full server access.', flags: 64 });
 }
 
 if (cid === 'comp_trade_block_edit') {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('trade-block');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
   const modal = new ModalBuilder().setCustomId('comp_trade_block_modal').setTitle('Update Trade Block');
   modal.addComponents(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('players').setLabel('Players on the block (one per line)').setStyle(2).setMaxLength(500).setRequired(true).setPlaceholder('Patrick Mahomes\nTravis Kelce')),
@@ -1666,13 +1796,13 @@ if (cid === 'comp_trade_block_modal') {
   const compReg = require('../services/componentRegistryService');
   const players = String(interaction.fields.getTextInputValue('players') || '').split('\n').map(s => s.trim()).filter(Boolean);
   compReg.updateTradeBlock(interaction.user.id, players);
-  return interaction.reply({ content: `✅ Trade block updated with ${players.length} player(s): ${players.join(', ')}`, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: `✅ Trade block updated with ${players.length} player(s): ${players.join(', ')}`, flags: 64 });
 }
 
 if (cid === 'comp_game_result_submit') {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('game-results');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
   const modal = new ModalBuilder().setCustomId('comp_game_result_modal').setTitle('Submit Game Result');
   modal.addComponents(
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('your_team').setLabel('Your Team').setStyle(1).setMaxLength(50).setRequired(true)),
@@ -1689,7 +1819,7 @@ if (cid === 'comp_game_result_modal') {
   const yourScore = parseInt(interaction.fields.getTextInputValue('your_score'), 10);
   const oppTeam = interaction.fields.getTextInputValue('opp_team');
   const oppScore = parseInt(interaction.fields.getTextInputValue('opp_score'), 10);
-  if (isNaN(yourScore) || isNaN(oppScore)) return interaction.reply({ content: '❌ Scores must be numbers.', flags: 64 });
+  if (isNaN(yourScore) || isNaN(oppScore)) return interactionExecution.for(interaction).reply({ content: '❌ Scores must be numbers.', flags: 64 });
   const week = _state.scheduleState?.week || 1;
   // V202 (BUG-006): route through the canonical result owner; it records the componentRegistry projection itself.
   const gameResultService = require('../league/gameResultService');
@@ -1697,7 +1827,7 @@ if (cid === 'comp_game_result_modal') {
     homeTeam: yourTeam, awayTeam: oppTeam, homeScore: yourScore, awayScore: oppScore, week,
     source: 'component-modal', submittedBy: interaction.user.id,
   }, { state: _state, guild });
-  if (!submitted.ok) return interaction.reply({ content: `❌ ${submitted.reason}`, flags: 64 });
+  if (!submitted.ok) return interactionExecution.for(interaction).reply({ content: `❌ ${submitted.reason}`, flags: 64 });
   const resultCh = _getCh(guild, 'gameResults');
   if (resultCh) {
     await sendMessageService.send(resultCh, { embeds: [new EmbedBuilder().setColor(yourScore > oppScore ? 0x2ecc71 : 0xe74c3c)
@@ -1706,57 +1836,55 @@ if (cid === 'comp_game_result_modal') {
       .addFields({ name: 'Submitted By', value: `<@${interaction.user.id}>`, inline: true }, { name: 'Week', value: String(week), inline: true })
       .setTimestamp()], allowedMentions: { parse: [] } }, { action: 'comp-game-result-log' });
   }
-  return interaction.reply({ content: `✅ Game result recorded: **${yourTeam}** ${yourScore} – ${oppScore} **${oppTeam}**`, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: `✅ Game result recorded: **${yourTeam}** ${yourScore} – ${oppScore} **${oppTeam}**`, flags: 64 });
 }
 
 if (cid.startsWith('comp_predictions_start::')) {
   const compReg = require('../services/componentRegistryService');
   const guard = compReg.guardEnabled('predictions');
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
-  return interaction.reply({ content: '🔮 Predictions feature is active. Use the matchup select menus posted with the weekly schedule to pick your winners.', flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: '🔮 Predictions feature is active. Use the matchup buttons posted with the weekly schedule to pick your winners.', flags: 64 });
 }
 
   if (cid === 'server_rules_customize') {
-    if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+    if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
     return interaction.showModal(serverRulesService.buildRulesModal());
   }
 
-  if (interaction.isStringSelectMenu?.() && (cid === 'server_rules_select_a' || cid === 'server_rules_select_b')) {
-    if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (interaction.isStringSelectMenu?.() && cid === 'server_rules_select_all') {
+    if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
     const current = serverRulesService.getProfile();
-    const allSelected = new Map((current.selected || []).map(r => [r.id, r]));
-    const rangeIds = (cid === 'server_rules_select_a' ? serverRulesService.RULE_LIBRARY.slice(0,15) : serverRulesService.RULE_LIBRARY.slice(15,30)).map(r => r[0]);
-    for (const rid of rangeIds) allSelected.delete(rid);
-    for (const rid of interaction.values) {
+    const selected = [];
+    for (const rid of interaction.values || []) {
       const match = serverRulesService.RULE_LIBRARY.find(r => r[0] === rid);
-      if (match) { const [id,text,level] = match; allSelected.set(id, { id, text, level }); }
+      if (match) { const [id,text,level] = match; selected.push({ id, text, level }); }
     }
-    const nextProfile = { ...current, selected: [...allSelected.values()] };
+    const nextProfile = { ...current, selected };
     serverRulesService.saveProfile(nextProfile);
     await serverRulesService.publishServerRules(guild).catch(()=>null);
-    return interaction.update({ embeds:[serverRulesService.buildRulesLiveEmbed(nextProfile)], components:serverRulesService.buildRuleSelectRows(nextProfile) });
+    return interactionExecution.for(interaction).update({ embeds:[serverRulesService.buildRulesLiveEmbed(nextProfile)], components:serverRulesService.buildRuleSelectRows(nextProfile) });
   }
 
   if (cid === 'server_rules_publish_now') {
-    if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+    if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
     const profile = serverRulesService.getProfile();
     await serverRulesService.publishServerRules(guild).catch(()=>null);
-    return interaction.update({ embeds:[serverRulesService.buildRulesLiveEmbed(profile)], components:serverRulesService.buildRuleSelectRows(profile) });
+    return interactionExecution.for(interaction).update({ embeds:[serverRulesService.buildRulesLiveEmbed(profile)], components:serverRulesService.buildRuleSelectRows(profile) });
   }
 
   if (cid.startsWith('toggle_active_check::')) {
-    if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+    if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
     const leagueId = cid.split('::')[1];
     const league = activeLeagueService.getLeague(leagueId);
-    if (!league) return interaction.reply({ content:'❌ League not found.', flags:64 });
+    if (!league) return interactionExecution.for(interaction).reply({ content:'❌ League not found.', flags:64 });
     const svc = require('../services/leagueFeatureService');
     const res = await svc.toggleActiveCheckForLeague(guild, league, _state);
-    return interaction.reply({ content: res.enabled ? `✅ Active check enabled for **${league.leagueName}**. It will ping league members every 4 days with a 48-hour reply window.` : `✅ Active check disabled for **${league.leagueName}**.`, flags:64 });
+    return interactionExecution.for(interaction).reply({ content: res.enabled ? `✅ Active check enabled for **${league.leagueName}**. It will ping league members every 4 days with a 48-hour reply window.` : `✅ Active check disabled for **${league.leagueName}**.`, flags:64 });
   }
 
   // ── Offense buttons ──
   if (cid.startsWith('offense_')) {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
     const [,action,...rest] = cid.split('_');
     const offenseId = rest.join('_');
     let offense = _state.pendingOffenses.get(offenseId);
@@ -1774,17 +1902,17 @@ if (cid.startsWith('comp_predictions_start::')) {
         };
       }
     }
-    if (!offense) return interaction.reply({content:'⚠️ Offense already processed.',flags:64});
+    if (!offense) return interactionExecution.for(interaction).reply({content:'⚠️ Offense already processed.',flags:64});
     _state.pendingOffenses.delete(offenseId);
     const disabled = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`offense_warn_${offenseId}`).setLabel('⚠️ Warn').setStyle(ButtonStyle.Primary).setDisabled(true),
       new ButtonBuilder().setCustomId(`offense_boot_${offenseId}`).setLabel('🥾 Boot').setStyle(ButtonStyle.Danger).setDisabled(true),
       new ButtonBuilder().setCustomId(`offense_dismiss_${offenseId}`).setLabel('❌ Dismiss').setStyle(ButtonStyle.Secondary).setDisabled(true),
     );
-    await interaction.update({components:[disabled]}).catch(()=>null);
+    await interactionExecution.for(interaction).update({components:[disabled]}).catch(()=>null);
     if (action==='dismiss') {
       await updatePendingOffenseStatus(guild.id, offenseId, 'dismissed', interaction.user.id);
-      return interaction.followUp({content:`✅ Offense #${offenseId} dismissed.`,flags:64});
+      return interactionExecution.for(interaction).followUp({content:`✅ Offense #${offenseId} dismissed.`,flags:64});
     }
     const OFFENSE_TYPES = {QUIT:{label:'Quit/Close App',warnField:'closeAppWarnings'},GAMEPLAY:{label:'Gameplay Violation',warnField:'warnings'},INACTIVITY:{label:'Inactivity',warnField:'inactivityWarnings'},CHEAT:{label:'Cheating',warnField:'warnings'}};
     const offInfo = OFFENSE_TYPES[offense.type]||OFFENSE_TYPES.GAMEPLAY;
@@ -1799,7 +1927,7 @@ if (cid.startsWith('comp_predictions_start::')) {
         .setFooter({text:count>=3?'⚠️ 3 STRIKES — consider removal':`${3-count} remaining`}).setTimestamp()]}).catch(()=>null);
       if (member) await member.send(`⚠️ Warning in ${resolveServerName(guild, 'this server')} for **${offInfo.label}**. Count: ${count}/3.`).catch(()=>null);
       await updatePendingOffenseStatus(guild.id, offenseId, 'warned', interaction.user.id);
-      return interaction.followUp({content:`✅ Warning issued — <@${offense.userId}> count: ${count}/3.`,flags:64});
+      return interactionExecution.for(interaction).followUp({content:`✅ Warning issued — <@${offense.userId}> count: ${count}/3.`,flags:64});
     }
     if (action==='boot' && member && canBotModerate(member)) {
       const bootCh = _getCh(guild,'bootLog');
@@ -1807,42 +1935,24 @@ if (cid.startsWith('comp_predictions_start::')) {
         .addFields({name:'Player',value:`${member}`,inline:true},{name:'Team',value:offense.teamName,inline:true},{name:'Violation',value:offInfo.label},{name:'Evidence',value:offense.reasoning}).setTimestamp()]}).catch(()=>null);
       await guild.members.kick(member.id,`${offInfo.label}: ${offense.reasoning}`).catch(()=>null);
       await updatePendingOffenseStatus(guild.id, offenseId, 'booted', interaction.user.id);
-      return interaction.followUp({content:`🥾 <@${offense.userId}> booted.`,flags:64});
+      return interactionExecution.for(interaction).followUp({content:`🥾 <@${offense.userId}> booted.`,flags:64});
     }
-    return interaction.followUp({content:'⚠️ Could not take action.',flags:64});
+    return interactionExecution.for(interaction).followUp({content:'⚠️ Could not take action.',flags:64});
   }
 
-  // ── Boost buttons ──
-  if (cid.startsWith('boost_approve_')||cid.startsWith('boost_deny_')) {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-    const approved = cid.startsWith('boost_approve_');
-    const boostId  = cid.replace(/^boost_(approve|deny)_/,'');
-    const boost = _state.pendingAttrBoosts.get(boostId);
-    if (!boost) return interaction.reply({content:'⚠️ Boost already processed.',flags:64});
-    _state.pendingAttrBoosts.delete(boostId);
-    const attrsText = boost.attr2?`+2 ${boost.attr1}  |  +2 ${boost.attr2}`:`+2 ${boost.attr1}`;
-    const disabled = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`boost_approve_${boostId}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success).setDisabled(true),
-      new ButtonBuilder().setCustomId(`boost_deny_${boostId}`).setLabel('❌ Deny').setStyle(ButtonStyle.Danger).setDisabled(true),
-    );
-    await interaction.update({components:[disabled]}).catch(()=>null);
-    const requester = await guild.members.fetch(boost.userId).catch(()=>null);
-    if (requester) await requester.send(approved?`✅ Boost **APPROVED** — **${boost.player}** (${boost.teamName}): ${attrsText}. Apply in-game.`:`❌ Boost **DENIED** — **${boost.player}** (${boost.teamName}). Contact commissioner.`).catch(()=>null);
-    if (approved) {
-      const devCh = _getCh(guild,'devUpgrades');
-      if (devCh) await devCh.send({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Attribute Boost Approved')
-        .addFields({name:'Player',value:boost.player,inline:true},{name:'Team',value:boost.teamName,inline:true},{name:'Attributes',value:attrsText,inline:true},{name:'Source',value:boost.sourceLabel,inline:true},{name:'Approved by',value:`${interaction.user}`,inline:true}).setTimestamp()]}).catch(()=>null);
-    }
-    return interaction.followUp({content:approved?`✅ Boost approved — **${boost.player}** gets **${attrsText}**.`:`❌ Boost denied — **${boost.player}**. Player notified.`,flags:64});
+  // Legacy boost buttons cannot verify entitlement ownership or provider state.
+  if (cid.startsWith('boost_approve_') || cid.startsWith('boost_deny_')) {
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+    return interactionExecution.for(interaction).reply({content:'This legacy boost request cannot be approved here. No entitlement was spent and no player attribute was changed. Use the verified progression flow when it is enabled.',flags:64});
   }
 
   // ── Trade buttons ──
   if (cid.startsWith('trade_approve_')||cid.startsWith('trade_decline_')) {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
     const approved = cid.startsWith('trade_approve_');
     const tradeId  = cid.replace(/^trade_(approve|decline)_/,'');
     const tradeDecision = require('../services/tradeWorkflowService').decide(_state, tradeId, { approved, actorId:interaction.user.id });
-    if (!tradeDecision.ok) return interaction.reply({content:'⚠️ Trade already processed.',flags:64});
+    if (!tradeDecision.ok) return interactionExecution.for(interaction).reply({content:'⚠️ Trade already processed.',flags:64});
     const trade = tradeDecision.trade;
     const destCh = _getCh(guild, approved?'acceptedTrades':'declinedTrades');
     const embed = new EmbedBuilder().setColor(approved?0x2ecc71:0xe74c3c).setTitle(approved?'✅ TRADE APPROVED':'❌ TRADE DECLINED')
@@ -1859,21 +1969,21 @@ if (cid.startsWith('comp_predictions_start::')) {
       new ButtonBuilder().setCustomId(`trade_approve_${tradeId}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success).setDisabled(true),
       new ButtonBuilder().setCustomId(`trade_decline_${tradeId}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger).setDisabled(true),
     );
-    await interaction.update({components:[disabled]}).catch(()=>null);
+    await interactionExecution.for(interaction).update({components:[disabled]}).catch(()=>null);
   }
 
   // ── Rejoin buttons (previously kicked member) ──
   if (cid.startsWith('rejoin_')) {
-    if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+    if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
     const [, action, odid] = cid.match(/^rejoin_(allow|kick|ban)_(\d+)$/) || [];
-    if (!action || !odid) return interaction.reply({content:'⚠️ Invalid button.',flags:64});
+    if (!action || !odid) return interactionExecution.for(interaction).reply({content:'⚠️ Invalid button.',flags:64});
 
     const disabled = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`rejoin_allow_${odid}`).setLabel('✅ Let Them Stay').setStyle(ButtonStyle.Success).setDisabled(true),
       new ButtonBuilder().setCustomId(`rejoin_kick_${odid}`).setLabel('🥾 Kick').setStyle(ButtonStyle.Danger).setDisabled(true),
       new ButtonBuilder().setCustomId(`rejoin_ban_${odid}`).setLabel('🔨 Ban').setStyle(ButtonStyle.Danger).setDisabled(true),
     );
-    await interaction.update({components:[disabled]}).catch(()=>null);
+    await interactionExecution.for(interaction).update({components:[disabled]}).catch(()=>null);
 
     const targetMember = await guild.members.fetch(odid).catch(() => null);
     const { canBotModerate } = require('../utils/helpers');
@@ -1881,27 +1991,27 @@ if (cid.startsWith('comp_predictions_start::')) {
 
     if (action === 'allow') {
       ledger.getRecord(odid).notes.push({ text: `Allowed to stay by ${interaction.user.tag}`, timestamp: Date.now() });
-      return interaction.followUp({ content: `✅ **<@${odid}> is allowed to stay.** The commissioner has spoken. Don't make them regret it.`, flags:64 });
+      return interactionExecution.for(interaction).followUp({ content: `✅ **<@${odid}> is allowed to stay.** The commissioner has spoken. Don't make them regret it.`, flags:64 });
     }
     if (action === 'kick') {
-      if (!targetMember) return interaction.followUp({content:'⚠️ Member already left.',flags:64});
-      if (!canBotModerate(targetMember)) return interaction.followUp({content:'⚠️ Cannot kick — they have higher permissions than the bot.',flags:64});
+      if (!targetMember) return interactionExecution.for(interaction).followUp({content:'⚠️ Member already left.',flags:64});
+      if (!canBotModerate(targetMember)) return interactionExecution.for(interaction).followUp({content:'⚠️ Cannot kick — they have higher permissions than the bot.',flags:64});
       const bootCh = _getCh(guild, 'bootLog');
       if (bootCh) await bootCh.send({embeds:[new EmbedBuilder().setColor(0xff4500).setTitle('🥾 Returning Member Kicked')
         .setDescription(`**${targetMember.user.tag}** was kicked upon return by ${interaction.user}.`)
         .setTimestamp()]}).catch(()=>null);
       await guild.members.kick(odid, `Returning kicked member — commissioner declined re-entry`).catch(()=>null);
-      return interaction.followUp({ content: `🥾 **${targetMember.user.tag}** has been kicked. Don't let the door hit you on the way out.`, flags:64 });
+      return interactionExecution.for(interaction).followUp({ content: `🥾 **${targetMember.user.tag}** has been kicked. Don't let the door hit you on the way out.`, flags:64 });
     }
     if (action === 'ban') {
-      if (!targetMember) return interaction.followUp({content:'⚠️ Member already left.',flags:64});
+      if (!targetMember) return interactionExecution.for(interaction).followUp({content:'⚠️ Member already left.',flags:64});
       const bootCh = _getCh(guild, 'bootLog');
       if (bootCh) await bootCh.send({embeds:[new EmbedBuilder().setColor(0x8b0000).setTitle('🔨 Returning Member Permanently Banned')
         .setDescription(`**${targetMember.user.tag}** was permanently banned upon return by ${interaction.user}.`)
         .setTimestamp()]}).catch(()=>null);
       await guild.members.ban(odid, { reason: `Permanently banned — commissioner declined re-entry` }).catch(()=>null);
       ledger.recordBan(odid, 'Commissioner declined re-entry after returning', interaction.user.id);
-      return interaction.followUp({ content: `🔨 **${targetMember.user.tag}** is permanently banned and added to the ban list. Use \`/ban list\` to view all bans or \`/ban remove user-id:${odid}\` to reverse.`, flags:64 });
+      return interactionExecution.for(interaction).followUp({ content: `🔨 **${targetMember.user.tag}** is permanently banned and added to the ban list. Use \`/ban list\` to view all bans or \`/ban remove user-id:${odid}\` to reverse.`, flags:64 });
     }
   }
 }
@@ -1914,33 +2024,33 @@ async function _handleModal(interaction) {
 
 // Edit Bot Message modal submission
 if (cid.startsWith('bot_msg_edit_modal_')) {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 }).catch(() => null);
   const targetMsgId = cid.replace('bot_msg_edit_modal_', '');
   const newContent = interaction.fields.getTextInputValue('edited_content') || '';
   try {
     const ch = interaction.channel;
     const targetMsg = await ch.messages.fetch(targetMsgId).catch(() => null);
-    if (!targetMsg) return interaction.reply({ content: '❌ Could not find the original message.', flags:64 }).catch(() => null);
+    if (!targetMsg) return interactionExecution.for(interaction).reply({ content: '❌ Could not find the original message.', flags:64 }).catch(() => null);
     const botId = guild?.members?.me?.id || interaction.applicationId;
-    if (targetMsg.author?.id !== botId) return interaction.reply({ content: '❌ Can only edit bot messages.', flags:64 }).catch(() => null);
+    if (targetMsg.author?.id !== botId) return interactionExecution.for(interaction).reply({ content: '❌ Can only edit bot messages.', flags:64 }).catch(() => null);
     await targetMsg.edit({ content: newContent, embeds: [] });
-    return interaction.reply({ content: '✅ Message updated.', flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: '✅ Message updated.', flags:64 }).catch(() => null);
   } catch (err) {
     log.error('Edit bot message failed:', err.message, err.stack);
-    return interaction.reply({ content: safeUserError(err, '❌ Edit failed. Check the logs and try again.'), flags:64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: safeUserError(err, '❌ Edit failed. Check the logs and try again.'), flags:64 }).catch(() => null);
   }
 }
 
 if (cid === 'timezone_onboarding_modal') {
   const result = await _saveMemberTimezoneAndSync(interaction.member, interaction.fields.getTextInputValue('timezone'), { channelId: interaction.channelId, advanceWizard: true });
-  if (!result.ok) return interaction.reply({ content:'❌ Invalid timezone. Use a real timezone like America/Los_Angeles, America/New_York, PST, EST, or UTC.', flags:64 });
+  if (!result.ok) return interactionExecution.for(interaction).reply({ content:'❌ Invalid timezone. Use a real timezone like America/Los_Angeles, America/New_York, PST, EST, or UTC.', flags:64 });
   const welcomeCh = guild.channels.cache.find(c => c.isTextBased?.() && c.name === 'welcome');
-  return interaction.reply({ content:`✅ Timezone saved as **${result.timezone}** (${result.label}).${welcomeCh ? ` Start in <#${welcomeCh.id}>.` : ''}`, flags:64 });
+  return interactionExecution.for(interaction).reply({ content:`✅ Timezone saved as **${result.timezone}** (${result.label}).${welcomeCh ? ` Start in <#${welcomeCh.id}>.` : ''}`, flags:64 });
 }
 
 if (cid === 'bot_identity_modal') {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-  await interaction.deferReply({ flags:64 }).catch(() => null);
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+  await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
   const botName = interaction.fields.getTextInputValue('bot_name');
   const avatarUrl = interaction.fields.getTextInputValue('avatar_url');
   serverSettings.setBotIdentity({ botName, avatarMode: avatarUrl ? 'url' : 'server_image', avatarUrl: avatarUrl || null });
@@ -1951,7 +2061,7 @@ if (cid === 'bot_identity_modal') {
 }
 
   if (cid === 'server_rules_modal') {
-    if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
+    if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
     const numbersRaw = interaction.fields.getTextInputValue('rule_numbers');
     const overridesRaw = interaction.fields.getTextInputValue('overrides');
     const customText = interaction.fields.getTextInputValue('custom_text');
@@ -1965,7 +2075,7 @@ if (cid === 'bot_identity_modal') {
     serverRulesService.saveProfile(profile);
     await serverRulesService.publishServerRules(guild).catch(() => null);
     await _postSetupWizardMessage(guild, 'Server rules updated and wizard preview refreshed.').catch(() => null);
-    return interaction.reply({ embeds:[serverRulesService.buildRulesLiveEmbed(profile)], flags:64 });
+    return interactionExecution.for(interaction).reply({ embeds:[serverRulesService.buildRulesLiveEmbed(profile)], flags:64 });
   }
 
   if (cid.startsWith('join_')) {
@@ -1981,7 +2091,7 @@ async function _handleCommand(interaction, commandMeta = null) {
 
   const vpResult = commandMeta || await validationPipeline.validate(interaction, { state: _state, guild, isComm: isComm() });
   if (!vpResult.ok) {
-    return interaction.reply({ content: vpResult.reason, flags: 64 }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: vpResult.reason, flags: 64 }).catch(() => null);
   }
   log.info(`[cmd] ${interaction.commandName} class=${vpResult.commandClass || 'unknown'} user=${interaction.user?.id}`);
 
@@ -1998,7 +2108,7 @@ async function _handleCommand(interaction, commandMeta = null) {
       if (!check.allowed) {
         const iconMap = { BOT_KILLED:'🛑', INSTALL_MODE:'⚙️', NO_TEMPLATE:'🏗️', NO_COMMUNITIES:'🧩', TEAMS_NOT_ENABLED:'🏆', TIMEZONE_GATE:'🕒' };
         const icon = iconMap[check.code] || '⚠️';
-        return interaction.reply({ content: `${icon} ${check.reason}`, flags:64 }).catch(() => null);
+        return interactionExecution.for(interaction).reply({ content: `${icon} ${check.reason}`, flags:64 }).catch(() => null);
       }
     } catch (_e) { /* hierarchy failures non-fatal */ }
   }
@@ -2008,32 +2118,32 @@ async function _handleCommand(interaction, commandMeta = null) {
   if (_guardInstallationModeCommand(interaction)) return;
   const subserverOnly = new Set(['create-game','respond','report-result','release-team','open-teams','refresh-open-teams','set-stat-leaders','player-of-the-week','potw-confirm','retract-score']);
   if (subserverOnly.has(cmd) && !activeLeagueCount) {
-    return interaction.reply({ content:'⚠️ No active league or managed sub-server exists yet. Finish server setup first, then create a league, event, or other managed space before using this action.', flags:64 });
+    return interactionExecution.for(interaction).reply({ content:'⚠️ No active league or managed sub-server exists yet. Finish server setup first, then create a league, event, or other managed space before using this action.', flags:64 });
   }
 
   const scopedCommands = new Set(['create-game','report-result','retract-score','game-channels','schedule-import','schedule-load-week','advance-week','player-of-the-week','potw-confirm','yearly-award','superbowl-champion','attr-award','set-stat-leaders','register-team','release-team','set-team-identity','add-open-team','remove-open-team','set-team-logo','open-teams','refresh-open-teams','streams','stream-board']);
-  if (activeLeagueCount > 1 && scopedCommands.has(cmd) && !require('../league/spaceContext').current()) return interaction.reply({content:'Run this command inside the intended private league channel.',flags:64});
+  if (activeLeagueCount > 1 && scopedCommands.has(cmd) && !require('../league/spaceContext').current()) return interactionExecution.for(interaction).reply({content:'Run this command inside the intended private league channel.',flags:64});
 
   switch (cmd) {
     // ── Admin management ──
     case 'add-admin': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const target = interaction.options.getUser('user');
       _state.commissionerIds.add(target.id);
       const logCh = _getCh(guild,'adminHq')||_getCh(guild,'warningsLog');
       if (logCh) await logCh.send({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('👑 Admin Promoted').setDescription(`${interaction.user} promoted ${target} to commissioner.`).setTimestamp()]}).catch(()=>null);
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Admin Added').addFields({name:'User',value:`${target}`,inline:true}).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Admin Added').addFields({name:'User',value:`${target}`,inline:true}).setTimestamp()]});
     }
     case 'remove-admin': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const target = interaction.options.getUser('user');
       _state.commissionerIds.delete(target.id);
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0xe74c3c).setTitle('✅ Admin Removed').setDescription(`${target} removed.`).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0xe74c3c).setTitle('✅ Admin Removed').setDescription(`${target} removed.`).setTimestamp()]});
     }
 
 
     case 'process-builder': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const sub = interaction.options.getSubcommand();
       if (sub === 'create') {
         const created = processBuilderService.createProcess({
@@ -2044,10 +2154,10 @@ async function _handleCommand(interaction, commandMeta = null) {
           enabled: interaction.options.getBoolean('enabled') !== false,
         });
         if (!created.ok) {
-          return interaction.reply({ content: `❌ ${created.errors.join(' ')}`, flags:64 });
+          return interactionExecution.for(interaction).reply({ content: `❌ ${created.errors.join(' ')}`, flags:64 });
         }
         const def = created.definition;
-        return interaction.reply({
+        return interactionExecution.for(interaction).reply({
           flags:64,
           embeds:[new EmbedBuilder()
             .setColor(0x2ecc71)
@@ -2068,7 +2178,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         const lines = summary.items.length
           ? summary.items.map(item => `• **${item.name}** — ${item.enabled ? 'ON' : 'OFF'} • ${item.stepCount} steps${item.hasCommentPolicy ? '' : ' • missing comment policy'}`)
           : ['No managed processes defined yet.'];
-        return interaction.reply({ flags:64, embeds:[new EmbedBuilder()
+        return interactionExecution.for(interaction).reply({ flags:64, embeds:[new EmbedBuilder()
           .setColor(0x5865f2)
           .setTitle('🗂️ Process Builder')
           .setDescription(lines.join('\n').slice(0, 4000))
@@ -2077,8 +2187,8 @@ async function _handleCommand(interaction, commandMeta = null) {
       }
       if (sub === 'inspect') {
         const def = processManagementService.buildInspectableDefinition(interaction.options.getString('name'));
-        if (!def) return interaction.reply({ content:'❌ Process not found.', flags:64 });
-        return interaction.reply({ flags:64, embeds:[new EmbedBuilder()
+        if (!def) return interactionExecution.for(interaction).reply({ content:'❌ Process not found.', flags:64 });
+        return interactionExecution.for(interaction).reply({ flags:64, embeds:[new EmbedBuilder()
           .setColor(0x3498db)
           .setTitle(`🔎 ${def.name}`)
           .setDescription(def.description || 'No description saved.')
@@ -2093,26 +2203,26 @@ async function _handleCommand(interaction, commandMeta = null) {
       }
       if (sub === 'toggle') {
         const result = processBuilderService.toggleProcess(interaction.options.getString('name'), interaction.options.getBoolean('enabled'));
-        if (!result.ok) return interaction.reply({ content:`❌ ${result.error}`, flags:64 });
-        return interaction.reply({ content:`${result.definition.enabled ? '✅' : '🛑'} Process **${result.definition.name}** is now ${result.definition.enabled ? 'enabled' : 'disabled'}.`, flags:64 });
+        if (!result.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${result.error}`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`${result.definition.enabled ? '✅' : '🛑'} Process **${result.definition.name}** is now ${result.definition.enabled ? 'enabled' : 'disabled'}.`, flags:64 });
       }
       if (sub === 'delete') {
         const removed = processBuilderService.deleteProcess(interaction.options.getString('name'));
-        if (!removed.ok) return interaction.reply({ content:`❌ ${removed.error}`, flags:64 });
-        return interaction.reply({ content:`🧹 Removed managed process **${removed.removed.name}**.`, flags:64 });
+        if (!removed.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${removed.error}`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`🧹 Removed managed process **${removed.removed.name}**.`, flags:64 });
       }
-      return interaction.reply({ content:'⚠️ Unsupported process-builder action.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'⚠️ Unsupported process-builder action.', flags:64 });
     }
 
     case 'process-run': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       const result = await processBuilderService.runProcess(interaction.options.getString('name'), { guild, client, state: _state });
       if (!result.ok) {
-        return interaction.editReply({ content:`❌ ${result.error || 'Process run failed.'}` });
+        return interactionExecution.for(interaction).editReply({ content:`❌ ${result.error || 'Process run failed.'}` });
       }
       const lines = result.results.map(item => `• ${item.step} — ${item.status}`).join('\n');
-      return interaction.editReply({ embeds:[new EmbedBuilder()
+      return interactionExecution.for(interaction).editReply({ embeds:[new EmbedBuilder()
         .setColor(0x2ecc71)
         .setTitle(`⚙️ Process Run Complete: ${result.definition.name}`)
         .setDescription(lines.slice(0, 4000) || 'No steps ran.')
@@ -2122,34 +2232,34 @@ async function _handleCommand(interaction, commandMeta = null) {
 
     case 'setup-server': {
       // Alias for setup-wizard-start — /setup-server is the user-facing command
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       try {
         // wizardPrefs is already available from the outer scope
         wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
         wizardPrefs.savePrefs({ wizardStage: 'mode' });
         const setupCh = await _ensureSetupWizardChannel(guild, { reveal: true }).catch(() => null);
         await _ensureSetupWizardStarterMessage(setupCh, 'Setup wizard opened.').catch(() => null);
-        return interaction.reply({ content: `🛠️ Setup wizard is open in ${setupCh ? `<#${setupCh.id}>` : `\`${_setupWizardFallbackText()}\``}.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content: `🛠️ Setup wizard is open in ${setupCh ? `<#${setupCh.id}>` : `\`${_setupWizardFallbackText()}\``}.`, flags:64 });
       } catch (err) {
-        return interaction.reply({ content: safeUserError(err, '❌ Failed to open the setup wizard. Check the logs and try again.'), flags:64 });
+        return interactionExecution.for(interaction).reply({ content: safeUserError(err, '❌ Failed to open the setup wizard. Check the logs and try again.'), flags:64 });
       }
     }
 
     case 'edit-community': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const currentName = interaction.options.getString('name');
       const newName = interaction.options.getString('new-name');
       const newType = interaction.options.getString('type');
       const settings = serverSettings.getSettings();
       const communities = Array.isArray(settings.communities) ? [...settings.communities] : [];
       const idx = communities.findIndex(c => c.name.toLowerCase() === currentName.toLowerCase());
-      if (idx === -1) return interaction.reply({ content: `❌ Community **${currentName}** not found. Use /list-communities.`, flags:64 });
+      if (idx === -1) return interactionExecution.for(interaction).reply({ content: `❌ Community **${currentName}** not found. Use /list-communities.`, flags:64 });
       const updated = { ...communities[idx] };
       if (newName) updated.name = newName;
       if (newType) updated.type = newType;
       communities[idx] = updated;
       serverSettings.saveSettings({ ...settings, communities });
-      return interaction.reply({ flags:64, embeds: [new EmbedBuilder()
+      return interactionExecution.for(interaction).reply({ flags:64, embeds: [new EmbedBuilder()
         .setColor(0x3498db)
         .setTitle('✏️ Community Updated')
         .addFields(
@@ -2162,85 +2272,85 @@ async function _handleCommand(interaction, commandMeta = null) {
     }
 
     case 'delete-community': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const targetName = interaction.options.getString('name');
       const confirmed = interaction.options.getBoolean('confirm');
-      if (!confirmed) return interaction.reply({ content: '⚠️ Pass `confirm: true` to delete a community. This is permanent.', flags:64 });
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      if (!confirmed) return interactionExecution.for(interaction).reply({ content: '⚠️ Pass `confirm: true` to delete a community. This is permanent.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       try {
         const settings = serverSettings.getSettings();
         const before = Array.isArray(settings.communities) ? settings.communities : [];
         const after = before.filter(c => c.name.toLowerCase() !== targetName.toLowerCase());
         if (before.length === after.length) {
-          return interaction.editReply({ content: `❌ Community **${targetName}** not found.` });
+          return interactionExecution.for(interaction).editReply({ content: `❌ Community **${targetName}** not found.` });
         }
         const { deleteCommunityChannels } = spaceAutoGenService;
         await deleteCommunityChannels(guild, targetName);
         serverSettings.saveSettings({ ...settings, communities: after });
-        return interaction.editReply({ content: `✅ Community **${targetName}** and all its channels and roles have been removed.` });
+        return interactionExecution.for(interaction).editReply({ content: `✅ Community **${targetName}** and all its channels and roles have been removed.` });
       } catch (err) {
-        return interaction.editReply({ content: safeUserError(err, '❌ Delete failed. Check the logs and try again.') });
+        return interactionExecution.for(interaction).editReply({ content: safeUserError(err, '❌ Delete failed. Check the logs and try again.') });
       }
     }
 
     case 'setup-event': {
-      if (!isComm()) return interaction.reply({content:'Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'Commissioners only.',flags:64});
       const name=interaction.options.getString('name');
       const action=interaction.options.getString('action') || 'create';
-      await interaction.deferReply({flags:64});
+      await interactionExecution.for(interaction).deferReply({flags:64});
       if(action==='create') {
         const event=await require('../services/eventSpaceService').create(guild,{name,description:interaction.options.getString('description')||'',commissionerRoleId:_state.leagueConfig.commissionerRoleId||null});
-        return interaction.editReply(`Private event **${event.leagueName}** created. Use setup-event action:add-member to add participants. ID: ${event.id}`);
+        return interactionExecution.for(interaction).editReply(`Private event **${event.leagueName}** created. Use setup-event action:add-member to add participants. ID: ${event.id}`);
       }
-      const event=activeLeagueService.listActiveLeagues().find(x=>x.kind==='event'&&(x.id===name||x.leagueName===name));
-      if(!event)return interaction.editReply('Select the exact event name or ID.');
+      const event=activeLeagueService.listEvents({ guildId:guild.id }).find(x=>x.id===name||x.leagueName===name);
+      if(!event)return interactionExecution.for(interaction).editReply('Select the exact event name or ID.');
       const user=interaction.options.getUser('user');
       if(action==='add-member'||action==='remove-member') {
-        if(!user)return interaction.editReply('Select a member.');
+        if(!user)return interactionExecution.for(interaction).editReply('Select a member.');
         if(action==='add-member')await leagueVisibility.grantMemberAccessToLeague(guild,await guild.members.fetch(user.id),_state,event.id);
         else await leagueVisibility.revokeMemberAccess(guild,user.id,event.id);
-        return interaction.editReply(`Event membership ${action==='add-member'?'added':'removed'}.`);
+        return interactionExecution.for(interaction).editReply(`Event membership ${action==='add-member'?'added':'removed'}.`);
       }
       if(action==='erase') {
-        if(interaction.options.getString('confirm')!==event.leagueName)return interaction.editReply('Enter the exact event name in confirm to erase it.');
+        if(interaction.options.getString('confirm')!==event.leagueName)return interactionExecution.for(interaction).editReply('Enter the exact event name in confirm to erase it.');
         await leagueSetupService.deleteLeagueStructure(guild,{leagueId:event.id,categoryIds:event.builtCategoryIds,channelIds:event.builtChannelIds});
         activeLeagueService.removeLeague(event.id);
         await require('../services/managedSpaceService').transition(guild.id,event.id,'ARCHIVED');
-        return interaction.editReply('Event erased. Lifetime member history retained.');
+        return interactionExecution.for(interaction).editReply('Event erased. Lifetime member history retained.');
       }
-      return interaction.editReply(`**${event.leagueName}** — private event, ${event.id}`);
+      return interactionExecution.for(interaction).editReply(`**${event.leagueName}** — private event, ${event.id}`);
     }
 
     case 'setup-team': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const teamName = interaction.options.getString('name');
       const communityName = interaction.options.getString('community');
       const settings = serverSettings.getSettings();
       const communities = Array.isArray(settings.communities) ? settings.communities : [];
       const community = communities.find(c => c.name.toLowerCase() === communityName.toLowerCase());
-      if (!community) return interaction.reply({ content: `❌ Community **${communityName}** not found.`, flags:64 });
+      if (!community) return interactionExecution.for(interaction).reply({ content: `❌ Community **${communityName}** not found.`, flags:64 });
       const leagueFriendlyTypes = ['league', 'league-enabled', 'competitive'];
       if (!leagueFriendlyTypes.includes(community.type)) {
-        return interaction.reply({ content: `❌ **${communityName}** is type **${community.type}** — teams only exist in league-enabled communities. Use /toggle-team-mode to change it first.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content: `❌ **${communityName}** is type **${community.type}** — teams only exist in league-enabled communities. Use /toggle-team-mode to change it first.`, flags:64 });
       }
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       try {
         const teamsSpace = require('../services/teamsSpaceService');
         const { COMM_ROLE } = require('../config/env');
         const commRole = guild.roles.cache.find(r => r.name === COMM_ROLE || r.id === COMM_ROLE);
         const result = await teamsSpace.createTeamSpace(guild, teamName, commRole?.id);
-        if (!result) return interaction.editReply({ content: `❌ Failed to create team space for **${teamName}**.` });
+        if (!result) return interactionExecution.for(interaction).editReply({ content: `❌ Failed to create team space for **${teamName}**.` });
         const teams = Array.isArray(settings.teams) ? [...settings.teams] : [];
         teams.push({ name: teamName, communityName, roleId: result.role?.id, createdAt: Date.now() });
         serverSettings.saveSettings({ ...settings, teams });
-        return interaction.editReply({ content: `✅ Team **${teamName}** created with a private team space (🏟️ ${teamName}). Use /join-league to assign members to teams.` });
+        return interactionExecution.for(interaction).editReply({ content: `✅ Team **${teamName}** created with a private team space (🏟️ ${teamName}). Use /join-league to assign members to teams.` });
       } catch (err) {
-        return interaction.editReply({ content: safeUserError(err, '❌ Team setup failed. Check the logs and try again.') });
+        return interactionExecution.for(interaction).editReply({ content: safeUserError(err, '❌ Team setup failed. Check the logs and try again.') });
       }
     }
 
     case 'hierarchy-status': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       try {
         const hierarchy = hierarchyService;
         const communityAccess = communityAccessService;
@@ -2248,7 +2358,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         const communities = communityAccess.getAvailableCommunities(settings);
         const summary = hierarchy.buildHierarchySummary(settings, communities);
         const ok = v => v ? '✅' : '❌';
-        return interaction.reply({ flags:64, embeds:[new EmbedBuilder()
+        return interactionExecution.for(interaction).reply({ flags:64, embeds:[new EmbedBuilder()
           .setColor(summary.serverInitialized ? 0x2ecc71 : 0xffa500)
           .setTitle('🏗️ Server Hierarchy Status')
           .addFields(
@@ -2267,24 +2377,24 @@ async function _handleCommand(interaction, commandMeta = null) {
           .setTimestamp()
         ]});
       } catch (err) {
-        return interaction.reply({ content:safeUserError(err, '❌ Hierarchy check failed. Check the logs and try again.'), flags:64 });
+        return interactionExecution.for(interaction).reply({ content:safeUserError(err, '❌ Hierarchy check failed. Check the logs and try again.'), flags:64 });
       }
     }
 
     case 'setup-community': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const settings = serverSettings.getSettings();
       const structureError = hierarchyService.checkTemplateBeforeCommunity(settings);
       if (structureError) {
-        return interaction.reply({ content:`🏗️ ${structureError}`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`🏗️ ${structureError}`, flags:64 });
       }
       const communityName = interaction.options.getString('name');
       const communityType = interaction.options.getString('type') || 'social';
       const communities = Array.isArray(settings.communities) ? [...settings.communities] : [];
       if (communities.some(c => c.name.toLowerCase() === communityName.toLowerCase())) {
-        return interaction.reply({ content:`⚠️ A community named **${communityName}** already exists.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`⚠️ A community named **${communityName}** already exists.`, flags:64 });
       }
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       try {
         // Auto-generate channels — users never hear the word "spaces"
         const spaceAutoGen = spaceAutoGenService;
@@ -2297,7 +2407,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         const channelList = generated?.channels?.length
           ? generated.channels.map(c => `#${c}`).join(', ')
           : 'channels created';
-        return interaction.editReply({ embeds:[new EmbedBuilder()
+        return interactionExecution.for(interaction).editReply({ embeds:[new EmbedBuilder()
           .setColor(0x2ecc71)
           .setTitle(`✅ ${communityName} Created`)
           .addFields(
@@ -2309,7 +2419,7 @@ async function _handleCommand(interaction, commandMeta = null) {
           .setTimestamp()
         ]});
       } catch (err) {
-        return interaction.editReply({ content: safeUserError(err, '❌ Community creation failed. Check the logs and try again.') });
+        return interactionExecution.for(interaction).editReply({ content: safeUserError(err, '❌ Community creation failed. Check the logs and try again.') });
       }
     }
 
@@ -2317,9 +2427,9 @@ async function _handleCommand(interaction, commandMeta = null) {
       const settings = serverSettings.getSettings();
       const communities = Array.isArray(settings.communities) ? settings.communities : [];
       if (!communities.length) {
-        return interaction.reply({ content:'No communities have been created yet. Use `/setup-community` to create one.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content:'No communities have been created yet. Use `/setup-community` to create one.', flags:64 });
       }
-      return interaction.reply({ flags:64, embeds:[new EmbedBuilder()
+      return interactionExecution.for(interaction).reply({ flags:64, embeds:[new EmbedBuilder()
         .setColor(0x5865f2)
         .setTitle('🧩 Server Communities')
         .setDescription(communities.map(c => `• **${c.name}** — ${c.type}${['league','competitive'].includes(c.type) ? ' (teams enabled)' : ''}`).join('\n'))
@@ -2329,23 +2439,23 @@ async function _handleCommand(interaction, commandMeta = null) {
     }
 
     case 'toggle-team-mode': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const settings = serverSettings.getSettings();
       const targetName = interaction.options.getString('community');
       const newMode = interaction.options.getString('mode');
       const communities = Array.isArray(settings.communities) ? [...settings.communities] : [];
       const idx = communities.findIndex(c => c.name.toLowerCase() === targetName.toLowerCase());
-      if (idx === -1) return interaction.reply({ content:`❌ Community **${targetName}** not found. Use /list-communities.`, flags:64 });
+      if (idx === -1) return interactionExecution.for(interaction).reply({ content:`❌ Community **${targetName}** not found. Use /list-communities.`, flags:64 });
       communities[idx] = { ...communities[idx], type: newMode };
       serverSettings.saveSettings({ ...settings, communities });
       const hierarchy = hierarchyService;
       const teamsNow = hierarchy.teamsAllowedForCommunityType(newMode);
-      return interaction.reply({ flags:64, content:`✅ **${targetName}** is now **${newMode}**. Teams: ${teamsNow ? 'ENABLED ✅' : 'NOT ENABLED ❌'}` });
+      return interactionExecution.for(interaction).reply({ flags:64, content:`✅ **${targetName}** is now **${newMode}**. Teams: ${teamsNow ? 'ENABLED ✅' : 'NOT ENABLED ❌'}` });
     }
 
     case 'lock-bot-access': {
-      if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       try {
         const botAccess = botAccessService;
         const { COMM_ROLE } = require('../config/env');
@@ -2353,7 +2463,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         const isAdmin = botAccess.checkBotGuildAdmin(guild);
         const fixed = await botAccess.lockBotAccessGuildWide(guild, commRole?.id);
         const adminStatus = isAdmin ? '✅ Administrator' : '⚠️ No Administrator (grant Administrator role to bot)';
-        return interaction.editReply({
+        return interactionExecution.for(interaction).editReply({
           embeds: [new EmbedBuilder()
             .setColor(isAdmin ? 0x2ecc71 : 0xffa500)
             .setTitle('🔒 Bot Access Lock Applied')
@@ -2367,7 +2477,7 @@ async function _handleCommand(interaction, commandMeta = null) {
         });
       } catch (err) {
         log.error('lock-bot-access failed:', err.message);
-        return interaction.editReply({ content: safeUserError(err, '❌ Lock failed. Check permissions and try again.') }).catch(() => null);
+        return interactionExecution.for(interaction).editReply({ content: safeUserError(err, '❌ Lock failed. Check permissions and try again.') }).catch(() => null);
       }
     }
 
@@ -2377,7 +2487,7 @@ async function _handleCommand(interaction, commandMeta = null) {
       const dynamic = [..._state.commissionerIds].map(id=>`<@${id}> — via /add-admin`);
       const owner = guild.ownerId?[`<@${guild.ownerId}> — server owner`]:[];
       const seen=new Set(), all=[...roleMembers,...dynamic,...owner].filter(line=>{const k=line.match(/<@!?(\d+)>/)?.[1];if(!k||seen.has(k))return false;seen.add(k);return true;});
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('👑 Commissioner & Admin List').setDescription(all.length?all.join('\n'):'No admins configured.').setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('👑 Commissioner & Admin List').setDescription(all.length?all.join('\n'):'No admins configured.').setTimestamp()]});
     }
 
     case 'join-league': {
@@ -2389,155 +2499,157 @@ async function _handleCommand(interaction, commandMeta = null) {
     // ── Teams ──
     
 case 'register-team': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const rawTeamValue = interaction.options.getString('team');
-      const [teamName, teamLeagueId] = String(rawTeamValue || '').split('::');
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
       const user = interaction.options.getUser('user');
-      const { claimTeam } = openTeamsService;
       const member = await guild.members.fetch(user.id).catch(()=>null);
-      if (!member) return interaction.reply({content:'❌ Could not find member.',flags:64});
-      const result = await claimTeam(guild, member, teamName, { leagueId: teamLeagueId || null });
-      if (!result.success) return interaction.reply({content:`❌ ${result.reason}`,flags:64});
-      try { await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, result.entry.leagueId || null); } catch {}
+      if (!member) return interactionExecution.for(interaction).reply({content:'❌ Could not find member.',flags:64});
+      const result = await teamAssignmentUseCase.assignTeam({ guild, member, leagueId:leagueInput, team:teamName, source:'slash:register-team' });
+      if (!result.success) return interactionExecution.for(interaction).reply({content:`❌ ${result.reason}`,flags:64});
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Registered').addFields({name:'Team',value:result.entry.displayTeam,inline:true},{name:'Owner',value:`${user}`,inline:true}).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Registered').addFields({name:'League',value:result.league.leagueName || result.league.id,inline:true},{name:'Team',value:result.entry.displayTeam,inline:true},{name:'Owner',value:`${user}`,inline:true}).setTimestamp()]});
     }
 
     case 'select-team': {
-      const rawTeamValue = interaction.options.getString('team');
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
       const timezoneInput = interaction.options.getString('timezone');
-      const [teamName, teamLeagueId] = String(rawTeamValue || '').split('::');
-
-      await interaction.deferReply({ flags:64 });
-
-      const activeLeagues = activeLeagueService.listResetOptions(_state);
-      if (!activeLeagues.length || !_state.openTeamRegistry?.length) {
-        return interaction.editReply({ content: '❌ No active league has been created yet. A commissioner needs to run `/setup-league league-name:<name>` first.' });
+      if (!leagueInput || !teamName || teamName === '_none_') {
+        return joinLeagueService.sendJoinLeaguePrompt(interaction, _state, leagueInput || null);
       }
-      if (!teamName || rawTeamValue === '_none_') {
-        return interaction.editReply({ content: '❌ No valid team slot is available yet for selection.' });
-      }
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'joinable' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const selectedLeague = resolved.league;
+
+      await interactionExecution.for(interaction).deferReply({ flags:64 });
+      if (!teamName || teamName === '_none_') return interactionExecution.for(interaction).editReply({ content:'❌ Choose an available team in that league.' });
       const savedTimezone = memberProfiles.getProfile(interaction.user.id)?.timezone || null;
       const timezone = normalizeTimezone(timezoneInput || savedTimezone);
-      if (!timezone) {
-        return interaction.editReply({ content: '❌ Choose a timezone first with `/set-timezone`, or provide one in this command. Your team claim will not be finalized until scheduling timezone is known.' });
-      }
+      if (!timezone) return interactionExecution.for(interaction).editReply({ content:'❌ Choose a timezone first with `/set-timezone`, or provide one in this command. Your team claim will not be finalized until scheduling timezone is known.' });
 
-      const { claimTeam, getUserLeagues } = openTeamsService;
-      const allOpen = _state.openTeamRegistry.filter(t => t.isOpen);
-      if (!allOpen.length) {
-        return interaction.editReply({ content: '❌ There are no open team slots right now. Either the league has not been seeded yet or every slot is already claimed.' });
-      }
-
-      const userLeagues = getUserLeagues(interaction.user.id);
-      const result = await claimTeam(guild, interaction.member, teamName, { timezone, leagueId: teamLeagueId || null });
+      const result = await teamAssignmentUseCase.assignTeam({ guild, member:interaction.member, league:selectedLeague, team:teamName, timezone, source:'slash:select-team' });
       if (!result.success) {
-        let extra = '';
-        if (userLeagues.length) {
-          extra = '\n\n**Your current teams:**\n' + userLeagues.map(l => `• **${l.team}** in ${l.leagueName}`).join('\n');
-        }
-        return interaction.editReply({ content: `❌ ${result.reason}${extra}` });
+        const userLeagues = openTeamsService.getUserLeagues(interaction.user.id);
+        const extra = userLeagues.length ? '\n\n**Your current teams:**\n' + userLeagues.map(l => `• **${l.team}** in ${l.leagueName}`).join('\n') : '';
+        return interactionExecution.for(interaction).editReply({ content:`❌ ${result.reason}${extra}` });
       }
-
       const emoji = getTeamEmoji(guild, result.entry.baseTeam) || '';
-      try { await leagueVisibility.grantMemberAccessToLeague(guild, interaction.member, _state, result.entry.leagueId || null); } catch (e) { log.warn('Could not set channel perms for new member:', e.message); }
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`**League:** ${result.entry.leagueName || activeLeagueService.getLeague(result.entry.leagueId)?.leagueName || result.entry.leagueId || 'League'}\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n\nYour league access and scheduling profile are ready.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()]
-      });
+      return interactionExecution.for(interaction).editReply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ You're now the ${emoji} ${result.entry.displayTeam}!`.trim()).setDescription(`**League:** ${selectedLeague.leagueName}\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n\nYour league access and scheduling profile are ready.`).setThumbnail(result.entry.logoUrl || null).setTimestamp()] });
     }
 
     case 'release-team': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const { releaseByName, announceTeamOpen } = openTeamsService;
-      const result = await releaseByName(guild, interaction.options.getString('team'));
-      if (!result) return interaction.reply({content:'⚠️ Team not found.',flags:64});
-      await announceTeamOpen(guild, result.entry, 'released by the commissioner');
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const teamName = interaction.options.getString('team');
+      const result = await teamAssignmentUseCase.releaseTeam({ guild, leagueId:leagueInput, team:teamName, source:'slash:release-team' });
+      if (!result.success) return interactionExecution.for(interaction).reply({content:`⚠️ ${result.reason}`,flags:64});
+      await openTeamsService.announceTeamOpen(guild, result.entry, 'released by the commissioner');
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0xf39c12).setTitle('🏟 Team Released').addFields({name:'Team',value:result.entry.displayTeam,inline:true},{name:'Status',value:'✅ Now Open',inline:true}).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0xf39c12).setTitle('🏟 Team Released').addFields({name:'League',value:result.league.leagueName || result.league.id,inline:true},{name:'Team',value:result.entry.displayTeam,inline:true},{name:'Status',value:'✅ Now Open',inline:true}).setTimestamp()]});
     }
+
     case 'open-teams': {
       const { buildOpenTeamsEmbeds } = openTeamsService;
-      return interaction.reply({embeds:buildOpenTeamsEmbeds(guild),flags:64});
+      return interactionExecution.for(interaction).reply({embeds:buildOpenTeamsEmbeds(guild),flags:64});
+    }
+    case 'active-leagues': {
+      const rows = activeLeagueService.listOperationalLeagues({ guildId:guild.id });
+      if (!rows.length) return interactionExecution.for(interaction).reply({ content:'No active leagues are configured.', flags:64 });
+      const lines = rows.map(l => `• **${l.leagueName || l.id}** — ${l.status}${l.game ? ` • ${String(l.game).toUpperCase()}` : ''}\n  ID: \`${l.id}\``);
+      return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🏟 Active Leagues').setDescription(lines.join('\n').slice(0,3900)).setFooter({text:'ACTIVE leagues are joinable. PAUSED leagues remain visible but cannot accept new team claims.'}).setTimestamp()], flags:64 });
     }
     case 'refresh-open-teams': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { refreshOpenTeamsBoard } = openTeamsService;
       await refreshOpenTeamsBoard(guild);
-      return interaction.reply({content:'✅ Open teams board refreshed.',flags:64});
+      return interactionExecution.for(interaction).reply({content:'✅ Open teams board refreshed.',flags:64});
     }
     case 'set-team-identity': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const rawOrig = interaction.options.getString('original-team');
-      const [orig, encodedLeagueId] = String(rawOrig || '').split('::');
-      const currentLeagueId = require('../league/spaceContext').current();
-      if (encodedLeagueId && currentLeagueId && String(encodedLeagueId) !== String(currentLeagueId)) {
-        return interaction.reply({ content:'❌ That team belongs to a different league. Run this command inside the intended league channel.', flags:64 });
-      }
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
+      const orig = interaction.options.getString('original-team');
       const location = interaction.options.getString('location');
       const name = interaction.options.getString('name');
       const user = interaction.options.getUser('user');
       const display = buildDisplayTeam(location,name,orig);
-      const key = norm(orig);
+      const key = `${league.id}::${norm(orig)}`;
       const existing = _state.players.get(key);
-      const reg = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===key);
-      if (!existing && !reg) return interaction.reply({ content:`❌ Team slot **${orig}** was not found in this league.`, flags:64 });
-      _state.players.set(key,{...existing,userId:user?.id||existing?.userId||reg?.ownerId||null,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
-      if (reg) { reg.displayTeam=display; await openTeamsService.refreshOpenTeamsBoard(guild); }
+      const reg = _state.openTeamRegistry.find(t => String(t.leagueId || '') === String(league.id) && norm(t.baseTeam) === norm(orig));
+      if (!existing && !reg) return interactionExecution.for(interaction).reply({ content:`❌ Team slot **${orig}** was not found in **${league.leagueName || league.id}**.`, flags:64 });
+      _state.players.set(key,{...existing,userId:user?.id||existing?.userId||reg?.ownerId||null,team:key,baseTeam:orig,customLocation:location,customName:name,displayTeam:display,leagueId:league.id,streamCount:existing?.streamCount||0,streamLog:existing?.streamLog||[],warnings:existing?.warnings||0,closeAppWarnings:existing?.closeAppWarnings||0,inactivityWarnings:existing?.inactivityWarnings||0});
+      if (reg) { reg.displayTeam=display; reg.leagueName=league.leagueName || reg.leagueName; await openTeamsService.refreshOpenTeamsBoard(guild); }
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ League Team Identity Updated').setDescription('This changes the team identity inside this league only. It does not change the member’s Discord server nickname.').addFields({name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('✅ League Team Identity Updated').setDescription('This changes the team identity inside this league only. It does not change the member’s Discord server nickname.').addFields({name:'League',value:league.leagueName || league.id,inline:true},{name:'Slot',value:orig,inline:true},{name:'New Name',value:display,inline:true}).setTimestamp()]});
     }
+
     case 'add-open-team': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const base=interaction.options.getString('base-team'), disp=interaction.options.getString('display-team'), replaces=interaction.options.getString('replaces-team')||null, logo=interaction.options.getString('logo-url')||null;
-      const exists = _state.openTeamRegistry.find(t=>norm(t.baseTeam)===norm(base));
-      if (exists) return interaction.reply({content:`⚠️ **${base}** already in registry.`,flags:64});
+      const exists = _state.openTeamRegistry.find(t=>String(t.leagueId||'')===String(league.id) && norm(t.baseTeam)===norm(base));
+      if (exists) return interactionExecution.for(interaction).reply({content:`⚠️ **${base}** already exists in **${league.leagueName || league.id}**.`,flags:64});
       const validLogo = logo&&/^https?:\/\/.+/i.test(logo)?logo:null;
-      _state.openTeamRegistry.push({baseTeam:base,displayTeam:disp,logoUrl:validLogo,isOpen:true,ownerId:null,replacementFor:replaces||null,isCustomTeam:!!replaces});
+      _state.openTeamRegistry.push({baseTeam:base,displayTeam:disp,logoUrl:validLogo,isOpen:true,ownerId:null,leagueId:league.id,leagueName:league.leagueName || league.id,replacementFor:replaces||null,isCustomTeam:!!replaces});
       await openTeamsService.refreshOpenTeamsBoard(guild);
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Added').addFields({name:'Slot',value:base,inline:true},{name:'Display',value:disp,inline:true},{name:'Replacing',value:replaces||'—',inline:true}).setThumbnail(validLogo).setTimestamp()]});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Team Added').addFields({name:'League',value:league.leagueName || league.id,inline:true},{name:'Slot',value:base,inline:true},{name:'Display',value:disp,inline:true},{name:'Replacing',value:replaces||'—',inline:true}).setThumbnail(validLogo).setTimestamp()]});
     }
+
     case 'remove-open-team': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      const idx=_state.openTeamRegistry.findIndex(t=>norm(t.baseTeam)===norm(interaction.options.getString('team'))||norm(t.displayTeam)===norm(interaction.options.getString('team')));
-      if (idx===-1) return interaction.reply({content:'⚠️ Team not found.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
+      const teamInput = interaction.options.getString('team');
+      const idx=_state.openTeamRegistry.findIndex(t=>String(t.leagueId||'')===String(league.id) && (norm(t.baseTeam)===norm(teamInput)||norm(t.displayTeam)===norm(teamInput)));
+      if (idx===-1) return interactionExecution.for(interaction).reply({content:`⚠️ Team not found in **${league.leagueName || league.id}**.`,flags:64});
       const removed=_state.openTeamRegistry.splice(idx,1)[0];
       await openTeamsService.refreshOpenTeamsBoard(guild);
       try { teamRegistry.syncFromState(_state); } catch {}
-      return interaction.reply({content:`✅ **${removed.displayTeam}** removed.`,flags:64});
+      return interactionExecution.for(interaction).reply({content:`✅ **${removed.displayTeam}** removed from **${league.leagueName || league.id}**.`,flags:64});
     }
 
     // ── Rules ──
+
+    // ── Rules ──
 case 'schedule-export-current': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const payload = scheduleRegistryService.exportCurrentWeek(_state);
   const name = `nofunleague_schedule_current_week_${payload.currentWeek || 'none'}.json`;
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content: `📦 Exported current stored week schedule${payload.currentWeek ? ` (Week ${payload.currentWeek})` : ''}.`,
     files: [{ attachment: Buffer.from(JSON.stringify(payload, null, 2), 'utf8'), name }],
     flags:64,
   });
 }
 case 'schedule-export-all': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const payload = scheduleRegistryService.exportAllWeeks(_state);
   const name = `nofunleague_schedule_all_weeks.json`;
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content: `📦 Exported all stored schedule weeks (**${Object.keys(payload.weeks || {}).length}** weeks).`,
     files: [{ attachment: Buffer.from(JSON.stringify(payload, null, 2), 'utf8'), name }],
     flags:64,
   });
 }
 case 'schedule-import': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-  await interaction.deferReply({flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+  await interactionExecution.for(interaction).deferReply({flags:64});
   const file = interaction.options.getAttachment('file');
   const source = interaction.options.getString('source') || 'import';
-  if (!file?.url) return interaction.editReply('⚠️ Attach a JSON or CSV file to import.');
+  if (!file?.url) return interactionExecution.for(interaction).editReply('⚠️ Attach a JSON or CSV file to import.');
   const reg = await scheduleRegistryService.importAttachmentUrl(file.url, file.name || '', { source });
   const weeks = scheduleRegistryService.listWeeks();
-  return interaction.editReply(
+  return interactionExecution.for(interaction).editReply(
     `✅ Imported schedule data from **${file.name || 'attachment'}**.\n` +
     `• Source: **${source}**\n` +
     `• Stored weeks: **${weeks.length}**\n` +
@@ -2546,12 +2658,12 @@ case 'schedule-import': {
   );
 }
 case 'schedule-load-week': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-  await interaction.deferReply({flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+  await interactionExecution.for(interaction).deferReply({flags:64});
   const week = interaction.options.getInteger('week');
   const games = scheduleRegistryService.loadWeekIntoState(_state, week);
   if (!games || !games.length) {
-    return interaction.editReply(`⚠️ No stored schedule found for Week **${week}**.`);
+    return interactionExecution.for(interaction).editReply(`⚠️ No stored schedule found for Week **${week}**.`);
   }
   const { postScheduleEmbed, startScheduleTimer } = hubReleaseService;
   await postScheduleEmbed(guild,_state,_getCh,getTeamEmoji);
@@ -2560,13 +2672,13 @@ case 'schedule-load-week': {
   const autoNote = auto.ran
     ? `\n🤖 Auto game channels: cleared **${auto.cleared}**, created **${auto.created}**.`
     : `\n🛠 Weekly channel mode: **${weeklyAutomationService.getWeeklySettings().mode}**.`;
-  return interaction.editReply(`✅ Loaded stored Week **${week}** into the live schedule.${autoNote}`);
+  return interactionExecution.for(interaction).editReply(`✅ Loaded stored Week **${week}** into the live schedule.${autoNote}`);
 }
 case 'schedule-registry-status': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const reg = scheduleRegistryService.getRegistry();
   const weeks = scheduleRegistryService.listWeeks();
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content:
       `📚 Schedule registry status\n` +
       `• Source: **${reg.source || 'local'}**\n` +
@@ -2579,31 +2691,31 @@ case 'schedule-registry-status': {
   });
 }
 case 'league-data-ingest': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-  await interaction.deferReply({flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+  await interactionExecution.for(interaction).deferReply({flags:64});
   const attachment = interaction.options.getAttachment('file');
   const target = interaction.options.getString('target') || 'auto';
-  if (!attachment?.url) return interaction.editReply('⚠️ Attach a readable league file first.');
+  if (!attachment?.url) return interactionExecution.for(interaction).editReply('⚠️ Attach a readable league file first.');
   const fileIntakeService = require('../services/fileIntakeService');
   try {
     const result = await fileIntakeService.importLeagueDataFromAttachment(attachment, { aiCall: _aiCall, MODELS: _MODELS, state: _state, target });
     const applied = result.applied.applied.length ? result.applied.applied.join(' • ') : 'Saved for later use.';
     const notes = result.applied.notes.length ? `\n• Notes: ${result.applied.notes.join(' | ')}` : '';
-    return interaction.editReply(
+    return interactionExecution.for(interaction).editReply(
       `📥 Imported **${attachment.name || 'attachment'}** as **${result.applied.chosen}** data.\n` +
       `• File kind: **${result.parsed.kind}**\n` +
       `• Applied: ${applied}${notes}`
     );
   } catch (err) {
-    return interaction.editReply(safeUserError(err, '❌ Import failed. Check the logs and try again.'));
+    return interactionExecution.for(interaction).editReply(safeUserError(err, '❌ Import failed. Check the logs and try again.'));
   }
 }
 
 case 'set-league-source-mode': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const mode = interaction.options.getString('mode');
   const saved = liveSync.saveLiveSyncConfig({ sourceMode: mode });
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content:
       `✅ League source mode updated.\n` +
       `• Mode: **${saved.sourceMode}**\n` +
@@ -2613,8 +2725,8 @@ case 'set-league-source-mode': {
   });
 }
 case 'set-live-sync': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-  await interaction.deferReply({flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+  await interactionExecution.for(interaction).deferReply({flags:64});
 
   const actions = require('../services/providerConnectionActionService');
   const pcs = require('../services/providerConnectionService');
@@ -2631,7 +2743,7 @@ case 'set-live-sync': {
 
   const leagueId = actions.resolveLeagueId();
   if (!leagueId) {
-    return interaction.editReply('❌ I cannot safely determine which league to configure. Run this from a league-scoped channel, or make only one league active, then try again.');
+    return interactionExecution.for(interaction).editReply('❌ I cannot safely determine which league to configure. Run this from a league-scoped channel, or make only one league active, then try again.');
   }
 
   if (provider === 'off') {
@@ -2639,7 +2751,7 @@ case 'set-live-sync': {
     // Per-league source mode is authoritative. Do not clear the legacy global provider here because another league may still use it.
     // Keep configured connections dormant so a commissioner can reconnect without losing setup.
     liveSync.saveLiveSyncConfig({ sourceMode:'custom_bot_managed', provider:'off' });
-    return interaction.editReply(
+    return interactionExecution.for(interaction).editReply(
       `✅ External live sync is **OFF** for league **${leagueId}**.\n` +
       `• Source mode: **custom_bot_managed**\n` +
       `• Existing provider connections were preserved but are not authoritative until reactivated.`
@@ -2653,7 +2765,7 @@ case 'set-live-sync': {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be a JSON object');
       resourceConfig = (provider === 'neonsportz' && !parsed.resourceUrls) ? { resourceUrls: parsed } : parsed;
     } catch (e) {
-      return interaction.editReply(`❌ Resource config JSON is invalid: ${String(e.message || e).slice(0,140)}`);
+      return interactionExecution.for(interaction).editReply(`❌ Resource config JSON is invalid: ${String(e.message || e).slice(0,140)}`);
     }
   }
 
@@ -2681,10 +2793,10 @@ case 'set-live-sync': {
     out = await actions.configure(actionArgs).catch(e => ({ok:false,reason:e.message}));
   } else {
     const fn = actions[connectionAction];
-    if (typeof fn !== 'function') return interaction.editReply(`❌ Unknown connection action: ${connectionAction}`);
+    if (typeof fn !== 'function') return interactionExecution.for(interaction).editReply(`❌ Unknown connection action: ${connectionAction}`);
     out = await fn(actionArgs).catch(e => ({ok:false,reason:e.message}));
   }
-  if (!out?.ok) return interaction.editReply(`❌ Provider connection **${connectionAction}** failed: **${out?.reason || 'unknown error'}**`);
+  if (!out?.ok) return interactionExecution.for(interaction).editReply(`❌ Provider connection **${connectionAction}** failed: **${out?.reason || 'unknown error'}**`);
 
   // Legacy liveSync.json remains a compatibility mirror only. It must not demote the authoritative connection state.
   if (connectionAction === 'activate') {
@@ -2709,7 +2821,7 @@ case 'set-live-sync': {
   const sourceMode = activeLeagueService.getDataSourceMode(leagueId);
   const secretNote = providerSecret !== null ? '\n• Provider credential: **ENCRYPTED/SAVED**' : '';
 
-  return interaction.editReply(
+  return interactionExecution.for(interaction).editReply(
     `✅ Provider connection **${connectionAction}** completed.\n` +
     `• League: **${leagueId}**\n` +
     `• Provider: **${provider}**\n` +
@@ -2719,13 +2831,13 @@ case 'set-live-sync': {
   );
 }
 case 'live-sync-status': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const cfg = liveSync.getLiveSyncConfig();
   const full = await require('../services/leagueSyncService').getSyncStatus().catch(() => null);
   const last = cfg.lastSyncAt ? `<t:${Math.floor(cfg.lastSyncAt/1000)}:R>` : 'N/A';
   const connections = full?.connections || [];
   const connectionLines = connections.length ? connections.map(c => `• ${c.providerKey}: **${c.status}** / health **${c.healthStatus}**${c.fallbackMode==='manual'?' / manual fallback':''}`).join('\n') : '• No league-scoped provider connections yet.';
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content:
       `📡 Live sync status\n` +
       `• Source mode: **${cfg.sourceMode}**\n` +
@@ -2737,8 +2849,8 @@ case 'live-sync-status': {
   });
 }
 case 'live-sync-now': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-  await interaction.deferReply({flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+  await interactionExecution.for(interaction).deferReply({flags:64});
   try {
     const { postScheduleEmbed, startScheduleTimer } = hubReleaseService;
     const result = await require('../services/leagueSyncService').syncNow(guild, _state, {
@@ -2749,18 +2861,18 @@ case 'live-sync-now': {
       trigger: 'slash-live-sync-now',
     });
     if (!result.ok) {
-      return interaction.editReply(
+      return interactionExecution.for(interaction).editReply(
         `⚠️ Live sync did not run. Reason: **${result.reason}**.\n` +
         `Check source mode, provider, and endpoint settings.`
       );
     }
     if (result.mode === 'import-provider') {
-      return interaction.editReply(`✅ Processed **${result.processed || 0}** queued import(s) from **${result.provider}**. Sync run: **${result.syncRunId}**.`);
+      return interactionExecution.for(interaction).editReply(`✅ Processed **${result.processed || 0}** queued import(s) from **${result.provider}**. Sync run: **${result.syncRunId}**.`);
     }
     const autoNote = result.auto?.ran
       ? `\n🤖 Weekly automation: cleared **${result.auto.cleared}**, created **${result.auto.created}**.`
       : '';
-    return interaction.editReply(
+    return interactionExecution.for(interaction).editReply(
       `✅ Live sync completed.\n` +
       `• Provider: **${result.provider}**\n` +
       `• Stored weeks: **${result.storedWeeks}**\n` +
@@ -2775,17 +2887,17 @@ case 'live-sync-now': {
       lastSyncStatus: `error: ${err.message}`,
       lastSyncSummary: null,
     });
-    return interaction.editReply(safeUserError(err, '❌ Live sync failed. Check the logs and try again.'));
+    return interactionExecution.for(interaction).editReply(safeUserError(err, '❌ Live sync failed. Check the logs and try again.'));
   }
 }
 
 case 'team-registry-status': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   const reg = teamRegistry.syncFromState(_state);
   const claimed = (reg.teams || []).filter(t => !t.isOpen).length;
   const open = (reg.teams || []).filter(t => t.isOpen).length;
   const leagues = new Set((reg.teams || []).map(t => t.leagueId || 'default'));
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     content:
       `📋 Team registry status\n` +
       `• Total teams tracked: **${(reg.teams || []).length}**\n` +
@@ -2798,23 +2910,23 @@ case 'team-registry-status': {
 }
 
     case 'post-standings': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const raw=interaction.options.getString('standings'), week=_state.hubWeeklyData.week||'?';
       const rows=raw.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>`> ${l}`).join('\n');
       const embed=new EmbedBuilder().setColor(0x9b59b6).setTitle(`🏆 Week ${week} — Standings`).setDescription(rows).setTimestamp();
       const announceCh=_getCh(guild,'announcements');
       if (announceCh) await announceCh.send({embeds:[embed]}).catch(()=>null);
-      return interaction.reply({content:'✅ Standings posted.',flags:64});
+      return interactionExecution.for(interaction).reply({content:'✅ Standings posted.',flags:64});
     }
     case 'post-nfl-news': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      await interaction.deferReply({flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      await interactionExecution.for(interaction).deferReply({flags:64});
       const { postNFLUpdates } = hubReleaseService;
       await postNFLUpdates(guild,_getCh,_aiCall,_MODELS);
-      return interaction.editReply('✅ NFL news posted to #nfl-updates.');
+      return interactionExecution.for(interaction).editReply('✅ NFL news posted to #nfl-updates.');
     }
     case 'send-welcome': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const target=interaction.options.getUser('user'), openCount=_state.openTeamRegistry.filter(t=>t.isOpen).length;
       try {
         const _wSettings = serverSettings.getSettings();
@@ -2824,11 +2936,11 @@ case 'team-registry-status': {
           ? `Glad to have you.\n\n> 1. Read \`#rules\`\n> 2. Check \`#open-teams\` — **${openCount} team(s) available**\n> 3. Use \`/select-team\` to claim a team\n\nQuestions? Tag a commissioner.`
           : `Glad to have you.\n\n> 1. Read \`#rules\` for server conduct\n> 2. Read \`#${_guideChName}\` to understand how ${_wProfile?.name || 'this server'} is set up\n> 3. Pick your communities in \`#community-selector\` if available\n\nQuestions? Tag a commissioner.`;
         await target.send({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`👋 Welcome to ${resolveServerName(guild, 'this server')}!`).setDescription(_wDesc).setTimestamp()]});
-        return interaction.reply({content:`✅ Welcome DM sent to **${target.tag}**.`,flags:64});
-      } catch { return interaction.reply({content:`⚠️ Could not DM **${target.tag}** — DMs may be disabled.`,flags:64}); }
+        return interactionExecution.for(interaction).reply({content:`✅ Welcome DM sent to **${target.tag}**.`,flags:64});
+      } catch { return interactionExecution.for(interaction).reply({content:`⚠️ Could not DM **${target.tag}** — DMs may be disabled.`,flags:64}); }
     }
     case 'retract-score': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const rWeek=interaction.options.getInteger('week');
       const normT=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
       const t1=normT(interaction.options.getString('team1')), t2=normT(interaction.options.getString('team2'));
@@ -2839,11 +2951,11 @@ case 'team-registry-status': {
       const kept=_state.ocrGameResults.filter(r=>{const rk=[r.week,normT(r.team1),normT(r.team2)].join(':');return rk!==`${rWeek}:${t1}:${t2}`&&rk!==`${rWeek}:${t2}:${t1}`;});
       _state.ocrGameResults.length=0; kept.forEach(r=>_state.ocrGameResults.push(r));
       const removed=Math.max(before-kept.length, authoritative.ok ? authoritative.removed : 0);
-      return interaction.reply({content:removed>0?`✅ Cleared ${removed} entry for Week ${rWeek}.`:`⚠️ No entry found for Week ${rWeek}. Check team names.`,flags:64});
+      return interactionExecution.for(interaction).reply({content:removed>0?`✅ Cleared ${removed} entry for Week ${rWeek}.`:`⚠️ No entry found for Week ${rWeek}. Check team names.`,flags:64});
     }
     case 'post-server-guide': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      await interaction.deferReply({flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      await interactionExecution.for(interaction).deferReply({flags:64});
 
       const path = require('path');
       const fs   = require('fs');
@@ -2853,7 +2965,7 @@ case 'team-registry-status': {
       const FULL_PDF   = path.join(__dirname, '..', '..', 'files', 'nofunleague_full_guide.pdf');
 
       if (!fs.existsSync(MEMBER_PDF) || !fs.existsSync(FULL_PDF)) {
-        return interaction.editReply('❌ PDF files not found. Place `nofunleague_member_guide.pdf` and `nofunleague_full_guide.pdf` in the `files/` folder.');
+        return interactionExecution.for(interaction).editReply('❌ PDF files not found. Place `nofunleague_member_guide.pdf` and `nofunleague_full_guide.pdf` in the `files/` folder.');
       }
 
       // Post member guide to the correct guide channel (league-guide or server-guide based on template)
@@ -2910,56 +3022,56 @@ case 'team-registry-status': {
       if (!guideCh) posted.push('⚠️ #' + _awGuideName + ' channel not found — create it or run /setup-server to rebuild');
       if (!adminCh) posted.push('⚠️ #admin-hq channel not found');
 
-      return interaction.editReply(posted.join('\n'));
+      return interactionExecution.for(interaction).editReply(posted.join('\n'));
     }
 
 
     case 'manual': {
       const section = interaction.options.getString('section');
       if (section && section !== 'overview') {
-        return interaction.reply({ embeds: manualService.buildSectionEmbeds(section, isComm()), flags:64 });
+        return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds(section, isComm()), flags:64 });
       }
       const attachment = manualService.getManualAttachment();
       const payload = { embeds: manualService.buildOverviewEmbeds(isComm()), flags:64 };
       if (attachment) payload.files = [attachment];
-      if (attachment && !interaction.deferred && !interaction.replied) await interaction.deferReply({ flags:64 }).catch(() => null);
-      if (interaction.deferred || interaction.replied) return interaction.editReply(payload).catch(() => interaction.followUp(payload).catch(() => null));
-      return interaction.reply(payload);
+      if (attachment && !interaction.deferred && !interaction.replied) await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
+      if (interaction.deferred || interaction.replied) return interactionExecution.for(interaction).editReply(payload).catch(() => interactionExecution.for(interaction).followUp(payload).catch(() => null));
+      return interactionExecution.for(interaction).reply(payload);
     }
 
     case 'manual-server': {
       // manualService loaded above
-      return interaction.reply({ embeds: manualService.buildSectionEmbeds('server', isComm()), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds('server', isComm()), flags:64 });
     }
 
     case 'manual-league': {
       // manualService loaded above
-      return interaction.reply({ embeds: manualService.buildSectionEmbeds('league', isComm()), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds('league', isComm()), flags:64 });
     }
 
     case 'manual-setup': {
       // manualService loaded above
-      return interaction.reply({ embeds: manualService.buildSectionEmbeds('setup', isComm()), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds('setup', isComm()), flags:64 });
     }
 
     case 'manual-commands': {
       // manualService loaded above
-      return interaction.reply({ embeds: manualService.buildSectionEmbeds('commands', isComm()), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds('commands', isComm()), flags:64 });
     }
 
     case 'manual-actions': {
       // manualService loaded above
-      return interaction.reply({ embeds: manualService.buildSectionEmbeds('actions', isComm()), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: manualService.buildSectionEmbeds('actions', isComm()), flags:64 });
     }
 
 
 
 case 'setup-bot':
 case 'setup-wizard-start': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   try {
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: '🛠️ Opening setup wizard…', flags: 64 }).catch(() => null);
+      await interactionExecution.for(interaction).reply({ content: '🛠️ Opening setup wizard…', flags: 64 }).catch(() => null);
     }
     wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'mode' });
@@ -2967,8 +3079,8 @@ case 'setup-wizard-start': {
     await recoverySelfHealService.healPatchNotes(guild, patchNotesService).catch(() => null);
     await patchNotesService.publishPatchNotes(guild).catch(() => null);
     const msg = ch ? `🛠️ Setup wizard is ready in <#${ch.id}>.` : `🛠️ Setup wizard opened in **${_setupWizardFallbackText()}**.`;
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ content: msg }).catch(() => null);
-    return interaction.reply({ content: msg, flags:64 }).catch(() => null);
+    if (interaction.replied || interaction.deferred) return interactionExecution.for(interaction).editReply({ content: msg }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: msg, flags:64 }).catch(() => null);
   } catch (err) {
     log.error('setup-wizard-start failed:', err.message, err.stack);
     const fallbackChannel = await _ensureSetupWizardChannel(guild, { reveal: true }).catch(() => null);
@@ -2976,14 +3088,14 @@ case 'setup-wizard-start': {
     wizardPrefs.savePrefs({ wizardStage: 'flow' });
     await _ensureSetupWizardStarterMessage(fallbackChannel, 'The setup flow guide is ready in this lane.').catch(() => null);
     const msg = `❌ Setup wizard hit an error, but the setup lane is ready in ${fallbackChannel ? `<#${fallbackChannel.id}>` : `\`${_setupWizardFallbackText()}\``}.`;
-    if (interaction.deferred || interaction.replied) return interaction.editReply({ content: msg }).catch(() => null);
-    return interaction.reply({ content: msg, flags:64 }).catch(() => null);
+    if (interaction.deferred || interaction.replied) return interactionExecution.for(interaction).editReply({ content: msg }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: msg, flags:64 }).catch(() => null);
   }
 }
 
 
 case 'fix-duplicates': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
   if (!interaction.deferred && !interaction.replied) await safeDeferred(interaction, { flags: 64 }).catch(() => null);
 
   const dryRun = interaction.options.getBoolean('dry-run') !== false; // default true
@@ -3004,7 +3116,7 @@ case 'fix-duplicates': {
     const dupes = [...catGroups.values()].filter(g => g.length > 1);
 
     if (dupes.length === 0) {
-      return interaction.editReply({ content: '✅ No duplicate categories found — server looks clean!', flags: 64 }).catch(() => null);
+      return interactionExecution.for(interaction).editReply({ content: '✅ No duplicate categories found — server looks clean!', flags: 64 }).catch(() => null);
     }
 
     const lines = [];
@@ -3075,21 +3187,21 @@ case 'fix-duplicates': {
     }
     if (buf) chunks.push(buf);
 
-    await interaction.editReply({ content: chunks[0], flags: 64 }).catch(() => null);
+    await interactionExecution.for(interaction).editReply({ content: chunks[0], flags: 64 }).catch(() => null);
     for (const chunk of chunks.slice(1)) {
-      await interaction.followUp({ content: chunk, flags: 64 }).catch(() => null);
+      await interactionExecution.for(interaction).followUp({ content: chunk, flags: 64 }).catch(() => null);
     }
   } catch (err) {
     log.error('[fix-duplicates] error', err?.message);
-    await interaction.editReply({ content: `❌ Error during duplicate scan: ${err?.message || 'unknown'}`, flags: 64 }).catch(() => null);
+    await interactionExecution.for(interaction).editReply({ content: `❌ Error during duplicate scan: ${err?.message || 'unknown'}`, flags: 64 }).catch(() => null);
   }
   break;
 }
 
 
 case 'diagnose': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
-  await interaction.deferReply({ flags: 64 }).catch(() => null);
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
+  await interactionExecution.for(interaction).deferReply({ flags: 64 }).catch(() => null);
   try {
     const diagnosticService = require('../services/diagnosticService');
     const diagnosis = await diagnosticService.runFullDiagnosis(guild, _getCh, _state, _client);
@@ -3115,22 +3227,22 @@ case 'diagnose': {
     if (aiAnalysis) {
       replyPayload.content = `**🤖 AI Analysis:**\n${aiAnalysis.slice(0, 1500)}`;
     }
-    return interaction.editReply(replyPayload);
+    return interactionExecution.for(interaction).editReply(replyPayload);
   } catch (err) {
-    return interaction.editReply({ content: `❌ Diagnostic failed: ${err.message}` });
+    return interactionExecution.for(interaction).editReply({ content: `❌ Diagnostic failed: ${err.message}` });
   }
 }
 
 case 'active-check-status': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
   const leagueFeatures = require('../services/leagueFeatureService');
   const activeLeagueService = require('../services/activeLeagueService');
   const leagueIdOpt = interaction.options.getString('league-id');
   const leagues = leagueIdOpt
     ? [{ id: leagueIdOpt, leagueName: leagueIdOpt }]
-    : activeLeagueService.listActiveLeagues();
+    : activeLeagueService.listOperationalLeagues();
 
-  if (!leagues.length) return interaction.reply({ content: '⚠️ No active leagues found.', flags: 64 });
+  if (!leagues.length) return interactionExecution.for(interaction).reply({ content: '⚠️ No active leagues found.', flags: 64 });
 
   const lines = [];
   for (const lg of leagues) {
@@ -3153,16 +3265,16 @@ case 'active-check-status': {
     }
     lines.push('');
   }
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xf1c40f).setTitle('📋 Active Check Status').setDescription(lines.join('\n').slice(0, 3900)).setTimestamp()], flags: 64 });
+  return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0xf1c40f).setTitle('📋 Active Check Status').setDescription(lines.join('\n').slice(0, 3900)).setTimestamp()], flags: 64 });
 }
 
 case 'toggle-feature': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
   const compReg = require('../services/componentRegistryService');
   const featureId = interaction.options.getString('feature');
   const enabled = interaction.options.getBoolean('enabled');
   const catalog = compReg.COMPONENT_CATALOG[featureId];
-  if (!catalog) return interaction.reply({ content: `❌ Unknown feature: ${featureId}`, flags: 64 });
+  if (!catalog) return interactionExecution.for(interaction).reply({ content: `❌ Unknown feature: ${featureId}`, flags: 64 });
 
   if (enabled) {
     compReg.enableComponent(featureId);
@@ -3170,18 +3282,18 @@ case 'toggle-feature': {
     if (catalog.channelName) {
       const ch = await compReg.ensureComponentChannel(guild, featureId);
       if (ch) {
-        return interaction.reply({ content: `✅ **${catalog.name}** enabled. Channel: <#${ch.id}>\nUse \`/post-component ${featureId}\` to post the interactive panel.`, flags: 64 });
+        return interactionExecution.for(interaction).reply({ content: `✅ **${catalog.name}** enabled. Channel: <#${ch.id}>\nUse \`/post-component ${featureId}\` to post the interactive panel.`, flags: 64 });
       }
     }
-    return interaction.reply({ content: `✅ **${catalog.name}** enabled.`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: `✅ **${catalog.name}** enabled.`, flags: 64 });
   } else {
     compReg.disableComponent(featureId);
-    return interaction.reply({ content: `✅ **${catalog.name}** disabled. Channel preserved but interactions will be blocked.`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: `✅ **${catalog.name}** disabled. Channel preserved but interactions will be blocked.`, flags: 64 });
   }
 }
 
 case 'list-features': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
   const compReg = require('../services/componentRegistryService');
   const all = compReg.listAll();
   const categories = { server: [], community: [], league: [] };
@@ -3197,28 +3309,28 @@ case 'list-features': {
       lines.push(`${c.enabled ? '✅' : '❌'} **${c.name}** — ${c.description}`);
     }
   }
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🧩 Optional Features').setDescription(lines.join('\n').slice(0, 3900)).setFooter({ text: 'Use /toggle-feature to enable or disable.' }).setTimestamp()], flags: 64 });
+  return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('🧩 Optional Features').setDescription(lines.join('\n').slice(0, 3900)).setFooter({ text: 'Use /toggle-feature to enable or disable.' }).setTimestamp()], flags: 64 });
 }
 
 case 'post-component': {
-  if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags: 64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags: 64 });
   const compReg = require('../services/componentRegistryService');
   const compId = interaction.options.getString('component');
   const week = interaction.options.getInteger('week') || _state.scheduleState?.week || 1;
 
   const guard = compReg.guardEnabled(compId);
-  if (guard.blocked) return interaction.reply({ content: guard.message, flags: 64 });
+  if (guard.blocked) return interactionExecution.for(interaction).reply({ content: guard.message, flags: 64 });
 
   const ch = await compReg.ensureComponentChannel(guild, compId);
-  if (!ch) return interaction.reply({ content: `⚠️ Could not find or create channel for **${compId}**. The component may not require a dedicated channel.`, flags: 64 });
+  if (!ch) return interactionExecution.for(interaction).reply({ content: `⚠️ Could not find or create channel for **${compId}**. The component may not require a dedicated channel.`, flags: 64 });
 
   if (compId === 'mvp-voting') {
     const members = ((_state.openTeamRegistry || []).filter(t => t.ownerId)).map(t => ({ label: t.displayTeam || t.baseTeam || 'Unknown', value: String(t.ownerId) })).slice(0, 25);
     const embed = compReg.buildMvpVotingEmbed(week, members);
-    const row = members.length >= 2 ? new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`comp_mvp::${week}`).setPlaceholder('Vote for MVP...').setMinValues(1).setMaxValues(1).addOptions(members)
-    ) : null;
-    await sendMessageService.send(ch, { embeds: [embed], components: row ? [row] : [], allowedMentions: { parse: [] } }, { action: 'comp-mvp-panel' });
+    const rows = members.length >= 2 ? buttonChoiceService.createChoiceRows({
+      guildId:guild.id, public:true, flow:'mvp-vote', legacyCustomId:`comp_mvp::${week}`, minValues:1, maxValues:1, options:members, pageSize:15,
+    }).rows : [];
+    await sendMessageService.send(ch, { embeds: [embed], components: rows, allowedMentions: { parse: [] } }, { action: 'comp-mvp-panel' });
   } else if (compId === 'availability') {
     const embed = compReg.buildAvailabilityEmbed(week);
     const row = compReg.buildAvailabilityButtons();
@@ -3236,12 +3348,12 @@ case 'post-component': {
     await sendMessageService.send(ch, { embeds: [embed], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`comp_predictions_start::${week}`).setLabel('🔮 Make Predictions').setStyle(ButtonStyle.Primary))], allowedMentions: { parse: [] } }, { action: 'comp-predictions-panel' });
   }
 
-  return interaction.reply({ content: `✅ Posted **${compReg.COMPONENT_CATALOG[compId]?.name}** panel in <#${ch.id}>.`, flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: `✅ Posted **${compReg.COMPONENT_CATALOG[compId]?.name}** panel in <#${ch.id}>.`, flags: 64 });
 }
 
 
 case 'initialize-server': {
-  if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+  if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
   if (!interaction.deferred && !interaction.replied) await safeDeferred(interaction, { flags:64 }).catch(() => null);
   const ackMode = interaction.deferred ? 'deferred' : interaction.replied ? 'replied' : 'reply';
   const lastTrashAt = Number(wizardStateService.getState().lastTrashAt || 0);
@@ -3253,9 +3365,9 @@ case 'initialize-server': {
   // Structural lock is owned by handleInteraction.
   try {
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ content: '🧹 Switching to installation mode…' }).catch(() => null);
+      await interactionExecution.for(interaction).editReply({ content: '🧹 Switching to installation mode…' }).catch(() => null);
     } else {
-      await interaction.reply({ content: '🧹 Switching to installation mode…', flags: 64 }).catch(() => null);
+      await interactionExecution.for(interaction).reply({ content: '🧹 Switching to installation mode…', flags: 64 }).catch(() => null);
     }
     bgJob = await backgroundJobService.createJob({
       guildId: guild.id,
@@ -3302,12 +3414,16 @@ case 'initialize-server': {
     });
     await backgroundJobService.markProgress(bgJob.id, { step: 'restoring-setup-lane', pct: 75 });
     // Run post-build workflow: deploy commands, patch notes, identity, access lock
-    await workflowEngine.run('post-build', { guild, state: _state, client: _client });
+    const postBuild = await workflowEngine.run('post-build', { guild, state: _state, client: _client });
+    if (!postBuild.ok && postBuild.errors.some(e => !['publish-patch-notes','apply-bot-identity'].includes(e.step))) {
+      throw Object.assign(new Error('Server reset completed, but command deployment or bot access setup failed. Repair the failed workflow before continuing.'), { code:'POST_BUILD_INCOMPLETE' });
+    }
     wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
     wizardPrefs.savePrefs({ wizardStage: 'mode' });
     const ch = await _postSetupWizardMessage(guild, `**${result.serverName}** is in installation mode now. Choose a structure strategy and server template to begin.`, { stage: 'mode' });
     await postRebootFinalizationService.finalizeSetupLaneAfterReboot(guild, ch, () => wizardRendererService.buildWizardPayload(guild, '**Installation mode is active.** Continue setup from this guide.'), { currentStep: 'mode', deleteUserMessages: true }).catch(() => null);
     const msg = ch ? `🧹 Installation mode is live in <#${ch.id}>.` : '🧹 Installation mode is live in **#setup-wizard**.';
+    await require('../storage/jsonStore').flushAllWrites();
     await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null, memoryReset });
     await statusCardService.updateStatusCard(statusCard, {
       title: 'Initialize Server',
@@ -3319,8 +3435,8 @@ case 'initialize-server': {
         { name: 'Setup Lane', value: ch ? `<#${ch.id}>` : '#setup-wizard', inline: true },
       ],
     });
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ content: msg }).catch(() => null);
-    return interaction.reply({ content: msg, flags:64 }).catch(() => null);
+    if (interaction.replied || interaction.deferred) return interactionExecution.for(interaction).editReply({ content: msg }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: msg, flags:64 }).catch(() => null);
   } catch (err) {
     if (bgJob?.id) await backgroundJobService.markFailed(bgJob.id, err?.message || err, { step: 'initialize-server' });
     await statusCardService.updateStatusCard(statusCard, {
@@ -3332,8 +3448,8 @@ case 'initialize-server': {
         { name: 'Live Lane', value: interaction.channel ? `#${interaction.channel.name}` : 'current channel', inline: true },
       ],
     });
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.') }).catch(() => null);
-    return interaction.reply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.'), flags: 64 }).catch(() => null);
+    if (interaction.replied || interaction.deferred) return interactionExecution.for(interaction).editReply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.') }).catch(() => null);
+    return interactionExecution.for(interaction).reply({ content: safeUserError(err, '❌ Initialization failed. Check the logs and try again.'), flags: 64 }).catch(() => null);
   } finally {
     // Outer structural lock releases after this handler and state flush complete.
   }
@@ -3342,15 +3458,15 @@ case 'initialize-server': {
 
 
 case 'create-poll': {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   const question = interaction.options.getString('question');
   const options = String(interaction.options.getString('options') || '').split(',').map(s => s.trim()).filter(Boolean);
   const res = await pollService.createPoll(guild, question, options);
-  return interaction.reply({ content:`✅ Poll posted in <#${res.message.channel.id}>.`, flags:64 });
+  return interactionExecution.for(interaction).reply({ content:`✅ Poll posted in <#${res.message.channel.id}>.`, flags:64 });
 }
 
 case 'set-bot-identity': {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   const botName = interaction.options.getString('name');
   const avatarUrlRaw = interaction.options.getString('avatar-url');
   const avatarImage = interaction.options.getAttachment('avatar-image');
@@ -3369,7 +3485,7 @@ case 'set-bot-identity': {
     avatarUrl = avatarUrlRaw;
   } else if (importedEmojiName && importedEmojiName !== '_none_') {
     const found = guild?.emojis?.cache?.find(e => e.name === importedEmojiName || e.name.toLowerCase() === String(importedEmojiName).toLowerCase());
-    if (!found) return interaction.reply({ content:'❌ Imported emoji not found in this server.', flags:64 });
+    if (!found) return interactionExecution.for(interaction).reply({ content:'❌ Imported emoji not found in this server.', flags:64 });
     avatarMode = 'emoji_url';
     avatarUrl = found.imageURL({ extension: 'png', size: 256 });
     avatarEmoji = found.name;
@@ -3383,7 +3499,7 @@ case 'set-bot-identity': {
   const applied = await botIdentityService.applyBotIdentity(_client, guild);
   await _postSetupWizardMessage(guild, 'Bot identity saved and wizard refreshed.').catch(() => null);
   const modeLabel = settings.avatarMode === 'emoji_url' ? `Imported emoji${settings.avatarEmoji ? ` (${settings.avatarEmoji})` : ''}` : settings.avatarMode === 'url' ? 'Custom image' : 'Server image';
-  return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🤖 Bot Identity Saved').setDescription(`Name: **${settings.botName}**
+  return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🤖 Bot Identity Saved').setDescription(`Name: **${settings.botName}**
 Avatar mode: **${modeLabel}**
 Applied now: **${applied.ok ? 'yes' : 'no'}**${applied.reason ? `\nReason: **${applied.reason}**` : ''}`).setTimestamp()], flags:64 });
 }
@@ -3392,25 +3508,25 @@ Applied now: **${applied.ok ? 'yes' : 'no'}**${applied.reason ? `\nReason: **${a
 
 
 case 'kill-bot': {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   serverSettings.setBotStatus('killed');
-  return interaction.reply({ content:'🛑 Bot status set to **KILLED**. Normal commands are now offline until `/workflow bot ignite` is used.', flags:64 });
+  return interactionExecution.for(interaction).reply({ content:'🛑 Bot status set to **KILLED**. Normal commands are now offline until `/workflow bot ignite` is used.', flags:64 });
 }
 
 case 'ignite-bot': {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   serverSettings.setBotStatus('active');
   wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
   wizardPrefs.savePrefs({ wizardStage: 'mode' });
   await patchNotesService.publishPatchNotes(guild).catch(() => null);
   const ch = await _postSetupWizardMessage(guild, 'Bot reactivated. Setup reopened directly to the live wizard.', { stage: 'mode' });
-  return interaction.reply({ content:`🔥 Bot reactivated. Setup reopened in ${ch ? `<#${ch.id}>` : `\`${_setupWizardFallbackText()}\``}.`, flags:64 });
+  return interactionExecution.for(interaction).reply({ content:`🔥 Bot reactivated. Setup reopened in ${ch ? `<#${ch.id}>` : `\`${_setupWizardFallbackText()}\``}.`, flags:64 });
 }
 
 case 'bot-status': {
   const settings = serverSettings.getSettings();
   const wizardState = wizardStateService.getState();
-  return interaction.reply({ embeds:[new EmbedBuilder().setColor(settings.botStatus === 'killed' ? 0xff4444 : 0x5865f2).setTitle('🤖 Bot Status').setDescription(`Status: **${String(settings.botStatus || 'active').toUpperCase()}**
+  return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(settings.botStatus === 'killed' ? 0xff4444 : 0x5865f2).setTitle('🤖 Bot Status').setDescription(`Status: **${String(settings.botStatus || 'active').toUpperCase()}**
 Installation mode: **${wizardState.installationMode ? 'ON' : 'OFF'}**
 Wizard stage: **${String(wizardState.currentStep || 'flow').toUpperCase()}**
 Audience: **${String(settings.audienceRating || 'unset').toUpperCase()}**
@@ -3419,7 +3535,7 @@ Tone visibility: **${String(settings.toneVisibility || 'public').replace(/_/g, '
 }
 
 case 'trash-the-bot': {
-  if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+  if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
   const ackMode = 'deferred';
   if (!interaction.deferred && !interaction.replied) await safeDeferred(interaction, { flags:64 }).catch(() => null);
   const confirm = String(interaction.options.getString('confirm') || '').trim().toUpperCase();
@@ -3498,7 +3614,10 @@ case 'trash-the-bot': {
     }).catch((err) => log.warn('patch notes publish after trash failed:', err.message));
     try { require('../services/guideLifecycleService').forceRefreshAll(guild.id); } catch {}
     // Run post-trash workflow (triggers guide refresh, automation status, etc.)
-    workflowEngine.run('post-trash', { guild, state: _state, client: _client }).catch(e => log.warn('post-trash workflow:', e.message));
+    const postTrash = await workflowEngine.run('post-trash', { guild, state: _state, client: _client });
+    if (!postTrash.ok && postTrash.errors.some(e => e.step === 'force-refresh-guides')) {
+      throw Object.assign(new Error('Full reboot completed, but guide refresh failed. Repair the workflow before continuing.'), { code:'POST_TRASH_INCOMPLETE' });
+    }
     workflowEngine.emitJobEvent('trash-the-bot', 'completed', { guild, guildId: guild.id }).catch(() => null);
     const ch = await _postSetupWizardMessage(guild, `🗑 **${result.serverName}** was fully rebooted.
 • Channels flushed: **${result.flushSummary?.deletedChannels || 0}**
@@ -3507,6 +3626,7 @@ case 'trash-the-bot': {
 
 Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Confirm / Open Setup Wizard** to continue.`, { stage: 'flow' });
     await postRebootFinalizationService.finalizeSetupLaneAfterReboot(guild, ch, () => wizardRendererService.buildWizardPayload(guild, 'Full reboot complete. This setup guide is now the single live wizard message.'), { currentStep: 'flow', deleteUserMessages: true }).catch(() => null);
+    await require('../storage/jsonStore').flushAllWrites();
     await backgroundJobService.markCompleted(bgJob.id, { setupWizardChannelId: ch?.id || null, flushSummary: result.flushSummary || null, memoryReset });
     await statusCardService.updateStatusCard(statusCard, {
       title: 'Full Reboot',
@@ -3541,12 +3661,12 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
 }
 
     case 'customize-server-rules': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
-      return interaction.reply({ embeds:[serverRulesService.buildWizardEmbed()], components:[serverRulesService.buildWizardButtonRow()], flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
+      return interactionExecution.for(interaction).reply({ embeds:[serverRulesService.buildWizardEmbed()], components:[serverRulesService.buildWizardButtonRow()], flags:64 });
     }
 
     case 'set-bot-tone': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const audience = interaction.options.getString('audience');
       const sameTone = interaction.options.getBoolean('use-same-tone');
       const allowGifs = interaction.options.getBoolean('allow-gifs');
@@ -3555,6 +3675,10 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
       const tonesRaw = interaction.options.getString('tones');
       const memberRaw = interaction.options.getString('member-tones');
       const commRaw = interaction.options.getString('commissioner-tones');
+      const openHouse = interaction.options.getBoolean('open-house');
+      const openHouseChannel = interaction.options.getChannel('open-house-channel');
+      const clearOpenHouseChannels = interaction.options.getBoolean('clear-open-house-channels');
+      const openHouseBurstLimit = interaction.options.getInteger('open-house-burst-limit');
       if (audience) serverSettings.setAudienceRating(audience);
       if (typeof sameTone === 'boolean') serverSettings.saveSettings({ ...serverSettings.getSettings(), useSharedToneProfile: sameTone, setupCompletedAt: Date.now() });
       if (typeof allowGifs === 'boolean') serverSettings.saveSettings({ ...serverSettings.getSettings(), allowGifReplies: allowGifs, setupCompletedAt: Date.now() });
@@ -3563,25 +3687,38 @@ Fresh patch-notes and setup-wizard lanes were rebuilt automatically. Press **Con
       if (tonesRaw) serverSettings.setToneProfile(tonesRaw.split(',').map(s => s.trim()).filter(Boolean), 'shared');
       if (memberRaw) serverSettings.setToneProfile(memberRaw.split(',').map(s => s.trim()).filter(Boolean), 'member');
       if (commRaw) serverSettings.setToneProfile(commRaw.split(',').map(s => s.trim()).filter(Boolean), 'commissioner');
+      if (typeof openHouse === 'boolean' || openHouseChannel || clearOpenHouseChannels || openHouseBurstLimit) {
+        const current = serverSettings.getSettings();
+        const channels = clearOpenHouseChannels ? [] : [...(current.rOpenHouseChannels || [])];
+        if (openHouseChannel && !channels.includes(String(openHouseChannel.id))) channels.push(String(openHouseChannel.id));
+        serverSettings.saveSettings({
+          ...current,
+          ...(typeof openHouse === 'boolean' ? { rOpenHouseEnabled: openHouse } : {}),
+          rOpenHouseChannels: channels,
+          ...(openHouseBurstLimit ? { rOpenHouseBurstLimit: openHouseBurstLimit } : {}),
+          setupCompletedAt: Date.now(),
+        });
+      }
       const settings = serverSettings.getSettings();
-      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🎭 Bot Tone Updated').setDescription(`Audience rating: **${String(settings.audienceRating).toUpperCase()}**
+      return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🎭 Bot Tone Updated').setDescription(`Audience rating: **${String(settings.audienceRating).toUpperCase()}**
 Use same tone: **${settings.useSharedToneProfile ? 'YES' : 'NO'}**
 Member/shared tone: **${serverSettings.getToneSummary(settings, 'member')}**
 Commissioner tone: **${serverSettings.getToneSummary(settings, 'commissioner')}**
 GIF replies: **${settings.allowGifReplies ? 'ON' : 'OFF'}**
 Filter mode: **${String(settings.filterMode || 'strict').toUpperCase()}**
 Tone visibility: **${String(settings.toneVisibility || 'public').replace(/_/g, ' ').toUpperCase()}**
+R Open House: **${settings.rOpenHouseEnabled ? 'ON' : 'OFF'}**${(settings.rOpenHouseChannels || []).length ? ` • ${(settings.rOpenHouseChannels || []).length} explicit channel(s)` : ' • safe social channels auto-detected'}
 Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings.filterMode)}**`).setTimestamp()], flags:64 });
     }
 
     case 'setup-league': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       // V200.2: Removed redundant _isInstallationMode() check — _guardInstallationModeCommand (line 1855) already blocks all non-allowlisted commands during install mode.
       try {
-        await interaction.deferReply({flags:64});
+        await interactionExecution.for(interaction).deferReply({flags:64});
         const setupLeagueName = interaction.options.getString('league-name');
         if (!setupLeagueName || !setupLeagueName.trim()) {
-          return interaction.editReply('❌ League name is required. Give your league a real name before setup.');
+          return interactionExecution.for(interaction).editReply('❌ League name is required. Give your league a real name before setup.');
         }
         _state.leagueConfig.leagueName = setupLeagueName.trim().slice(0, 60);
         saveJsonDebounced('leagueConfig.json', _state.leagueConfig);
@@ -3590,28 +3727,28 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       } catch (err) {
         log.error('setup-league failed:', err.message, err.stack);
         const msg = safeUserError(err, '❌ Setup failed. Check the server logs for details.');
-        if (interaction.deferred || interaction.replied) return interaction.editReply(msg).catch(() => null);
-        return interaction.reply({ content: msg, flags:64 }).catch(() => null);
+        if (interaction.deferred || interaction.replied) return interactionExecution.for(interaction).editReply(msg).catch(() => null);
+        return interactionExecution.for(interaction).reply({ content: msg, flags:64 }).catch(() => null);
       }
     }
     case 'delete-league': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
 
       const selectedLeagueId = interaction.options.getString('league');
       const confirm = interaction.options.getString('confirm');
 
 
-      if (!selectedLeagueId || selectedLeagueId === '_none_') return interaction.reply({content:'⚠️ Please select an active league to delete.',flags:64});
+      if (!selectedLeagueId || selectedLeagueId === '_none_') return interactionExecution.for(interaction).reply({content:'⚠️ Please select an active league to delete.',flags:64});
 
       const selectedLeague = activeLeagueService.getLeague(selectedLeagueId);
       if (!selectedLeague) {
-        return interaction.reply({ content: '⚠️ No active league record found to delete.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: '⚠️ No active league record found to delete.', flags:64 });
       }
 
-      if (confirm !== selectedLeague.leagueName) return interaction.reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
+      if (confirm !== selectedLeague.leagueName) return interactionExecution.for(interaction).reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
       await require('../services/lifetimeHistoryService').importLegacy(guild.id,_state);
-      await interaction.deferReply({flags:64});
-      await interaction.editReply(`🗑 Deleting **${selectedLeague.leagueName}**...`);
+      await interactionExecution.for(interaction).deferReply({flags:64});
+      await interactionExecution.for(interaction).editReply(`🗑 Deleting **${selectedLeague.leagueName}**...`);
 
       const { deleteLeagueStructure } = leagueSetupService;
       const { deleteAllGameChannels } = gameChannelService;
@@ -3641,7 +3778,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
           saveJsonDebounced('leagueConfig.json', _state.leagueConfig);
         }
 
-        return interaction.editReply({
+        return interactionExecution.for(interaction).editReply({
           embeds: [new EmbedBuilder()
             .setColor(0xe74c3c)
             .setTitle('🗑 League Deleted')
@@ -3655,12 +3792,12 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
         });
       } catch (err) {
         log.error('delete-league failed:', err.message, err.stack);
-        return interaction.editReply(safeUserError(err, '❌ League delete failed. Check the logs and try again.'));
+        return interactionExecution.for(interaction).editReply(safeUserError(err, '❌ League delete failed. Check the logs and try again.'));
       }
     }
 
     case 'reset-league': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
 
       const selectedLeagueId = interaction.options.getString('league');
       const confirm = interaction.options.getString('confirm');
@@ -3668,27 +3805,27 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const customLeagueName = interaction.options.getString('league-name');
 
 
-      if (!selectedLeagueId || selectedLeagueId === '_none_') return interaction.reply({content:'⚠️ Please select an active league to reset.',flags:64});
+      if (!selectedLeagueId || selectedLeagueId === '_none_') return interactionExecution.for(interaction).reply({content:'⚠️ Please select an active league to reset.',flags:64});
 
       const selectedLeague = activeLeagueService.getLeague(selectedLeagueId);
       if (!selectedLeague) {
-        return interaction.reply({ content: '⚠️ No active league record found to reset. Set up a league first.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: '⚠️ No active league record found to reset. Set up a league first.', flags:64 });
       }
 
       const targetLeagueTypeId = nextLeagueTypeId || selectedLeague.leagueTypeId || _state.leagueConfig.leagueTypeId;
       const targetLeagueName = (customLeagueName || selectedLeague.leagueName || _state.leagueConfig.leagueName || '').trim();
 
-      if (confirm !== selectedLeague.leagueName) return interaction.reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
+      if (confirm !== selectedLeague.leagueName) return interactionExecution.for(interaction).reply({content:`Preview: **${selectedLeague.leagueName}**, ${selectedLeague.builtChannelIds?.length||0} channels, ${selectedLeague.builtCategoryIds?.length||0} categories. Shared resources and lifetime history are retained. Enter the exact league name in confirm to proceed.`,flags:64});
       await require('../services/lifetimeHistoryService').importLegacy(guild.id,_state);
-      await interaction.deferReply({flags:64});
-      await interaction.editReply(`⚙️ Resetting **${selectedLeague.leagueName}**...`);
+      await interactionExecution.for(interaction).deferReply({flags:64});
+      await interactionExecution.for(interaction).editReply(`⚙️ Resetting **${selectedLeague.leagueName}**...`);
 
       const { LEAGUE_TYPES, buildSimplifiedLeagueStructure, deleteLeagueStructure, saveConfigDefaults } = leagueSetupService;
       const { deleteAllGameChannels } = gameChannelService;
       const { purgeLeagueData } = dataCleanupService;
 
       if (!LEAGUE_TYPES[targetLeagueTypeId]) {
-        return interaction.editReply('❌ Invalid target league type selected.');
+        return interactionExecution.for(interaction).editReply('❌ Invalid target league type selected.');
       }
 
       try {
@@ -3726,9 +3863,9 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
         try { teamRegistry.syncFromState(_state); } catch {}
         const { resetHubWeek } = hubReleaseService;
-        if (activeLeagueService.listActiveLeagues().length === 1) resetHubWeek(1, _state);
+        if (activeLeagueService.listOperationalLeagues({ guildId:guild.id }).length === 1) await resetHubWeek(1, _state);
 
-        return interaction.editReply({
+        return interactionExecution.for(interaction).editReply({
           embeds: [new EmbedBuilder()
             .setColor(0x2ecc71)
             .setTitle('✅ League Reset Complete')
@@ -3744,13 +3881,13 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
         });
       } catch (err) {
         log.error('reset-league failed:', err.message, err.stack);
-        return interaction.editReply(safeUserError(err, '❌ League reset failed. Check the logs and try again.'));
+        return interactionExecution.for(interaction).editReply(safeUserError(err, '❌ League reset failed. Check the logs and try again.'));
       }
     }
 
     // ── /audit-wiring — startup diagnostics ──
     case 'audit-wiring': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { CHANNEL_KEYS, REQUIRED_CHANNELS } = require('../config/channels');
       const rows = REQUIRED_CHANNELS.map(k=>{
         const ch=_getCh(guild,k);
@@ -3759,62 +3896,66 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const timerStatus=`HubRelease: ${_state.hubWeeklyData.releaseTimerId?'✅ running':'❌ idle'} | Schedule: ${_state.scheduleState.timerId?'✅ running':'❌ idle'}`;
       const aiStatus='✅ Anthropic API key set';
       const leagueName = _state.leagueConfig.leagueName || '(not set — use /setup-league or /reset-league with league-name)';
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🔍 Bot Wiring Audit').addFields({name:'League Name',value:leagueName},{name:'Channels',value:rows.join('\n')},{name:'Timers',value:timerStatus},{name:'AI',value:aiStatus},{name:'Teams registered',value:String(_state.players.size)},{name:'Open registry',value:`${_state.openTeamRegistry.filter(t=>t.isOpen).length} open / ${_state.openTeamRegistry.length} total`}).setTimestamp()],flags:64});
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🔍 Bot Wiring Audit').addFields({name:'League Name',value:leagueName},{name:'Channels',value:rows.join('\n')},{name:'Timers',value:timerStatus},{name:'AI',value:aiStatus},{name:'Teams registered',value:String(_state.players.size)},{name:'Open registry',value:`${_state.openTeamRegistry.filter(t=>t.isOpen).length} open / ${_state.openTeamRegistry.length} total`}).setTimestamp()],flags:64});
     }
 
     // ── /add-member-to-league — assign member + grant channel access ──
     case 'add-member-to-league': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const targetUser = interaction.options.getUser('user');
-      const leagueId = interaction.options.getString('league');
+      const leagueInput = interaction.options.getString('league');
       const teamName = interaction.options.getString('team');
-      if (!leagueId || leagueId === '_none_') return interaction.reply({content:'❌ Choose the league this member is joining.',flags:64});
-      const selectedLeague = activeLeagueService.getLeague(leagueId) || activeLeagueService.listResetOptions(_state).find(l => String(l.id) === String(leagueId));
-      if (!selectedLeague) return interaction.reply({content:'❌ That league is no longer active.',flags:64});
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'joinable' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({content:`❌ ${resolved.message}`,flags:64});
+      const selectedLeague = resolved.league;
       const member = await guild.members.fetch(targetUser.id).catch(() => null);
-      if (!member) return interaction.reply({content:'❌ Could not find that member in the server.',flags:64});
+      if (!member) return interactionExecution.for(interaction).reply({content:'❌ Could not find that member in the server.',flags:64});
 
-      await interaction.deferReply({flags:64});
+      await interactionExecution.for(interaction).deferReply({flags:64});
       let granted = 0;
       try {
         const res = await leagueVisibility.grantMemberAccessToLeague(guild, member, _state, selectedLeague.id);
         granted = res.granted || 0;
       } catch (err) {
-        return interaction.editReply({content:`❌ Could not grant access to **${selectedLeague.leagueName}**: ${err.message}`});
+        return interactionExecution.for(interaction).editReply({content:`❌ Could not grant access to **${selectedLeague.leagueName}**: ${err.message}`});
       }
 
       let teamResult = null;
+      let teamFailure = null;
       if (teamName && teamName !== '_none_') {
-        teamResult = await openTeamsService.claimTeam(guild, member, teamName, { leagueId:selectedLeague.id });
-        if (!teamResult.success) {
-          return interaction.editReply({ content:`❌ League access was granted, but team assignment failed: ${teamResult.reason}\n\nThe member was **not** silently assigned to another league.` });
+        const open = openTeamsService.getOpenTeamsForLeague(selectedLeague.id) || [];
+        const candidate = open.find(t => norm(t.baseTeam) === norm(teamName) || norm(t.displayTeam) === norm(teamName));
+        if (!candidate) teamFailure = `**${teamName}** is not an open team in ${selectedLeague.leagueName}.`;
+        else {
+          teamResult = await openTeamsService.claimTeam(guild, member, candidate.baseTeam, { leagueId:selectedLeague.id });
+          if (!teamResult.success) teamFailure = teamResult.reason || 'Team assignment failed.';
         }
       }
 
       const assignedTeam = teamResult?.success ? teamResult.entry.displayTeam : null;
-      const onboarding = await leagueMemberOnboarding.notifyMemberAdded({
-        guild, member, leagueId:selectedLeague.id, teamName:assignedTeam,
-        actorId:interaction.user.id, source:'commissioner',
-      }).catch(err => ({ok:false, reason:err.message}));
+      const onboarding = await leagueMemberOnboarding.notifyMemberAdded({ guild, member, leagueId:selectedLeague.id, teamName:assignedTeam, actorId:interaction.user.id, source:'commissioner' }).catch(err => ({ok:false, reason:err.message}));
+      if (teamFailure) leagueMemberOnboarding.markOnboarding(member.id, selectedLeague.id, { teamStatus:'AWAITING_TEAM', lastTeamAssignmentError:teamFailure });
 
       const fields = [
         { name:'Member', value:`${targetUser}`, inline:true },
         { name:'League', value:selectedLeague.leagueName, inline:true },
+        { name:'Membership', value:'✅ ACTIVE', inline:true },
         { name:'Channel Access', value:`${granted} categories`, inline:true },
-        { name:'Team', value:assignedTeam ? `✅ ${assignedTeam}` : 'Not assigned yet', inline:true },
-        { name:'Onboarding', value:onboarding?.ok ? '✅ Greeting + timezone selection sent' : `⚠️ Access granted; onboarding notice failed (${onboarding?.reason || 'unknown'})`, inline:false },
+        { name:'Team', value:assignedTeam ? `✅ ${assignedTeam}` : '⏳ AWAITING_TEAM', inline:true },
+        { name:'Onboarding', value:onboarding?.ok ? '✅ Greeting + timezone selection sent' : `⚠️ Membership active; onboarding notice failed (${onboarding?.reason || 'unknown'})`, inline:false },
       ];
-      return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ Member Added to League').addFields(...fields).setFooter({text:'Timezone is completed by the member. Nickname suffix is applied only after their selection.'}).setTimestamp()]});
+      if (teamFailure) fields.push({ name:'Team assignment', value:`⚠️ ${teamFailure} Membership was kept active; the member can choose another team.`, inline:false });
+      return interactionExecution.for(interaction).editReply({embeds:[new EmbedBuilder().setColor(teamFailure ? 0xf1c40f : 0x2ecc71).setTitle(teamFailure ? '⚠️ Member Added — Team Still Needed' : '✅ Member Added to League').addFields(...fields).setFooter({text:'Membership is authoritative. Optional team assignment never rolls back a valid membership.'}).setTimestamp()]});
     }
 
     // ── /audit-emojis — show all mapped/unmapped emojis ──
     case 'audit-emojis': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { auditEmojis } = require('../config/emojiBank');
       const { mapped, unmapped, missing = [] } = auditEmojis(guild);
       const mapText = mapped.length ? mapped.join('\n') : 'None';
       const unmapText = unmapped.length ? unmapped.slice(0, 30).join('\n') : 'None';
-      return interaction.reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('🎨 Emoji Audit')
+      return interactionExecution.for(interaction).reply({embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('🎨 Emoji Audit')
         .addFields(
           { name: `✅ Mapped (${mapped.length})`, value: mapText.slice(0, 1024) },
           { name: `❓ Unmapped (${unmapped.length})`, value: unmapText.slice(0, 1024) },
@@ -3826,10 +3967,10 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
     // ── /sync-emojis — bulk upload team emojis to the server ──
     case 'sync-emojis': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const league = interaction.options.getString('league');
-      await interaction.deferReply({flags:64});
-      await interaction.editReply('⏳ Uploading emojis... this may take a minute (rate limited to ~1/sec).');
+      await interactionExecution.for(interaction).deferReply({flags:64});
+      await interactionExecution.for(interaction).editReply('⏳ Uploading emojis... this may take a minute (rate limited to ~1/sec).');
       const { syncEmojis: doSync } = require('../config/emojiBank');
       const results = await doSync(guild, league);
       const lines = [];
@@ -3838,7 +3979,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       if (results.failed.length) lines.push(`❌ **Failed (${results.failed.length}):**\n${results.failed.join('\n')}`);
       if (!lines.length) lines.push('Nothing to do — all emojis already uploaded.');
       await guild.emojis.fetch().catch(() => null);
-      return interaction.editReply({ content: lines.join('\n\n').slice(0, 1900) });
+      return interactionExecution.for(interaction).editReply({ content: lines.join('\n\n').slice(0, 1900) });
     }
 
     // ── /member-record — unified member ledger tools ──
@@ -3846,35 +3987,35 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
       const sub = interaction.options.getSubcommand();
       if (sub === 'career' || sub === 'export-career') {
         const target = interaction.options.getUser('user') || interaction.user;
-        if (target.id !== interaction.user.id && !isComm()) return interaction.reply({content:'Only you and commissioners can view your full career.',flags:64});
-        await interaction.deferReply({flags:64});
+        if (target.id !== interaction.user.id && !isComm()) return interactionExecution.for(interaction).reply({content:'Only you and commissioners can view your full career.',flags:64});
+        await interactionExecution.for(interaction).deferReply({flags:64});
         const history = require('../services/lifetimeHistoryService');
         await history.importLegacy(guild.id,_state);
         const career = await history.career(guild.id,target.id);
-        if (sub==='export-career') return interaction.editReply({content:'Your lifetime record export.',files:[{attachment:Buffer.from(JSON.stringify(career,null,2)),name:`career-${target.id}.json`}]});
+        if (sub==='export-career') return interactionExecution.for(interaction).editReply({content:'Your lifetime record export.',files:[{attachment:Buffer.from(JSON.stringify(career,null,2)),name:`career-${target.id}.json`}]});
         const honors=career.awards.slice(-15).map(a=>`• ${a.title || a.awardLabel || a.type} (${a.season || 'season unrecorded'})`).join('\n');
-        return interaction.editReply({content:`**Lifetime career — ${target.username}**\nGames: ${career.gamesPlayed} | W–L–T: ${career.wins}–${career.losses}–${career.ties}\nWin rate: ${career.winPercentage == null ? 'N/A' : career.winPercentage+'%'} | Seasons played: ${career.seasons}\nAwards: ${career.awards.length}\n${Object.entries(career.metrics).map(([k,v])=>`${k}: ${v}`).join(' | ')}\n${honors || 'No attributed awards yet.'}`.slice(0,1900),allowedMentions:{parse:[]}});
+        return interactionExecution.for(interaction).editReply({content:`**Lifetime career — ${target.username}**\nGames: ${career.gamesPlayed} | W–L–T: ${career.wins}–${career.losses}–${career.ties}\nWin rate: ${career.winPercentage == null ? 'N/A' : career.winPercentage+'%'} | Seasons played: ${career.seasons}\nAwards: ${career.awards.length}\n${Object.entries(career.metrics).map(([k,v])=>`${k}: ${v}`).join(' | ')}\n${honors || 'No attributed awards yet.'}`.slice(0,1900),allowedMentions:{parse:[]}});
       }
-      if (!isComm()) return interaction.reply({content:'Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'Commissioners only.',flags:64});
       if (sub==='award') {
-        await interaction.deferReply({flags:64});
+        await interactionExecution.for(interaction).deferReply({flags:64});
         await _saveLifetimeAward(interaction,{userId:interaction.options.getUser('user').id,title:interaction.options.getString('title')});
-        return interaction.editReply('Lifetime accolade saved.');
+        return interactionExecution.for(interaction).editReply('Lifetime accolade saved.');
       }
       if (sub==='record-stat') {
         const league=activeLeagueService.findLeagueForChannel(interaction.channel);
-        if(!league)return interaction.reply({content:'Record stats inside the intended league or event channel.',flags:64});
-        await interaction.deferReply({flags:64});
+        if(!league)return interactionExecution.for(interaction).reply({content:'Record stats inside the intended league or event channel.',flags:64});
+        await interactionExecution.for(interaction).deferReply({flags:64});
         const metric=interaction.options.getString('metric'),userId=interaction.options.getUser('user').id;
         await require('../services/lifetimeHistoryService').recordStat(guild.id,{id:`${league.id}:${interaction.options.getString('source-id')}:${userId}:${metric}`,leagueId:league.id,userId,metric,value:interaction.options.getNumber('value'),game:interaction.options.getString('game'),seasonId:interaction.options.getString('season'),actor:interaction.user.id});
-        return interaction.editReply('Verified lifetime statistic saved. Reusing the same source ID corrects this record without double counting.');
+        return interactionExecution.for(interaction).editReply('Verified lifetime statistic saved. Reusing the same source ID corrects this record without double counting.');
       }
       const ledger = memberLedgerService;
 
       if (sub === 'history') {
         const targetUser = interaction.options.getUser('user');
         const rec = ledger.getRecord(targetUser.id);
-        if (!rec) return interaction.reply({ content: `⚠️ No record found for **${targetUser.tag}**. They may not have sent any messages yet.`, flags:64 });
+        if (!rec) return interactionExecution.for(interaction).reply({ content: `⚠️ No record found for **${targetUser.tag}**. They may not have sent any messages yet.`, flags:64 });
 
         const kicks = rec.kickHistory.filter(h => h.type === 'kick' || h.type === 'ban');
         const leaves = rec.kickHistory.filter(h => h.type === 'leave');
@@ -3906,26 +4047,26 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
         if (historyLines.length) embed.addFields({ name: '📜 History (last 5)', value: historyLines.join('\n\n').slice(0, 1024) });
         if (rec.notes.length) embed.addFields({ name: '📝 Notes', value: rec.notes.slice(-5).join('\n').slice(0, 1024) });
         embed.setFooter({ text: `User ID: ${rec.userId}` }).setTimestamp();
-        return interaction.reply({ embeds: [embed], flags:64 });
+        return interactionExecution.for(interaction).reply({ embeds: [embed], flags:64 });
       }
 
       if (sub === 'add-note') {
         const user = interaction.options.getUser('user');
         const note = interaction.options.getString('note');
         ledger.addNote(user.id, note, interaction.user.id);
-        return interaction.reply({ content:`✅ Added note for ${user}.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Added note for ${user}.`, flags:64 });
       }
 
       const days = interaction.options.getInteger('days') || 4;
       const inactive = typeof ledger.getInactiveMembers === 'function'
         ? ledger.getInactiveMembers(days)
         : (typeof ledger.listInactiveMembers === 'function' ? ledger.listInactiveMembers(days).map(r => ({ username: r.username || r.displayName || r.userId, team: r.team || 'no team', days: r.daysInactive || r.days || days, userId: r.userId })) : []);
-      if (!inactive.length) return interaction.reply({ content: `✅ All league members have been active within the last ${days} days.`, flags:64 });
+      if (!inactive.length) return interactionExecution.for(interaction).reply({ content: `✅ All league members have been active within the last ${days} days.`, flags:64 });
       const lines = inactive.map(m => {
         const mention = m.userId ? `<@${m.userId}>` : `**${m.username}**`;
         return `⚠️ ${mention} (${m.team || 'no team'}) — **${m.days} days** since last message`;
       });
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff8800)
+      return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0xff8800)
         .setTitle(`⏰ Inactive Members — ${inactive.length}`)
         .setDescription(lines.join('\n').slice(0, 3900))
         .setFooter({ text: `Threshold: ${days} days • Use /warn-player for inactivity warnings` })
@@ -3938,15 +4079,15 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
     // ── /inactive-members — show members inactive 4+ days ──
     case 'inactive-members': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const days = interaction.options.getInteger('days') || 4;
       const ledger = memberLedgerService;
       const inactive = ledger.getInactiveMembers(days);
-      if (!inactive.length) return interaction.reply({ content: `✅ All league members have been active within the last ${days} days.`, flags:64 });
+      if (!inactive.length) return interactionExecution.for(interaction).reply({ content: `✅ All league members have been active within the last ${days} days.`, flags:64 });
       const lines = inactive.map(m =>
         `⚠️ **${m.username}** (${m.team || 'no team'}) — **${m.days} days** since last message`
       );
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff8800)
+      return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0xff8800)
         .setTitle(`⏰ Inactive Members — ${inactive.length}`)
         .setDescription(lines.join('\n').slice(0, 3900))
         .setFooter({ text: `Threshold: ${days} days • Use /warn-player for inactivity warnings` })
@@ -3955,22 +4096,22 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
 
     // ── /ban — unified ban management ──
     case 'ban': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       // Defer first — guild.members.fetch is a network call that can exceed Discord's 3s ack window
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       const sub = interaction.options.getSubcommand();
       const ledger = memberLedgerService;
 
       if (sub === 'list') {
         const bans = ledger.getBanList();
-        if (!bans.length) return interaction.editReply({ content: '✅ No banned users. The ban list is clean.', flags:64 });
+        if (!bans.length) return interactionExecution.for(interaction).editReply({ content: '✅ No banned users. The ban list is clean.', flags:64 });
         const lines = bans.map((b, i) => {
           const date = b.bannedAt ? `<t:${Math.floor(b.bannedAt / 1000)}:d>` : 'Unknown';
           return `**${i + 1}.** ${b.username} (\`${b.userId}\`)
 > Banned: ${date} — ${b.reason}
 > Kicks: ${b.totalKicks} | Warnings: ${b.totalWarnings}`;
         });
-        return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x8b0000)
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x8b0000)
           .setTitle(`🔨 Ban List — ${bans.length} user${bans.length !== 1 ? 's' : ''}`)
           .setDescription(lines.join('\n\n').slice(0, 3900))
           .setFooter({ text: 'Use /ban remove <user-id> to remove someone from the ban list' })
@@ -3983,12 +4124,12 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
         ledger.recordBan(banTarget.id, banReason, interaction.user.id);
         const targetMember = await guild.members.fetch(banTarget.id).catch(() => null);
         if (targetMember && !canBotModerate(targetMember)) {
-          return interaction.editReply({ content: `⚠️ **${banTarget.tag}** added to bot ban list, but cannot ban from Discord — they have higher permissions than the bot.`, flags:64 });
+          return interactionExecution.for(interaction).editReply({ content: `⚠️ **${banTarget.tag}** added to bot ban list, but cannot ban from Discord — they have higher permissions than the bot.`, flags:64 });
         }
         try {
           await guild.members.ban(banTarget.id, { reason: banReason });
         } catch (e) {
-          return interaction.editReply({ content: `⚠️ **${banTarget.tag}** added to bot ban list, but Discord ban failed: ${e.message}`, flags:64 });
+          return interactionExecution.for(interaction).editReply({ content: `⚠️ **${banTarget.tag}** added to bot ban list, but Discord ban failed: ${e.message}`, flags:64 });
         }
         const bootCh = _getCh(guild, 'bootLog');
         if (bootCh) await bootCh.send({ embeds: [new EmbedBuilder().setColor(0x8b0000).setTitle('🔨 Player Banned')
@@ -3997,7 +4138,7 @@ Warning: **${serverSettings.getAudienceWarning(settings.audienceRating, settings
             { name: 'Banned By', value: `${interaction.user}`, inline: true },
             { name: 'Reason', value: banReason },
           ).setTimestamp()] }).catch(() => null);
-        return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x8b0000).setTitle('🔨 User Banned')
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x8b0000).setTitle('🔨 User Banned')
           .setDescription(`**${banTarget.tag}** has been banned from the server and added to the bot ban list.
 
 Reason: ${banReason}
@@ -4008,17 +4149,17 @@ Use \`/ban remove user-id:${banTarget.id}\` to reverse.`)
       }
 
       const unbanId = (interaction.options.getString('user-id') || '').trim();
-      if (!/^\d{15,20}$/.test(unbanId)) return interaction.reply({ content: '❌ Invalid user ID. Right-click a user → Copy ID, or check `/ban list` for IDs.', flags:64 });
-      await interaction.deferReply({ flags:64 });
+      if (!/^\d{15,20}$/.test(unbanId)) return interactionExecution.for(interaction).reply({ content: '❌ Invalid user ID. Right-click a user → Copy ID, or check `/ban list` for IDs.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 });
       const result = await ledger.unbanUser(guild, unbanId, interaction.user.tag);
-      if (!result.success) return interaction.editReply({ content: `❌ ${result.reason}` });
+      if (!result.success) return interactionExecution.for(interaction).editReply({ content: `❌ ${result.reason}` });
       const bootCh2 = _getCh(guild, 'bootLog');
       if (bootCh2) await bootCh2.send({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ User Unbanned')
         .addFields(
           { name: 'User', value: `**${result.username}** (\`${unbanId}\`)`, inline: true },
           { name: 'Unbanned By', value: `${interaction.user}`, inline: true },
         ).setTimestamp()] }).catch(() => null);
-      return interaction.editReply({ content: `✅ **${result.username}** has been unbanned.
+      return interactionExecution.for(interaction).editReply({ content: `✅ **${result.username}** has been unbanned.
 
 • Removed from bot ban list
 • Discord server ban lifted
@@ -4035,10 +4176,10 @@ If they rejoin, the bot will still flag them as a returning member with history.
 
     // ── /start-season — check readiness (15 min members) ──
     case 'start-season': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { checkSeasonReadiness, MIN_MEMBERS_TO_START, LEAGUE_TYPES } = leagueSetupService;
       const typeId = _state.leagueConfig.leagueTypeId;
-      if (!typeId) return interaction.reply({ content: '⚠️ No league set up yet. Run `/setup-league` or `/reset-league` first.', flags:64 });
+      if (!typeId) return interactionExecution.for(interaction).reply({ content: '⚠️ No league set up yet. Run `/setup-league` or `/reset-league` first.', flags:64 });
 
       const check = checkSeasonReadiness(_state, typeId);
       const def = LEAGUE_TYPES[typeId];
@@ -4048,7 +4189,7 @@ If they rejoin, the bot will still flag them as a returning member with history.
         const openNote = check.openSlots > 0
           ? `\n\n**${check.openSlots} open slots** remain. Use \`/fill-cpu\` to fill them with CPU teams before starting.`
           : '';
-        return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71)
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71)
           .setTitle('✅ Season Ready to Start!')
           .setDescription(
             `**${def?.label || typeId}** has enough members.\n\n` +
@@ -4058,7 +4199,7 @@ If they rejoin, the bot will still flag them as a returning member with history.
             `Run \`/set-hub-week 1\` to begin Week 1.`
           ).setTimestamp()], flags:64 });
       } else {
-        return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4500)
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0xff4500)
           .setTitle('❌ Not Enough Members to Start')
           .setDescription(
             `**${def?.label || typeId}** needs more players.\n\n` +
@@ -4072,24 +4213,24 @@ If they rejoin, the bot will still flag them as a returning member with history.
 
     // ── /fill-cpu — mark remaining open teams as CPU ──
     case 'fill-cpu': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { fillCPUTeams, checkSeasonReadiness, MIN_MEMBERS_TO_START: MIN } = leagueSetupService;
       const typeId2 = _state.leagueConfig.leagueTypeId;
 
       // Check minimum members first
       const preCheck = checkSeasonReadiness(_state, typeId2);
       if (!preCheck.ready) {
-        return interaction.reply({ content: `❌ Can't fill CPU teams yet — only **${preCheck.humanCount}** human members. Need **${MIN}** minimum before CPU fills.\n\nRecruit **${preCheck.needed}** more members first.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content: `❌ Can't fill CPU teams yet — only **${preCheck.humanCount}** human members. Need **${MIN}** minimum before CPU fills.\n\nRecruit **${preCheck.needed}** more members first.`, flags:64 });
       }
 
       const result = fillCPUTeams(_state, typeId2);
-      if (!result.filled) return interaction.reply({ content: '✅ No open slots to fill — all teams are already claimed or CPU-filled.', flags:64 });
+      if (!result.filled) return interactionExecution.for(interaction).reply({ content: '✅ No open slots to fill — all teams are already claimed or CPU-filled.', flags:64 });
 
       // Refresh the open teams board
       const { refreshOpenTeamsBoard } = openTeamsService;
       await refreshOpenTeamsBoard(guild).catch(() => null);
 
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x3498db)
+      return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x3498db)
         .setTitle(`🤖 ${result.filled} Teams Filled with CPU`)
         .setDescription(
           `The following teams are now CPU-controlled:\n\n` +
@@ -4100,27 +4241,27 @@ If they rejoin, the bot will still flag them as a returning member with history.
 
     // ── /release-cpu — undo CPU fills ──
     case 'release-cpu': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const { releaseCPUTeams } = leagueSetupService;
       const count = releaseCPUTeams(_state, _state.leagueConfig.leagueTypeId);
-      if (!count) return interaction.reply({ content: '✅ No CPU teams to release.', flags:64 });
+      if (!count) return interactionExecution.for(interaction).reply({ content: '✅ No CPU teams to release.', flags:64 });
 
       const { refreshOpenTeamsBoard } = openTeamsService;
       await refreshOpenTeamsBoard(guild).catch(() => null);
 
-      return interaction.reply({ content: `✅ **${count} CPU teams** released back to open status. The slots are available for human members again.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content: `✅ **${count} CPU teams** released back to open status. The slots are available for human members again.`, flags:64 });
     }
 
     // ── /reset-customization — restore defaults ──
     case 'reset-customization': {
-      if (!isComm()) return interaction.reply({content:'❌ Commissioners only.',flags:64});
+      if (!isComm()) return interactionExecution.for(interaction).reply({content:'❌ Commissioners only.',flags:64});
       const what = interaction.options.getString('what');
       const { resetToDefaults } = leagueSetupService;
       const fields = what === 'all' ? ['all'] : [what];
       const result = resetToDefaults(_state, fields);
 
       if (!result.reset.length && result.skipped.length) {
-        return interaction.reply({ content: `⚠️ Nothing to reset.\n${result.skipped.join('\n')}`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content: `⚠️ Nothing to reset.\n${result.skipped.join('\n')}`, flags:64 });
       }
 
       // If rules were reset, republish them
@@ -4129,30 +4270,30 @@ If they rejoin, the bot will still flag them as a returning member with history.
       const lines = [];
       if (result.reset.length) lines.push(`✅ **Reset to defaults:** ${result.reset.join(', ')}`);
       if (result.skipped.length) lines.push(`⏭️ **Skipped:** ${result.skipped.join(', ')}`);
-      return interaction.reply({ content: lines.join('\n'), flags:64 });
+      return interactionExecution.for(interaction).reply({ content: lines.join('\n'), flags:64 });
     }
 
 
 
     case 'set-rules': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       _state.leagueConfig.rulesText = interaction.options.getString('text');
       _state.leagueConfig.rulesUpdatedAt = Date.now();
       await _refreshRules(guild);
-      return interaction.reply({ content:'✅ League rules replaced and republished.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ League rules replaced and republished.', flags:64 });
     }
 
     case 'append-rule': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const textAdd = interaction.options.getString('text');
       _state.leagueConfig.rulesText = `${String(_state.leagueConfig.rulesText || '').trim()}\n${textAdd}`.trim();
       _state.leagueConfig.rulesUpdatedAt = Date.now();
       await _refreshRules(guild);
-      return interaction.reply({ content:'✅ Rule text appended and republished.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Rule text appended and republished.', flags:64 });
     }
 
     case 'update-rule': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const oldText = interaction.options.getString('old-text');
       const newText = interaction.options.getString('new-text');
       const appendInstead = interaction.options.getBoolean('append-instead');
@@ -4163,112 +4304,143 @@ If they rejoin, the bot will still flag them as a returning member with history.
       }
       _state.leagueConfig.rulesUpdatedAt = Date.now();
       await _refreshRules(guild);
-      return interaction.reply({ content:'✅ Rule update applied.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Rule update applied.', flags:64 });
     }
 
     case 'create-game': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const { createGameChannel } = gameChannelService;
       const week = interaction.options.getInteger('week');
-      const team1 = String(interaction.options.getString('team1') || '').split('::')[0];
-      const team2 = String(interaction.options.getString('team2') || '').split('::')[0];
-      const user1 = interaction.options.getUser('user1') || [..._state.players.values()].find(p => String(p.baseTeam).toLowerCase() === team1.toLowerCase()) || null;
-      const user2 = interaction.options.getUser('user2') || [..._state.players.values()].find(p => String(p.baseTeam).toLowerCase() === team2.toLowerCase()) || null;
+      const team1 = interaction.options.getString('team1');
+      const team2 = interaction.options.getString('team2');
+      const registry = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(league.id));
+      const t1 = registry.find(t => norm(t.baseTeam) === norm(team1) || norm(t.displayTeam) === norm(team1));
+      const t2 = registry.find(t => norm(t.baseTeam) === norm(team2) || norm(t.displayTeam) === norm(team2));
+      if (!t1 || !t2) return interactionExecution.for(interaction).reply({ content:`⚠️ Both teams must belong to **${league.leagueName || league.id}**.`, flags:64 });
+      if (String(t1.baseTeam).toLowerCase() === String(t2.baseTeam).toLowerCase()) return interactionExecution.for(interaction).reply({ content:'⚠️ Choose two different teams.', flags:64 });
+      const override1 = interaction.options.getUser('user1');
+      const override2 = interaction.options.getUser('user2');
+      const user1 = override1 || (t1.ownerId ? await guild.members.fetch(t1.ownerId).catch(()=>null) : null);
+      const user2 = override2 || (t2.ownerId ? await guild.members.fetch(t2.ownerId).catch(()=>null) : null);
       const primetime = !!interaction.options.getBoolean('primetime');
-      const channel = await createGameChannel(guild, week, team1, user1, team2, user2, primetime, false, false, { game: _state.leagueConfig.game, leagueTag: _state.leagueConfig.leagueName });
-      if (!channel) return interaction.reply({ content:'⚠️ Could not create the game channel. Make sure both teams are owned by members.', flags:64 });
-      return interaction.reply({ content:`✅ Game channel created: ${channel}`, flags:64 });
+      const channel = await createGameChannel(guild, week, t1.baseTeam, user1, t2.baseTeam, user2, primetime, false, false, { game: league.game || _state.leagueConfig.game, leagueTag: league.leagueName || league.id, leagueId:league.id });
+      if (!channel) return interactionExecution.for(interaction).reply({ content:'⚠️ Could not create the game channel. Make sure both teams are owned by members.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Game channel created for **${league.leagueName || league.id}**: ${channel}`, flags:64 });
     }
 
     case 'respond': {
       const game = _state.games.get(interaction.channelId);
-      if (!game) return interaction.reply({ content:'⚠️ Use this command inside an active game channel.', flags:64 });
+      if (!game) return interactionExecution.for(interaction).reply({ content:'⚠️ Use this command inside an active game channel.', flags:64 });
       game.responded = game.responded || new Set();
       game.responded.add(interaction.user.id);
       try { require('../league/gameSessionService').markResponded(interaction.channelId, interaction.user.id); } catch {}
-      return interaction.reply({ content:'✅ Response logged. The commissioner can now see you answered in this matchup.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Response logged. The commissioner can now see you answered in this matchup.', flags:64 });
     }
 
     case 'report-result': {
-      // V202 (BUG-006): one canonical result owner — validates, dedupes, persists, updates standings once,
-      // completes the game session and keeps the legacy ocrGameResults projection in sync.
+      // One canonical result owner. League scope is taken from the game session when possible,
+      // otherwise the caller must provide a league that resolves unambiguously.
       const game = _state.games.get(interaction.channelId);
+      const leagueInput = interaction.options.getString('league');
+      let leagueId = game?.leagueId || null;
+      let league = leagueId ? activeLeagueService.getLeague(leagueId) : null;
+      if (!leagueId) {
+        if (!leagueInput) return interactionExecution.for(interaction).reply({ content:'⚠️ This is not a scoped game channel. Choose the league for this result.', flags:64 });
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+        league = resolved.league; leagueId = league.id;
+      } else if (leagueInput) {
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok || String(resolved.league.id) !== String(leagueId)) return interactionExecution.for(interaction).reply({ content:'❌ The selected league does not match this game channel.', flags:64 });
+      }
       const winner = interaction.options.getString('winner');
       const loser = interaction.options.getString('loser');
+      const scopedTeams = _state.openTeamRegistry.filter(t => String(t.leagueId || '') === String(leagueId));
+      const winnerEntry = scopedTeams.find(t => norm(t.baseTeam) === norm(winner) || norm(t.displayTeam) === norm(winner));
+      const loserEntry = scopedTeams.find(t => norm(t.baseTeam) === norm(loser) || norm(t.displayTeam) === norm(loser));
+      if (!winnerEntry || !loserEntry) return interactionExecution.for(interaction).reply({ content:`⚠️ Winner and loser must both belong to **${league?.leagueName || leagueId}**.`, flags:64 });
+      if (norm(winnerEntry.baseTeam) === norm(loserEntry.baseTeam)) return interactionExecution.for(interaction).reply({ content:'⚠️ Winner and loser must be different teams.', flags:64 });
       const winnerScore = interaction.options.getInteger('winner-score');
       const loserScore = interaction.options.getInteger('loser-score');
       const gameResultService = require('../league/gameResultService');
       const week = game?.week || _state.scheduleState.week || null;
       const result = await gameResultService.submitGameResult({
-        homeTeam: winner, awayTeam: loser, homeScore: winnerScore, awayScore: loserScore,
+        homeTeam: winnerEntry.baseTeam, awayTeam: loserEntry.baseTeam, homeScore: winnerScore, awayScore: loserScore,
         week, source: 'slash-command', submittedBy: interaction.user.id,
         channelId: game ? interaction.channelId : null,
-        leagueId: game?.leagueId && _state.leagueConfig?.proAm?.[game.leagueId] ? game.leagueId : null,
+        leagueId,
       }, { state: _state, guild });
-      if (!result.ok) return interaction.reply({ content:`⚠️ Result not recorded: ${result.reason}`, flags:64 });
+      if (!result.ok) return interactionExecution.for(interaction).reply({ content:`⚠️ Result not recorded: ${result.reason}`, flags:64 });
       const note = result.deduped ? '\nℹ️ Identical result was already recorded — nothing changed.'
         : result.superseded ? '\n♻️ Previous result for this matchup was replaced; standings were corrected.'
         : result.standings.updated ? `\n📊 Standings updated.` : '';
-      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🏁 Final Score Reported').setDescription(`**${winner}** ${winnerScore} - ${loserScore} **${loser}**${note}`).setTimestamp()], flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle('🏁 Final Score Reported').setDescription(`**${winnerEntry.displayTeam || winnerEntry.baseTeam}** ${winnerScore} - ${loserScore} **${loserEntry.displayTeam || loserEntry.baseTeam}**${note}`).setFooter({text:league?.leagueName || String(leagueId)}).setTimestamp()], flags:64 });
     }
 
     case 'rewards-board': {
       const rewardBoards = rewardBoardService;
-      return interaction.reply({ embeds:[rewardBoards.buildStreamBoardEmbed(), rewardBoards.buildPotwBoardEmbed(), rewardBoards.buildYearlyAwardBoardEmbed()], flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds:[rewardBoards.buildStreamBoardEmbed(), rewardBoards.buildPotwBoardEmbed(), rewardBoards.buildYearlyAwardBoardEmbed()], flags:64 });
     }
 
     case 'refresh-rewards': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       await rewardBoardService.refresh(guild);
-      return interaction.reply({ content:'✅ Reward boards refreshed.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Reward boards refreshed.', flags:64 });
     }
 
     case 'set-hub-week': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const week = interaction.options.getInteger('week');
       const { resetHubWeek, startHubReleaseTimer } = hubReleaseService;
-      resetHubWeek(week, _state);
+      await resetHubWeek(week, _state);
       startHubReleaseTimer(guild, _client, _state, { getCh: _getCh, aiCall: _aiCall, MODELS: _MODELS });
-      return interaction.reply({ content:`✅ Hub week set to **${week}** and release timer restarted.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Hub week set to **${week}** and release timer restarted.`, flags:64 });
     }
 
     case 'release-week': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      await interaction.deferReply({ flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 });
       const { runWeeklyRelease } = hubReleaseService;
       await runWeeklyRelease(guild, _client, _state, { getCh: _getCh, aiCall: _aiCall, MODELS: _MODELS }, true).catch(() => null);
-      return interaction.editReply('✅ Weekly release ran now.');
+      return interactionExecution.for(interaction).editReply('✅ Weekly release ran now.');
     }
 
     case 'hub-status': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const hub = _state.hubWeeklyData || {};
-      return interaction.reply({ content:`📦 Hub status\nWeek: **${hub.week || 'N/A'}**\nScores: **${hub.scores?.length || 0}**\nStat lines: **${hub.statLines?.length || 0}**\nStandings: **${hub.standings ? 'loaded' : 'none'}**\nReleased: **${hub.released ? 'yes' : 'no'}**`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`📦 Hub status\nWeek: **${hub.week || 'N/A'}**\nScores: **${hub.scores?.length || 0}**\nStat lines: **${hub.statLines?.length || 0}**\nStandings: **${hub.standings ? 'loaded' : 'none'}**\nReleased: **${hub.released ? 'yes' : 'no'}**`, flags:64 });
     }
 
     case 'clear-hub': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const week = _state.hubWeeklyData.week;
       _state.hubWeeklyData = { week, scores: [], statLines: [], standings: null, potwCandidate: null, released: false, releaseTimerId: _state.hubWeeklyData.releaseTimerId || null, potwTimerId: null };
-      return interaction.reply({ content:'🧹 Cleared staged hub data for the current week.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'🧹 Cleared staged hub data for the current week.', flags:64 });
     }
 
     case 'cancel-potw-timer': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      require('../services/schedulerRegistryService').cancel('potw-followup', guild.id);
       if (_state.hubWeeklyData.potwTimerId) clearTimeout(_state.hubWeeklyData.potwTimerId);
       _state.hubWeeklyData.potwTimerId = null;
-      return interaction.reply({ content:'✅ POTW timer cancelled.', flags:64 });
+      _state.hubWeeklyData.potwDueAt = null;
+      _state.hubWeeklyData.potwAttempts = 0;
+      return interactionExecution.for(interaction).reply({ content:'✅ POTW timer cancelled.', flags:64 });
     }
 
     case 'cancel-release-timer': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       if (_state.hubWeeklyData.releaseTimerId) clearTimeout(_state.hubWeeklyData.releaseTimerId);
       _state.hubWeeklyData.releaseTimerId = null;
-      return interaction.reply({ content:'✅ Release timer cancelled.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Release timer cancelled.', flags:64 });
     }
 
     case 'advance-week': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const { parseMatchupLines, postScheduleEmbed, startScheduleTimer } = hubReleaseService;
       const week = interaction.options.getInteger('week');
       const raw = interaction.options.getString('matchups');
@@ -4283,18 +4455,18 @@ If they rejoin, the bot will still flag them as a returning member with history.
         require('../league/advanceEngine').recordManualAdvance({ week, actor: interaction.user.id });
         require('../services/leagueAutomationService').rearm({ guild, state: _state });
       } catch (e) { log.warn(`advance-week engine sync failed: ${e.message}`); }
-      return interaction.reply({ content:`✅ Week **${week}** schedule posted with **${matchups.length}** matchups.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Week **${week}** schedule posted with **${matchups.length}** matchups.`, flags:64 });
     }
 
     case 'repost-schedule': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const { postScheduleEmbed } = hubReleaseService;
       await postScheduleEmbed(guild, _state, _getCh, getTeamEmoji);
-      return interaction.reply({ content:'✅ Current schedule reposted.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Current schedule reposted.', flags:64 });
     }
 
     case 'set-weekly-automation': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const cfg = weeklyAutomationService.saveWeeklySettings({
         mode: interaction.options.getString('mode'),
         advanceHours: interaction.options.getInteger('advance-hours') || undefined,
@@ -4302,12 +4474,12 @@ If they rejoin, the bot will still flag them as a returning member with history.
         clearPreviousWeekChannels: interaction.options.getBoolean('clear-previous-week-channels'),
       });
       _syncPolicyFromWeekly(cfg, guild);
-      return interaction.reply({ content:`✅ Weekly automation saved. Mode: **${cfg.mode}**. Advance cycle: **${cfg.advanceHours}h**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Weekly automation saved. Mode: **${cfg.mode}**. Advance cycle: **${cfg.advanceHours}h**.`, flags:64 });
     }
 
     case 'weekly-automation-status': {
       const cfg = weeklyAutomationService.getWeeklySettings();
-      return interaction.reply({ content:`🤖 Weekly automation\nMode: **${cfg.mode}**\nAdvance cycle: **${cfg.advanceHours}h**\nAuto create: **${cfg.autoCreateGameChannels ? 'yes' : 'no'}**\nClear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`🤖 Weekly automation\nMode: **${cfg.mode}**\nAdvance cycle: **${cfg.advanceHours}h**\nAuto create: **${cfg.autoCreateGameChannels ? 'yes' : 'no'}**\nClear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 });
     }
 
 
@@ -4325,7 +4497,7 @@ If they rejoin, the bot will still flag them as a returning member with history.
         const friendly = proposal.reason === 'league-ambiguous'
           ? `That team exists in multiple leagues (${(proposal.leagues || []).join(', ')}). Run the command from the league scope you mean.`
           : proposal.reason;
-        return interaction.reply({ content:`❌ Trade proposal was not created: **${friendly}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`❌ Trade proposal was not created: **${friendly}**.`, flags:64 });
       }
       const trade = proposal.trade;
       const ch = _getCh(guild, 'pendingTrades');
@@ -4333,39 +4505,39 @@ If they rejoin, the bot will still flag them as a returning member with history.
 **${trade.proposerTeam}** ↔ **${trade.targetTeam}**
 ${trade.details}
 Proposed by <@${interaction.user.id}>`).catch(() => null);
-      return interaction.reply({ content:`✅ Trade proposal submitted as **${trade.tradeId}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Trade proposal submitted as **${trade.tradeId}**.`, flags:64 });
     }
 
     case 'transaction': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const type = interaction.options.getString('type');
       const team = interaction.options.getString('team');
       const player = interaction.options.getString('player');
       const details = interaction.options.getString('details') || '';
       const ch = _getCh(guild, 'transactions');
       if (ch) await ch.send(`🧾 **${type.toUpperCase()}**\n**Team:** ${team}\n**Player:** ${player}${details ? `\n**Details:** ${details}` : ''}`).catch(() => null);
-      return interaction.reply({ content:'✅ Transaction announced.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Transaction announced.', flags:64 });
     }
 
     case 'stream-board': {
       const rewardBoards = rewardBoardService;
-      return interaction.reply({ embeds:[rewardBoards.buildStreamBoardEmbed()], flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds:[rewardBoards.buildStreamBoardEmbed()], flags:64 });
     }
 
     case 'my-streams': {
       const player = [..._state.players.values()].find(p => String(p.userId) === String(interaction.user.id));
-      if (!player) return interaction.reply({ content:'⚠️ You are not linked to a claimed team yet.', flags:64 });
-      return interaction.reply({ content:`📺 **${player.displayTeam}** has **${player.streamCount || 0}** stream credits.`, flags:64 });
+      if (!player) return interactionExecution.for(interaction).reply({ content:'⚠️ You are not linked to a claimed team yet.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`📺 **${player.displayTeam}** has **${player.streamCount || 0}** stream credits.`, flags:64 });
     }
 
     case 'restore-stream': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const team = interaction.options.getString('team');
       const url = interaction.options.getString('url') || '';
       const streamOps = streamOpsService;
       const player = await streamOps.addCount(_state, team, url,{guildId:guild.id,operationId:interaction.id});
-      if (!player) return interaction.reply({ content:'❌ Could not find that team.', flags:64 });
-      return interaction.reply({ content:`✅ Restored one stream credit to **${player.displayTeam}**. Total: **${player.streamCount || 0}**.`, flags:64 });
+      if (!player) return interactionExecution.for(interaction).reply({ content:'❌ Could not find that team.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Restored one stream credit to **${player.displayTeam}**. Total: **${player.streamCount || 0}**.`, flags:64 });
     }
 
     case 'set-timezone': {
@@ -4377,35 +4549,39 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
     }
 
     case 'add-member-note': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const ledger = memberLedgerService;
       const user = interaction.options.getUser('user');
       const note = interaction.options.getString('note');
       ledger.addNote(user.id, note, interaction.user.id);
-      return interaction.reply({ content:`✅ Added note for ${user}.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Added note for ${user}.`, flags:64 });
     }
 
     case 'check-inactive': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const ledger = memberLedgerService;
       const inactive = ledger.listInactiveMembers(4).slice(0, 20);
-      return interaction.reply({ content: inactive.length ? inactive.map(r => `• <@${r.userId}> — ${r.daysInactive} days inactive`).join('\n') : '✅ No inactive members at 4+ days.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content: inactive.length ? inactive.map(r => `• <@${r.userId}> — ${r.daysInactive} days inactive`).join('\n') : '✅ No inactive members at 4+ days.', flags:64 });
     }
 
 
     case 'set-team-logo': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      const leagueInput = interaction.options.getString('league');
+      const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+      if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+      const league = resolved.league;
       const team = interaction.options.getString('team');
       const logoUrl = interaction.options.getString('logo-url');
-      const entry = _state.openTeamRegistry.find(t => String(t.baseTeam).toLowerCase() === String(team).toLowerCase() || String(t.displayTeam).toLowerCase() === String(team).toLowerCase());
-      if (!entry) return interaction.reply({ content:'⚠️ Team not found in the open-team registry.', flags:64 });
+      const entry = _state.openTeamRegistry.find(t => String(t.leagueId || '') === String(league.id) && (norm(t.baseTeam) === norm(team) || norm(t.displayTeam) === norm(team)));
+      if (!entry) return interactionExecution.for(interaction).reply({ content:`⚠️ Team not found in **${league.leagueName || league.id}**.`, flags:64 });
       entry.logoUrl = logoUrl;
       await openTeamsService.refreshOpenTeamsBoard(guild).catch(() => null);
-      return interaction.reply({ content:`✅ Updated logo for **${entry.displayTeam}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Updated logo for **${entry.displayTeam}** in **${league.leagueName || league.id}**.`, flags:64 });
     }
 
     case 'set-stat-leaders': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       _state.currentStatLeaders = {
         week: interaction.options.getInteger('week'),
         passing: interaction.options.getString('passing'),
@@ -4415,11 +4591,11 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
         special: interaction.options.getString('special') || '',
       };
       await rewardBoardService.refresh(guild).catch(() => null);
-      return interaction.reply({ content:'✅ Stat leaders saved and rewards boards refreshed.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Stat leaders saved and rewards boards refreshed.', flags:64 });
     }
 
     case 'player-of-the-week': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const entry = {
         week: _state.hubWeeklyData.week || _state.scheduleState.week || 1,
         type: interaction.options.getString('conference'),
@@ -4433,11 +4609,11 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
       await _saveLifetimeAward(interaction, { ...entry, title: 'Player of the Week' });
       _state.potwHistory.push(entry);
       await rewardBoardService.refresh(guild).catch(() => null);
-      return interaction.reply({ content:`✅ POTW saved for **${entry.player}** (${entry.displayTeam}).`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ POTW saved for **${entry.player}** (${entry.displayTeam}).`, flags:64 });
     }
 
     case 'potw-confirm': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const action = interaction.options.getString('action');
       const player = interaction.options.getString('player') || _state.hubWeeklyData?.potwCandidate?.player || 'AI pick';
       const team = interaction.options.getString('team') || _state.hubWeeklyData?.potwCandidate?.team || 'Unknown';
@@ -4446,11 +4622,11 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
       await _saveLifetimeAward(interaction, { userId: interaction.options.getUser('user')?.id, title: 'League Player of the Week', player, displayTeam:team });
       _state.potwHistory.push({ sourceId:interaction.id, userId:interaction.options.getUser('user')?.id, week: _state.hubWeeklyData.week || _state.scheduleState.week || 1, type: 'LEAGUE', player, displayTeam: team, statLine, reason, awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
-      return interaction.reply({ content:`✅ Best-in-League POTW ${action === 'confirm' ? 'confirmed' : 'overridden'} for **${player}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Best-in-League POTW ${action === 'confirm' ? 'confirmed' : 'overridden'} for **${player}**.`, flags:64 });
     }
 
     case 'attr-award': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const players = interaction.options.getString('players');
       const attr1 = interaction.options.getString('attribute1') || interaction.options.getString('attr1-category');
       const attr2 = interaction.options.getString('attribute2') || interaction.options.getString('attr2-category') || '';
@@ -4458,60 +4634,49 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
       await _saveLifetimeAward(interaction, {userId:interaction.options.getUser('user')?.id,title:'Attribute award',player:players,details:reason});
       const ch = _getCh(guild, 'devUpgrades') || _getCh(guild, 'announcements');
       if (ch) await ch.send(`🎯 **Attribute Award**\n**Players:** ${players}\n**Boost 1:** ${attr1}${attr2 ? `\n**Boost 2:** ${attr2}` : ''}\n**Reason:** ${reason}`).catch(() => null);
-      return interaction.reply({ content:'✅ Attribute award posted.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content:'✅ Attribute award posted.', flags:64 });
     }
 
     case 'yearly-award': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const award = interaction.options.getString('award');
       const player = interaction.options.getString('player');
       const team = interaction.options.getString('team');
       const isXF = !!interaction.options.getBoolean('is-xfactor');
       const user = interaction.options.getUser('user');
       const season = (_state.superbowlHistory.slice(-1)[0]?.season || 0) + 1;
-      await _saveLifetimeAward(interaction, { userId:user?.id, title:award, player, displayTeam:team, season });
+      await _saveLifetimeAward(interaction, { userId:user?.id, title:award, player, displayTeam:team, season, rewardType:isXF?'AGE_RESET':'DEV_TRAIT' });
       _state.yearlyAwardHistory.push({ sourceId:interaction.id, season, awardLabel: award, player, displayTeam: team, isXF, userId: user?.id || null, details: interaction.options.getString('details') || '', awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
-      return interaction.reply({ content:`✅ Yearly award saved: **${award}** for **${player}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Yearly award saved: **${award}** for **${player}**.`, flags:64 });
     }
 
     case 'superbowl-champion': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const team = interaction.options.getString('team');
       const user = interaction.options.getUser('user');
       const score = interaction.options.getString('score') || '';
       const season = interaction.options.getInteger('season') || ((_state.superbowlHistory.slice(-1)[0]?.season || 0) + 1);
-      await _saveLifetimeAward(interaction, { userId:user?.id, title:'Super Bowl Champion', displayTeam:team, season });
+      await _saveLifetimeAward(interaction, { userId:user?.id, title:'Super Bowl Champion', displayTeam:team, season, rewardTypes:['AGE_RESET','DEV_TRAIT'] });
       _state.superbowlHistory.push({ sourceId:interaction.id, season, displayTeam: team, userId: user?.id || null, score, awardedAt: Date.now() });
       await rewardBoardService.refresh(guild).catch(() => null);
-      return interaction.reply({ content:`🏆 Super Bowl champion recorded for Season **${season}**: **${team}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`🏆 Super Bowl champion recorded for Season **${season}**: **${team}**.`, flags:64 });
     }
 
     case 'claim-attr-boost': {
-      const team = interaction.options.getString('team');
-      const player = interaction.options.getString('player');
-      const source = interaction.options.getString('source');
-      const boostId = _state.nextBoostId ? _state.nextBoostId() : `boost_${Date.now()}`;
-      const request = {
-        boostId,
-        requesterId: interaction.user.id,
-        team,
-        player,
-        source,
-        attr1Category: interaction.options.getString('attr1-category'),
-        attribute1: interaction.options.getString('attribute1') || '',
-        attr2Category: interaction.options.getString('attr2-category') || '',
-        attribute2: interaction.options.getString('attribute2') || '',
-        createdAt: Date.now(),
-      };
-      _state.pendingAttrBoosts.set(boostId, request);
-      const ch = _getCh(guild, 'devUpgrades') || _getCh(guild, 'adminHq');
-      if (ch) await ch.send(`📝 **Attr Boost Request ${boostId}**\n**Team:** ${team}\n**Player:** ${player}\n**Source:** ${source}\nRequested by <@${interaction.user.id}>`).catch(() => null);
-      return interaction.reply({ content:`✅ Attribute boost request submitted as **${boostId}**.`, flags:64 });
+      await interactionExecution.for(interaction).deferReply({flags:64});
+      const result=await require('../application/g2ProgressionUseCase').requestAttribute({
+        guildId:guild.id,leagueId:interaction.options.getString('league'),actorId:interaction.user.id,
+        grantId:interaction.options.getString('grant-id'),playerId:interaction.options.getString('player-id'),
+        attributeKey:interaction.options.getString('attribute'),points:interaction.options.getInteger('points'),
+        idempotencyKey:interaction.id,
+      });
+      if(!result.ok)return interactionExecution.for(interaction).editReply(`⚠️ Claim declined: ${result.code}. No points were spent.`);
+      return interactionExecution.for(interaction).editReply(`✅ Claim **${result.claim.id}** is pending. No points were spent. A commissioner can approve it after a newer verified roster import shows the requested rating change.`);
     }
 
     case 'warn-player': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const user = interaction.options.getUser('user');
       const type = interaction.options.getString('type');
       const reason = interaction.options.getString('reason') || 'Commissioner warning';
@@ -4519,19 +4684,19 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
       const rec = ledger.recordWarning(user.id, type, reason);
       const warnCh = _getCh(guild, 'warningsLog');
       if (warnCh) await warnCh.send(`⚠️ ${user} warned for **${type}**. Reason: ${reason}. Total warnings: **${rec.warnings.total}**`).catch(() => null);
-      return interaction.reply({ content:`✅ Warning issued to ${user}. Total warnings: **${rec.warnings.total}**.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Warning issued to ${user}. Total warnings: **${rec.warnings.total}**.`, flags:64 });
     }
 
     case 'clear-strikes': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const user = interaction.options.getUser('user');
       _state.spamTracker.delete(user.id);
-      return interaction.reply({ content:`✅ Cleared spam strikes for ${user}.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Cleared spam strikes for ${user}.`, flags:64 });
     }
 
     case 'edit-message': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      await interaction.deferReply({ flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 });
       const messageId = interaction.options.getString('message-id');
       const newText = interaction.options.getString('text');
       for (const channel of guild.channels.cache.values()) {
@@ -4544,14 +4709,14 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
         } else {
           await msg.edit(newText).catch(() => null);
         }
-        return interaction.editReply(`✅ Edited bot message in ${channel}.`);
+        return interactionExecution.for(interaction).editReply(`✅ Edited bot message in ${channel}.`);
       }
-      return interaction.editReply('⚠️ Bot message not found by that ID.');
+      return interactionExecution.for(interaction).editReply('⚠️ Bot message not found by that ID.');
     }
 
     case 'health-status': {
-      if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
-      await interaction.deferReply({ flags:64 }).catch(() => null);
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
       try {
         const { runStartupHealthCheck } = require('../services/startupHealthCheckService');
         const health = await runStartupHealthCheck();
@@ -4567,23 +4732,23 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
           : health.ready
             ? `⚠️ System Health — Ready with ${health.warnings} Warning(s)`
             : `❌ System Health — Readiness Blocked (${health.blockingFailures})`;
-        return interaction.editReply({ embeds: [new EmbedBuilder()
+        return interactionExecution.for(interaction).editReply({ embeds: [new EmbedBuilder()
           .setColor(health.ok ? 0x2ecc71 : health.ready ? 0xffa500 : 0xe74c3c)
           .setTitle(title)
           .setDescription(lines.join('\n\n').slice(0, 4096))
           .setFooter({ text: 'Health separates blocking dependencies from optional/degraded features.' })
           .setTimestamp()] });
       } catch (err) {
-        return interaction.editReply({ content: `❌ Health check failed: ${err.message}` });
+        return interactionExecution.for(interaction).editReply({ content: `❌ Health check failed: ${err.message}` });
       }
     }
 
     case 'audit-log': {
-      if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
       const limit = Math.min(interaction.options.getInteger('limit') || 20, 50);
       const entries = securityMiddleware.getRecentAuditLog(limit);
       if (!entries.length) {
-        return interaction.reply({ content: '✅ No audit log entries yet.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: '✅ No audit log entries yet.', flags:64 });
       }
       const lines = entries.map(e => {
         const icon = e.severity === 'critical' ? '🚨' : e.severity === 'warn' ? '⚠️' : 'ℹ️';
@@ -4598,7 +4763,7 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
         else current = current ? current + '\n' + line : line;
       }
       if (current) chunks.push(current);
-      return interaction.reply({ embeds: chunks.slice(0, 3).map((c, i) => new EmbedBuilder()
+      return interactionExecution.for(interaction).reply({ embeds: chunks.slice(0, 3).map((c, i) => new EmbedBuilder()
         .setColor(0x5865f2)
         .setTitle(i === 0 ? `🔍 Security Audit Log (last ${entries.length})` : '🔍 Audit Log (cont.)')
         .setDescription(c)
@@ -4606,20 +4771,20 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
     }
 
     case 'security-audit': {
-      if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
       const sub = interaction.options.getSubcommand();
       const secMw = require('../services/securityMiddlewareService');
 
       if (sub === 'log') {
         const limit = interaction.options.getInteger('limit') || 20;
         const entries = secMw.getRecentAuditLog(Math.min(limit, 50));
-        if (!entries.length) return interaction.reply({ content: '✅ Audit log is empty.', flags:64 });
+        if (!entries.length) return interactionExecution.for(interaction).reply({ content: '✅ Audit log is empty.', flags:64 });
         const lines = entries.map(e => {
           const icon = e.severity === 'critical' ? '🚨' : e.severity === 'warn' ? '⚠️' : 'ℹ️';
           const ts = e.timestamp ? `<t:${Math.floor(new Date(e.timestamp).getTime()/1000)}:R>` : '';
           return `${icon} **${e.action}** ${ts}${e.userId ? ` — <@${e.userId}>` : ''}${e.details ? `\n> ${e.details.slice(0,120)}` : ''}`;
         }).join('\n');
-        return interaction.reply({ embeds: [new EmbedBuilder()
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder()
           .setColor(0xe74c3c)
           .setTitle(`🔒 Security Audit Log (last ${entries.length})`)
           .setDescription(lines.slice(0, 3900))
@@ -4627,21 +4792,21 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
       }
 
       if (sub === 'rate-limits') {
-        return interaction.reply({ content: '📊 Rate limits are active. Use `/security-audit log` to see blocked interactions.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: '📊 Rate limits are active. Use `/security-audit log` to see blocked interactions.', flags:64 });
       }
 
-      return interaction.reply({ content: '⚠️ Unknown subcommand.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content: '⚠️ Unknown subcommand.', flags:64 });
     }
 
     case 'workflow': {
-      if (!isComm()) return interaction.reply({ content: '❌ Commissioners only.', flags:64 });
-      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interaction.reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content: '❌ Commissioners only.', flags:64 });
+      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interactionExecution.for(interaction).reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
       const sub = interaction.options.getSubcommand();
 
       if (sub === 'list') {
         const workflows = workflowEngine.listWorkflows();
         const lines = workflows.map(w => `• **${w.name}** — ${w.stepCount} step(s)`).join('\n');
-        return interaction.reply({ embeds: [new EmbedBuilder()
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder()
           .setColor(0x5865f2)
           .setTitle('⚙️ Registered Workflows')
           .setDescription(lines || 'No workflows defined.')
@@ -4654,7 +4819,7 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
         const lines = log_.map(e =>
           `${e.status === 'completed' ? '✅' : e.status === 'failed' ? '❌' : e.status === 'skipped' ? '⏭' : '🔄'} **${e.step}** (${e.workflowId}) — ${e.status}${e.error ? ': ' + e.error : ''}`
         ).join('\n');
-        return interaction.reply({ embeds: [new EmbedBuilder()
+        return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder()
           .setColor(0x3498db)
           .setTitle('📋 Workflow Run Log (last 20)')
           .setDescription(lines || 'No workflow runs recorded yet.')
@@ -4663,7 +4828,7 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
 
       if (sub === 'run') {
         const name = interaction.options.getString('name');
-        await interaction.deferReply({ flags:64 }).catch(() => null);
+        await interactionExecution.for(interaction).deferReply({ flags:64 }).catch(() => null);
         const ctx = { guild, state: _state, client: _client };
         const result = await workflowEngine.run(name, ctx);
         const statusIcon = result.ok ? '✅' : '⚠️';
@@ -4671,7 +4836,7 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
           ...result.results.map(r => `✅ ${r.step}`),
           ...result.errors.map(e => `❌ ${e.step}: ${e.error}`),
         ].join('\n') || 'No steps ran.';
-        return interaction.editReply({ embeds: [new EmbedBuilder()
+        return interactionExecution.for(interaction).editReply({ embeds: [new EmbedBuilder()
           .setColor(result.ok ? 0x2ecc71 : 0xffa500)
           .setTitle(`${statusIcon} Workflow: ${name}`)
           .setDescription(lines)
@@ -4679,18 +4844,18 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
           .setTimestamp()] });
       }
 
-      return interaction.reply({ content: '⚠️ Unknown workflow subcommand.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content: '⚠️ Unknown workflow subcommand.', flags:64 });
     }
 
     case 'dashboard': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const reg = scheduleRegistryService.getRegistry();
       const auto = weeklyAutomationService.getWeeklySettings();
       const sync = liveSync.getLiveSyncConfig();
       const gameCfg = gameChannelCompatService.getConfig();
       const claimed = _state.openTeamRegistry.filter(t => !t.isOpen).length;
       const open = _state.openTeamRegistry.filter(t => t.isOpen).length;
-      return interaction.reply({
+      return interactionExecution.for(interaction).reply({
         embeds: [new EmbedBuilder()
           .setColor(0x3498db)
           .setTitle(`📊 ${resolveServerName(guild, 'this server')} Operations Dashboard`)
@@ -4709,15 +4874,15 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
     }
 
     case 'league-export': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const sub = interaction.options.getSubcommand();
       if (sub === 'receiver-url') {
         const leagueId = interaction.options.getString('league');
         const provider = interaction.options.getString('provider');
         const minutes = interaction.options.getInteger('minutes') || 60;
-        if (!leagueId || leagueId === '_none_') return interaction.reply({ content:'❌ Choose the exact active league that should receive this export.', flags:64 });
+        if (!leagueId || leagueId === '_none_') return interactionExecution.for(interaction).reply({ content:'❌ Choose the exact active league that should receive this export.', flags:64 });
         const league = activeLeagueService.getLeague(leagueId) || activeLeagueService.listResetOptions(_state).find(l => String(l.id) === String(leagueId));
-        if (!league) return interaction.reply({ content:'❌ That league is no longer active.', flags:64 });
+        if (!league) return interactionExecution.for(interaction).reply({ content:'❌ That league is no longer active.', flags:64 });
         const actions = require('../services/providerConnectionActionService');
         const out = await actions.temporaryUrl({ leagueId, provider, minutes }).catch(e => ({ok:false,reason:e.message}));
         if (!out?.ok) {
@@ -4726,10 +4891,10 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
             : out?.reason === 'provider-http-disabled'
               ? '\n\nSet `ENABLE_PROVIDER_HTTP=true` in Railway, then redeploy before generating a receiver URL.'
               : '';
-          return interaction.reply({ content:`❌ Could not create the temporary receiver URL: **${out?.reason || 'unknown error'}**.${hint}`, flags:64 });
+          return interactionExecution.for(interaction).reply({ content:`❌ Could not create the temporary receiver URL: **${out?.reason || 'unknown error'}**.${hint}`, flags:64 });
         }
         const expires = Math.floor(out.expiresAt / 1000);
-        return interaction.reply({
+        return interactionExecution.for(interaction).reply({
           embeds:[new EmbedBuilder().setColor(0x3498db).setTitle('🔗 Temporary League Export Receiver').setDescription(
             `**League:** ${league.leagueName}\n**Provider:** ${provider === 'companion_export' ? 'Madden Companion' : 'NeonSportz'}\n**Valid until:** <t:${expires}:F> (<t:${expires}:R>)\n\nPaste this URL into the external app's export/webhook destination:\n\n\`${out.receiverUrl}\`\n\nThe link can receive multiple exports until it expires. Generating a new URL invalidates the previous one. Receiving data does **not** advance the week automatically.`
           ).setFooter({text:'Keep this URL private. It contains a temporary bearer token and is shown only in this commissioner-only response.'}).setTimestamp()],
@@ -4754,7 +4919,7 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
         };
       }
       const buf = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
-      return interaction.reply({
+      return interactionExecution.for(interaction).reply({
         content: '✅ League export ready.',
         files: [new AttachmentBuilder(buf, { name: `nofunleague_${sub}.json` })],
         flags:64,
@@ -4762,8 +4927,8 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
     }
 
     case 'game-channels': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interaction.reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interactionExecution.for(interaction).reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
       const sub = interaction.options.getSubcommand();
       if (sub === 'configure') {
         const scoreboardChannel = interaction.options.getChannel('scoreboard-channel');
@@ -4774,22 +4939,22 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
           adminRoleId: adminRole?.id || null,
           waitRoleId: waitRole?.id || null,
         });
-        return interaction.reply({ content:`✅ Game channel settings saved. Scoreboard: **${cfg.scoreboardChannelId ? 'set' : 'not set'}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Game channel settings saved. Scoreboard: **${cfg.scoreboardChannelId ? 'set' : 'not set'}**.`, flags:64 });
       }
       if (sub === 'create') {
-        await interaction.deferReply({ flags:64 });
+        await interactionExecution.for(interaction).deferReply({ flags:64 });
         const result = await gameChannelCompatService.createFromCurrentSchedule(guild, _state, _state.players);
-        return interaction.editReply(`✅ Created **${result.created || 0}** weekly game channels for Week **${result.week || _state.scheduleState.week || '?'}**.`);
+        return interactionExecution.for(interaction).editReply(`✅ Created **${result.created || 0}** weekly game channels for Week **${result.week || _state.scheduleState.week || '?'}**.`);
       }
       if (sub === 'clear') {
-        await interaction.deferReply({ flags:64 });
+        await interactionExecution.for(interaction).deferReply({ flags:64 });
         const result = await gameChannelCompatService.clearCurrent(guild, 'Manual game channel clear');
-        return interaction.editReply(`🧹 Cleared **${result.deleted || 0}** weekly game channels.`);
+        return interactionExecution.for(interaction).editReply(`🧹 Cleared **${result.deleted || 0}** weekly game channels.`);
       }
       if (sub === 'rebuild') {
-        await interaction.deferReply({ flags:64 });
+        await interactionExecution.for(interaction).deferReply({ flags:64 });
         const result = await weeklyAutomationService.rebuildCurrentWeekChannels(guild, _state, _state.players, 'Manual rebuild subcommand');
-        return interaction.editReply(`🔁 Rebuilt Week **${result.week || _state.scheduleState.week || '?'}** channels. Cleared **${result.cleared || 0}**, created **${result.created || 0}**.`);
+        return interactionExecution.for(interaction).editReply(`🔁 Rebuilt Week **${result.week || _state.scheduleState.week || '?'}** channels. Cleared **${result.cleared || 0}**, created **${result.created || 0}**.`);
       }
       if (sub === 'automation') {
         const cfg = weeklyAutomationService.saveWeeklySettings({
@@ -4799,11 +4964,11 @@ Proposed by <@${interaction.user.id}>`).catch(() => null);
           clearPreviousWeekChannels: interaction.options.getBoolean('clear-previous-week-channels'),
         });
         _syncPolicyFromWeekly(cfg, guild);
-        return interaction.reply({ content:`✅ Weekly automation saved. Mode: **${cfg.mode}**. Advance cycle: **${cfg.advanceHours}h**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Weekly automation saved. Mode: **${cfg.mode}**. Advance cycle: **${cfg.advanceHours}h**.`, flags:64 });
       }
       if (sub === 'status') {
         const cfg = weeklyAutomationService.getWeeklySettings();
-        return interaction.reply({ content:`🤖 Weekly automation
+        return interactionExecution.for(interaction).reply({ content:`🤖 Weekly automation
 Mode: **${cfg.mode}**
 Advance cycle: **${cfg.advanceHours}h**
 Auto create: **${cfg.autoCreateGameChannels ? 'yes' : 'no'}**
@@ -4812,39 +4977,48 @@ Clear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 }
       if (_GAME_CHANNEL_V202_SUBCOMMANDS.has(sub)) return _handleGameChannelsV202(interaction, sub, guild);
       const note = interaction.options.getString('message') || 'Commissioner reminder: please post availability or finish the matchup.';
       const result = await gameChannelCompatService.notifyActiveGames(guild, _state, note);
-      return interaction.reply({ content:`📣 Sent reminders to **${result.sent || 0}** active game channels.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`📣 Sent reminders to **${result.sent || 0}** active game channels.`, flags:64 });
     }
 
     case 'teams': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const sub = interaction.options.getSubcommand();
       const { claimTeam, releaseByName, buildOpenTeamsEmbeds, refreshOpenTeamsBoard, announceTeamOpen } = openTeamsService;
       if (sub === 'configure') {
         const raw = loadJson('teamsConfig.json', { useTeamRoles: false }) || { useTeamRoles: false };
         raw.useTeamRoles = !!interaction.options.getBoolean('use-team-roles');
         saveJsonDebounced('teamsConfig.json', raw, 100);
-        return interaction.reply({ content:`✅ Team settings saved. Team roles: **${raw.useTeamRoles ? 'enabled' : 'disabled'}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Team settings saved. Team roles: **${raw.useTeamRoles ? 'enabled' : 'disabled'}**.`, flags:64 });
       }
       if (sub === 'assign') {
         const user = interaction.options.getUser('user');
-        const team = String(interaction.options.getString('team') || '').split('::')[0];
+        const team = interaction.options.getString('team');
+        const leagueInput = interaction.options.getString('league');
         const member = await guild.members.fetch(user.id).catch(() => null);
-        if (!member) return interaction.reply({ content:'❌ Could not find that member in the server.', flags:64 });
-        const result = await claimTeam(guild, member, team, {});
-        if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
+        if (!member) return interactionExecution.for(interaction).reply({ content:'❌ Could not find that member in the server.', flags:64 });
+        const result = await teamAssignmentUseCase.assignTeam({ guild, member, leagueId:leagueInput, team, source:'slash:teams.assign' });
+        if (!result.success) return interactionExecution.for(interaction).reply({ content:`❌ ${result.reason}`, flags:64 });
         try { teamRegistry.syncFromState(_state); } catch {}
-        return interaction.reply({ content:`✅ ${user} now owns **${result.entry.displayTeam}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ ${user} now owns **${result.entry.displayTeam}** in **${result.league.leagueName || result.league.id}**.`, flags:64 });
       }
       if (sub === 'free') {
         const team = interaction.options.getString('team');
-        const result = await releaseByName(guild, team);
-        if (!result) return interaction.reply({ content:'⚠️ Team not found.', flags:64 });
+        const leagueInput = interaction.options.getString('league');
+        const result = await teamAssignmentUseCase.releaseTeam({ guild, leagueId:leagueInput, team, source:'slash:teams.free' });
+        if (!result.success) return interactionExecution.for(interaction).reply({ content:`⚠️ ${result.reason}`, flags:64 });
         await announceTeamOpen(guild, result.entry, 'released by a commissioner');
         try { teamRegistry.syncFromState(_state); } catch {}
-        return interaction.reply({ content:`✅ **${result.entry.displayTeam}** is now open.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ **${result.entry.displayTeam}** is now open in **${result.league.leagueName || result.league.id}**.`, flags:64 });
+      }
+      const leagueInput = interaction.options.getString('league');
+      let leagueId;
+      if (leagueInput) {
+        const resolved = leagueResolver.resolveLeague(leagueInput, { guildId:guild.id, mode:'operational' });
+        if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+        leagueId = resolved.league.id;
       }
       await refreshOpenTeamsBoard(guild).catch(() => null);
-      return interaction.reply({ embeds: buildOpenTeamsEmbeds(guild), flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds: buildOpenTeamsEmbeds(guild, leagueId), flags:64 });
     }
 
     case 'waitlist': {
@@ -4852,64 +5026,64 @@ Clear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 }
       const sub = interaction.options.getSubcommand();
       if (sub === 'list') {
         const entries = waitlist.list();
-        return interaction.reply({ content: entries.length ? entries.map(e => `${e.position}. <@${e.userId}>${e.note ? ` — ${e.note}` : ''}`).join('\n') : 'Waitlist is empty.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: entries.length ? entries.map(e => `${e.position}. <@${e.userId}>${e.note ? ` — ${e.note}` : ''}`).join('\n') : 'Waitlist is empty.', flags:64 });
       }
       if (sub === 'add') {
-        if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+        if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
         const user = interaction.options.getUser('user');
         const note = interaction.options.getString('note') || '';
         const pos = interaction.options.getInteger('position');
         const entry = waitlist.add(user, note, pos);
-        return interaction.reply({ content:`✅ Added ${user} to the waitlist at **#${entry.position}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Added ${user} to the waitlist at **#${entry.position}**.`, flags:64 });
       }
       if (sub === 'remove') {
-        if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+        if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
         const user = interaction.options.getUser('user');
         const ok = waitlist.removeByUserId(user.id);
-        return interaction.reply({ content: ok ? `✅ Removed ${user} from the waitlist.` : '⚠️ That user was not on the waitlist.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: ok ? `✅ Removed ${user} from the waitlist.` : '⚠️ That user was not on the waitlist.', flags:64 });
       }
       if (sub === 'pop') {
-        if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+        if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
         const entry = waitlist.popTop();
-        return interaction.reply({ content: entry ? `📤 Popped <@${entry.userId}> from the top of the waitlist.` : 'Waitlist is empty.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: entry ? `📤 Popped <@${entry.userId}> from the top of the waitlist.` : 'Waitlist is empty.', flags:64 });
       }
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const count = interaction.options.getInteger('count') || 1;
       const message = interaction.options.getString('message') || 'A team may be opening up soon.';
       const result = await waitlist.notifyTop(_client, count, message);
-      return interaction.reply({ content:`📬 Waitlist notifications sent: **${result.sent}** delivered, **${result.failed}** failed.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`📬 Waitlist notifications sent: **${result.sent}** delivered, **${result.failed}** failed.`, flags:64 });
     }
 
     case 'streams': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
-      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interaction.reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
+      if (require('../services/commandAliasService').isAliasedPath(interaction)) return interactionExecution.for(interaction).reply({ content:'⚠️ This command could not be routed. Nothing was run — please try again.', flags:64 }); // V203 fail-closed
       const streamOps = streamOpsService;
       const sub = interaction.options.getSubcommand();
       if (sub === 'configure') {
         const channel = interaction.options.getChannel('channel');
         const role = interaction.options.getRole('ping-role');
         const cfg = streamOps.saveConfig({ channelId: channel?.id || null, pingRoleId: role?.id || null });
-        return interaction.reply({ content:`✅ Stream tracking saved. Channel: **${cfg.channelId ? 'set' : 'not set'}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Stream tracking saved. Channel: **${cfg.channelId ? 'set' : 'not set'}**.`, flags:64 });
       }
       if (sub === 'count') {
         const key = interaction.options.getString('team-or-user');
         const url = interaction.options.getString('url') || '';
         const player = await streamOps.addCount(_state, key, url,{guildId:guild.id,operationId:interaction.id});
-        if (!player) return interaction.reply({ content:'❌ Could not find that team or owner.', flags:64 });
-        return interaction.reply({ content:`✅ **${player.displayTeam}** now has **${player.streamCount || 0}** stream credits.`, flags:64 });
+        if (!player) return interactionExecution.for(interaction).reply({ content:'❌ Could not find that team or owner.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ **${player.displayTeam}** now has **${player.streamCount || 0}** stream credits.`, flags:64 });
       }
       if (sub === 'remove') {
         const key = interaction.options.getString('team-or-user');
         const player = await streamOps.removeCount(_state, key,{guildId:guild.id,operationId:interaction.id});
-        if (!player) return interaction.reply({ content:'❌ Could not find that team or owner.', flags:64 });
-        return interaction.reply({ content:`✅ Removed one stream credit. **${player.displayTeam}** now has **${player.streamCount || 0}**.`, flags:64 });
+        if (!player) return interactionExecution.for(interaction).reply({ content:'❌ Could not find that team or owner.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Removed one stream credit. **${player.displayTeam}** now has **${player.streamCount || 0}**.`, flags:64 });
       }
       const resetCount = await streamOps.resetAll(_state,{guildId:guild.id,operationId:interaction.id});
-      return interaction.reply({ content:`🧽 Reset stream counts for **${resetCount}** tracked team records.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`🧽 Reset stream counts for **${resetCount}** tracked team records.`, flags:64 });
     }
 
     case 'broadcasts': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const broadcasts = require('../services/broadcastsService');
       const sub = interaction.options.getSubcommand();
       if (sub === 'configure') {
@@ -4917,83 +5091,142 @@ Clear previous: **${cfg.clearPreviousWeekChannels ? 'yes' : 'no'}**`, flags:64 }
         const role = interaction.options.getRole('ping-role');
         const keyword = interaction.options.getString('keyword') || '';
         const cfg = broadcasts.saveConfig({ channelId: channel?.id || null, pingRoleId: role?.id || null, keyword });
-        return interaction.reply({ content:`✅ Broadcast settings saved. YouTube tracked: **${cfg.youtube.length}**. Twitch tracked: **${cfg.twitch.length}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Broadcast settings saved. YouTube tracked: **${cfg.youtube.length}**. Twitch tracked: **${cfg.twitch.length}**.`, flags:64 });
       }
       if (sub === 'youtube-add') {
         const cfg = broadcasts.addSource('youtube', interaction.options.getString('value'));
-        return interaction.reply({ content:`✅ Added YouTube source. Total tracked: **${cfg.youtube.length}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Added YouTube source. Total tracked: **${cfg.youtube.length}**.`, flags:64 });
       }
       if (sub === 'youtube-remove') {
         const cfg = broadcasts.removeSource('youtube', interaction.options.getString('value'));
-        return interaction.reply({ content:`✅ Removed YouTube source. Total tracked: **${cfg.youtube.length}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Removed YouTube source. Total tracked: **${cfg.youtube.length}**.`, flags:64 });
       }
       if (sub === 'youtube-list') {
         const cfg = broadcasts.getConfig();
-        return interaction.reply({ content: cfg.youtube.length ? `📺 YouTube sources\n${cfg.youtube.map(v => `• ${v}`).join('\n')}` : 'No YouTube sources configured.', flags:64 });
+        return interactionExecution.for(interaction).reply({ content: cfg.youtube.length ? `📺 YouTube sources\n${cfg.youtube.map(v => `• ${v}`).join('\n')}` : 'No YouTube sources configured.', flags:64 });
       }
       if (sub === 'twitch-add') {
         const cfg = broadcasts.addSource('twitch', interaction.options.getString('value'));
-        return interaction.reply({ content:`✅ Added Twitch source. Total tracked: **${cfg.twitch.length}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Added Twitch source. Total tracked: **${cfg.twitch.length}**.`, flags:64 });
       }
       if (sub === 'twitch-remove') {
         const cfg = broadcasts.removeSource('twitch', interaction.options.getString('value'));
-        return interaction.reply({ content:`✅ Removed Twitch source. Total tracked: **${cfg.twitch.length}**.`, flags:64 });
+        return interactionExecution.for(interaction).reply({ content:`✅ Removed Twitch source. Total tracked: **${cfg.twitch.length}**.`, flags:64 });
       }
       const cfg = broadcasts.getConfig();
-      return interaction.reply({ content: cfg.twitch.length ? `🟣 Twitch sources\n${cfg.twitch.map(v => `• ${v}`).join('\n')}` : 'No Twitch sources configured.', flags:64 });
+      return interactionExecution.for(interaction).reply({ content: cfg.twitch.length ? `🟣 Twitch sources\n${cfg.twitch.map(v => `• ${v}`).join('\n')}` : 'No Twitch sources configured.', flags:64 });
     }
 
     case 'schedule': {
       const week = interaction.options.getInteger('week') || _state.scheduleState.week || scheduleRegistryService.getRegistry().currentWeek;
       const games = week ? scheduleRegistryService.getWeek(week) : (_state.scheduleState.matchups || []);
-      if (!games?.length) return interaction.reply({ content:'⚠️ No stored schedule found for that week yet.', flags:64 });
+      if (!games?.length) return interactionExecution.for(interaction).reply({ content:'⚠️ No stored schedule found for that week yet.', flags:64 });
       const lines = games.slice(0, 25).map((g, idx) => {
         const tags = [g.isPrimetime ? 'P' : '', g.isGotw ? 'GOTW' : '', g.isOverseas ? 'INTL' : ''].filter(Boolean).join(', ');
         return `${idx + 1}. **${g.team1}** vs **${g.team2}**${tags ? ` (${tags})` : ''}`;
       }).join('\n');
-      return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x1a73e8).setTitle(`📅 Week ${week} Schedule`).setDescription(lines).setTimestamp()], flags:64 });
+      return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x1a73e8).setTitle(`📅 Week ${week} Schedule`).setDescription(lines).setTimestamp()], flags:64 });
     }
 
     case 'player': {
       const sub = interaction.options.getSubcommand();
+      if (interaction.options.getSubcommandGroup(false) === 'progression') {
+        await interactionExecution.for(interaction).deferReply({flags:64});
+        const options={
+          year:interaction.options.getInteger('year'),
+          policyJson:interaction.options.getString('policy-json'),
+          confirmRetroactive:interaction.options.getBoolean('confirm-retroactive')===true,
+          seedOrManual:interaction.options.getString('seed-or-manual'),
+          teamId:interaction.options.getString('team-id'),
+          memberId:interaction.options.getUser('member')?.id,
+          points:interaction.options.getInteger('points'),
+          sourceId:interaction.options.getString('source-id'),
+          next:interaction.options.getString('next'),
+          seedsJson:interaction.options.getString('seeds-json'),
+          provider:interaction.options.getString('provider'),
+          externalTeamId:interaction.options.getString('external-team-id'),
+          claimId:interaction.options.getString('claim-id'),
+          matchId:interaction.options.getString('match-id'),
+          providerGameId:interaction.options.getString('provider-game-id'),
+          grantId:interaction.options.getString('grant-id'),
+          playerId:interaction.options.getString('player-id'),
+          targetTrait:interaction.options.getString('target-trait'),
+          interactionId:interaction.id,
+        };
+        const result=await require('../application/g2ProgressionUseCase').execute({
+          guildId:guild.id,leagueId:interaction.options.getString('league'),
+          seasonId:interaction.options.getString('season'),actorId:interaction.user.id,
+          sub,options,commissioner:isComm(),
+        });
+        if(!result.ok)return interactionExecution.for(interaction).editReply(`⚠️ Progression operation declined: ${result.code}.`);
+        if(sub==='rewards'){
+          const w=result.wallet;const balance=w?Number(w.earned)-Number(w.spent)-Number(w.forfeited)-Number(w.locked):0;
+          const lines=result.grants.map(g=>`${g.id}: ${g.rewardType} ${g.points||g.quantity} (${g.status}, ${g.sourceType})`);
+          return interactionExecution.for(interaction).editReply(`Available earned points: **${balance}**\n${lines.join('\n')||'No grants recorded.'}`);
+        }
+        if(sub==='policy'){
+          const p=result.policy;
+          return interactionExecution.for(interaction).editReply(`**Season ${result.state} · Policy v${result.version}**\n`+
+            `Initial team: ${p.initial.attributeBudget} attribute points, ${p.initial.devTraits} dev traits, ${p.initial.ageResets} age resets. Member earned cap: ${p.rewards.memberSeasonEarnedCap??'none'}.\n`+
+            `Attribute groups: ${p.attribute.allowedGroups.join(', ')}. Enabled: ${p.attribute.enabled}.\n`+
+            `Caps (member/team/player/claim/attribute): ${[p.attribute.memberSeasonCap,p.attribute.teamSeasonCap,p.attribute.playerSeasonCap,p.attribute.perClaimCap,p.attribute.perAttributeCap].map(x=>x??'none').join(' / ')}.\n`+
+            `Overflow: ${p.attribute.overflow}. Postseason: ${p.postseason.format}, ${p.postseason.seedCount} seeds.`);
+        }
+        if(sub==='tiers')return interactionExecution.for(interaction).editReply(`✅ Tiers finalized for ${result.tiers.length} teams.`);
+        if(sub==='initial-grant')return interactionExecution.for(interaction).editReply(`✅ Initial package: ${result.grants.map(g=>`${g.rewardType} (${g.points||g.quantity})`).join(', ')||'no configured grants'}.`);
+        if(sub==='initial-all')return interactionExecution.for(interaction).editReply(`✅ Initial packages checked for ${result.teamCount} teams; existing grants were not reminted.`);
+        if(sub==='sync-tenures')return interactionExecution.for(interaction).editReply(`✅ Tenures reconciled: ${result.joined} joined, ${result.left} departed.`);
+        if(sub==='migrate-legacy')return interactionExecution.for(interaction).editReply(`✅ G2 legacy cutover captured. Tenures: ${result.tenure.joined} joined, ${result.tenure.left} left, ${result.tenure.transferred||0} transferred. Awards migrated: ${result.awards.migrated}; review required: ${result.report.reviewRequired}. Legacy pending boosts moved to durable review: ${result.pending.migrated}.`);
+        if(sub==='open-season')return interactionExecution.for(interaction).editReply(`✅ Preseason created: **${result.seasonId}**. Policy: **${result.policyId}**.`);
+        if(sub==='set-policy')return interactionExecution.for(interaction).editReply(`✅ Policy version ${result.version} saved: **${result.policyId}**.`);
+        if(sub==='grant-reward')return interactionExecution.for(interaction).editReply(`✅ Reward ${result.idempotent?'already recorded':'issued'}: **${result.grantId}**.`);
+        if(sub==='state')return interactionExecution.for(interaction).editReply(`✅ Season state: **${result.season.state}**.`);
+        if(sub==='seed-bracket')return interactionExecution.for(interaction).editReply(`✅ Bracket seeded: **${result.bracket.id}**.`);
+        if(sub==='bracket-result')return interactionExecution.for(interaction).editReply(`✅ Verified result recorded. Winner team ID: **${result.match.winnerTeamId}**.`);
+        if(sub==='map-team')return interactionExecution.for(interaction).editReply('✅ Provider team mapping saved.');
+        if(sub==='approve-claim')return interactionExecution.for(interaction).editReply(`✅ Claim approved: **${result.claim.id}**.`);
+        if(sub==='claim-special')return interactionExecution.for(interaction).editReply(`✅ Claim **${result.claim.id}** is pending a newer verified roster import. No grant was consumed.`);
+        if(sub==='cancel-claim')return interactionExecution.for(interaction).editReply(`✅ Pending claim cancelled: **${result.claimId}**. Reserved points are available again.`);
+        return interactionExecution.for(interaction).editReply('✅ Progression operation completed.');
+      }
       const reg = scheduleRegistryService.getRegistry();
       const players = Array.isArray(reg.players) ? reg.players : [];
       if (sub === 'get') {
         const query = String(interaction.options.getString('query') || '').toLowerCase();
         const match = players.find(p => JSON.stringify(p).toLowerCase().includes(query)) || [..._state.players.values()].find(p => `${p.displayTeam} ${p.baseTeam} ${p.userId}`.toLowerCase().includes(query));
-        if (!match) return interaction.reply({ content:'⚠️ No player or owner record matched that search.', flags:64 });
+        if (!match) return interactionExecution.for(interaction).reply({ content:'⚠️ No player or owner record matched that search.', flags:64 });
         const body = Object.entries(match).slice(0, 12).map(([k, v]) => `**${k}:** ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('\n');
-        return interaction.reply({ embeds:[new EmbedBuilder().setColor(0x9b59b6).setTitle('🔎 Player Record').setDescription(body).setTimestamp()], flags:64 });
+        return interactionExecution.for(interaction).reply({ embeds:[new EmbedBuilder().setColor(0x9b59b6).setTitle('🔎 Player Record').setDescription(body).setTimestamp()], flags:64 });
       }
       const teamFilter = String(interaction.options.getString('team') || '').toLowerCase();
       const filtered = players.filter(p => !teamFilter || JSON.stringify(p).toLowerCase().includes(teamFilter));
-      if (!filtered.length) return interaction.reply({ content:'⚠️ No imported player records found. Import or sync roster/player data first.', flags:64 });
+      if (!filtered.length) return interactionExecution.for(interaction).reply({ content:'⚠️ No imported player records found. Import or sync roster/player data first.', flags:64 });
       const lines = filtered.slice(0, 25).map((p, i) => `${i + 1}. ${p.name || p.player || p.fullName || 'Unknown'}${p.team || p.club ? ` — ${p.team || p.club}` : ''}`);
-      return interaction.reply({ content:`📋 Player records\n${lines.join('\n')}`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`📋 Player records\n${lines.join('\n')}`, flags:64 });
     }
 
     case 'logger': {
-      if (!isComm()) return interaction.reply({ content:'❌ Commissioners only.', flags:64 });
+      if (!isComm()) return interactionExecution.for(interaction).reply({ content:'❌ Commissioners only.', flags:64 });
       const loggerCfg = require('../services/loggerConfigService');
       const channel = interaction.options.getChannel('channel');
       const cfg = loggerCfg.saveConfig({ enabled: true, channelId: channel.id });
-      return interaction.reply({ content:`✅ Game logging configured for <#${cfg.channelId}>.`, flags:64 });
+      return interactionExecution.for(interaction).reply({ content:`✅ Game logging configured for <#${cfg.channelId}>.`, flags:64 });
     }
 
     case 'suggestions': {
-      await interaction.deferReply({ flags:64 });
+      await interactionExecution.for(interaction).deferReply({ flags:64 });
       const type = interaction.options.getString('type');
       const text = interaction.options.getString('text');
       const { routeSuggestion } = require('../services/suggestionsService');
       const result = await routeSuggestion({ guild, client: _client, user: interaction.user, type, text, commissionerIds: [..._state.commissionerIds, guild.ownerId].filter(Boolean) });
-      if (!result.ok) return interaction.editReply(`⚠️ Suggestion delivery failed: **${result.reason}**.`);
-      if (result.route === 'staff_dm') return interaction.editReply(`✅ Server suggestion sent. Delivered: **${result.sent}**. Failed: **${result.failed}**.`);
-      return interaction.editReply('✅ Bot suggestion sent for review.');
+      if (!result.ok) return interactionExecution.for(interaction).editReply(`⚠️ Suggestion delivery failed: **${result.reason}**.`);
+      if (result.route === 'staff_dm') return interactionExecution.for(interaction).editReply(`✅ Server suggestion sent. Delivered: **${result.sent}**. Failed: **${result.failed}**.`);
+      return interactionExecution.for(interaction).editReply('✅ Bot suggestion sent for review.');
     }
 
     default:
       log.warn(`Unhandled command: ${cmd}`);
-      return interaction.reply({content:'⚠️ This command is registered in this build but is not wired to a live handler yet.',flags:64});
+      return interactionExecution.for(interaction).reply({content:'⚠️ This command is registered in this build but is not wired to a live handler yet.',flags:64});
   }
 }
 
@@ -5021,7 +5254,7 @@ async function _handleGameChannelsV202(interaction, sub, guild) {
     const s = engine.getStatus(_state);
     const rt = s.runtime;
     const sched = automation.status(guild.id);
-    return interaction.reply({ embeds: [new EmbedBuilder().setColor(rt.state === 'HOLD' || rt.state === 'RECOVERY_REQUIRED' ? 0xe67e22 : 0x3498db).setTitle('🗓 League Advance Status')
+    return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(rt.state === 'HOLD' || rt.state === 'RECOVERY_REQUIRED' ? 0xe67e22 : 0x3498db).setTitle('🗓 League Advance Status')
       .addFields(
         { name: 'State', value: `**${rt.state}**${rt.hold ? `\nHold: ${String(rt.hold.reason).slice(0, 300)}` : ''}${rt.lastError ? `\nLast error: ${String(rt.lastError).slice(0, 300)}` : ''}`, inline: false },
         { name: 'Workflow week', value: String(rt.workflowWeek ?? 'n/a'), inline: true },
@@ -5054,38 +5287,38 @@ async function _handleGameChannelsV202(interaction, sub, guild) {
     if (blockActive !== null) pre.blockOnActiveGame = blockActive;
     if (requireAll !== null) pre.requireAllGamesFinal = requireAll;
     if (Object.keys(pre).length) patch.precheckPolicy = pre;
-    if (!Object.keys(patch).length) return interaction.reply({ content: `⚙️ Current advance settings:\n${policySvc.describePolicy(prev)}`, flags: 64 });
+    if (!Object.keys(patch).length) return interactionExecution.for(interaction).reply({ content: `⚙️ Current advance settings:\n${policySvc.describePolicy(prev)}`, flags: 64 });
     const r = policySvc.setPolicy(patch, interaction.user.id);
-    if (!r.ok) return interaction.reply({ content: `⚠️ Settings not saved: ${r.reason}`, flags: 64 });
+    if (!r.ok) return interactionExecution.for(interaction).reply({ content: `⚠️ Settings not saved: ${r.reason}`, flags: 64 });
     engine.onPolicyChanged(prev, r.policy);
     automation.rearm({ guild, state: _state });
-    return interaction.reply({ content: `✅ Advance settings saved.\n${policySvc.describePolicy(r.policy)}`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: `✅ Advance settings saved.\n${policySvc.describePolicy(r.policy)}`, flags: 64 });
   }
   if (sub === 'advance-now') {
-    await interaction.deferReply({ flags: 64 });
+    await interactionExecution.for(interaction).deferReply({ flags: 64 });
     const dryRun = !!interaction.options.getBoolean('dry-run');
     const sourceWeek = interaction.options.getInteger('source-week');
     const r = await engine.requestAdvance({ guild, state: _state, actor: interaction.user.id, dryRun, attestedSourceWeek: sourceWeek });
     automation.rearm({ guild, state: _state });
-    if (dryRun) return interaction.editReply(`🧪 **Dry run** — no state changed.\nPath: **${r.path}** | provider **${r.provider}** | source week ${r.sourceWeek ?? 'unknown'}${r.sourceError ? ` (${r.sourceError})` : ''} | workflow week ${r.workflowWeek ?? 'n/a'}${r.blockers.length ? `\nBlockers:\n• ${r.blockers.join('\n• ')}` : ''}`);
-    if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
-    return interaction.editReply(`🗓 Advance procedure → **${r.state}**${r.alreadyInCycle ? ' (a cycle was already in progress — no second cycle started)' : ''}.${r.messages?.length ? `\n\n${r.messages.join('\n\n').slice(0, 1500)}` : ''}`);
+    if (dryRun) return interactionExecution.for(interaction).editReply(`🧪 **Dry run** — no state changed.\nPath: **${r.path}** | provider **${r.provider}** | source week ${r.sourceWeek ?? 'unknown'}${r.sourceError ? ` (${r.sourceError})` : ''} | workflow week ${r.workflowWeek ?? 'n/a'}${r.blockers.length ? `\nBlockers:\n• ${r.blockers.join('\n• ')}` : ''}`);
+    if (!r.ok) return interactionExecution.for(interaction).editReply(`⚠️ ${r.reason}`);
+    return interactionExecution.for(interaction).editReply(`🗓 Advance procedure → **${r.state}**${r.alreadyInCycle ? ' (a cycle was already in progress — no second cycle started)' : ''}.${r.messages?.length ? `\n\n${r.messages.join('\n\n').slice(0, 1500)}` : ''}`);
   }
   if (sub === 'advance-hold') {
     const r = engine.hold({ actor: interaction.user.id, reason: interaction.options.getString('reason') || 'commissioner hold' });
-    return interaction.reply({ content: r.ok ? '⏸ League advance is on **HOLD**. Nothing will advance or publish until `/game-channels advance-resume`.' : `⚠️ Could not hold from state ${r.state}.`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: r.ok ? '⏸ League advance is on **HOLD**. Nothing will advance or publish until `/game-channels advance-resume`.' : `⚠️ Could not hold from state ${r.state}.`, flags: 64 });
   }
   if (sub === 'advance-resume') {
-    await interaction.deferReply({ flags: 64 });
+    await interactionExecution.for(interaction).deferReply({ flags: 64 });
     const r = await engine.resume({ guild, state: _state, actor: interaction.user.id });
     automation.rearm({ guild, state: _state });
-    if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
-    return interaction.editReply(`▶️ Resumed → **${r.state}**.${r.messages?.length ? `\n\n${r.messages.join('\n\n').slice(0, 1500)}` : ''}`);
+    if (!r.ok) return interactionExecution.for(interaction).editReply(`⚠️ ${r.reason}`);
+    return interactionExecution.for(interaction).editReply(`▶️ Resumed → **${r.state}**.${r.messages?.length ? `\n\n${r.messages.join('\n\n').slice(0, 1500)}` : ''}`);
   }
   if (sub === 'sync-status') {
     const st = await require('../services/leagueSyncService').getSyncStatus();
     const lines = st.recentImports.map(i => `• ${i.provider} ${i.status}${i.error ? ` (${i.error})` : ''}${i.duplicates ? ` +${i.duplicates} dup` : ''} ${_fmtTs(i.receivedAt)}`);
-    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x3498db).setTitle('🔄 League Data Sync Status')
+    return interactionExecution.for(interaction).reply({ embeds: [new EmbedBuilder().setColor(0x3498db).setTitle('🔄 League Data Sync Status')
       .addFields(
         { name: 'Active provider', value: `**${st.activeProvider.key}** — ${st.activeProvider.label}`.slice(0, 1024), inline: false },
         { name: 'Health', value: st.health.ok ? '✅ healthy' : `⚠️ ${st.health.reason || 'unhealthy'}${st.health.missing ? ` (missing ${st.health.missing.join(', ')})` : ''}`, inline: true },
@@ -5094,30 +5327,30 @@ async function _handleGameChannelsV202(interaction, sub, guild) {
       ).setTimestamp()], flags: 64 });
   }
   if (sub === 'sync-now') {
-    await interaction.deferReply({ flags: 64 });
+    await interactionExecution.for(interaction).deferReply({ flags: 64 });
     const { postScheduleEmbed, startScheduleTimer } = hubReleaseService;
     try {
       const r = await require('../services/leagueSyncService').syncNow(guild, _state, { postScheduleEmbed, startScheduleTimer, getCh: _getCh, getTeamEmoji });
-      if (!r.ok) return interaction.editReply(`⚠️ Sync did not run. Reason: **${r.reason}**.`);
-      if (r.mode === 'import-provider') return interaction.editReply(`✅ Processed **${r.processed}** queued import(s) from **${r.provider}**. Sync refreshes data only — the league advances only through the advance procedure.`);
-      return interaction.editReply(`✅ Synced from **${r.provider}**. Current week: **${r.currentWeek ?? 'N/A'}** • stored weeks **${r.storedWeeks}** • channels created **${r.auto?.created || 0}**, reused **${r.auto?.skipped || 0}**, held **${r.auto?.held || 0}**.`);
+      if (!r.ok) return interactionExecution.for(interaction).editReply(`⚠️ Sync did not run. Reason: **${r.reason}**.`);
+      if (r.mode === 'import-provider') return interactionExecution.for(interaction).editReply(`✅ Processed **${r.processed}** queued import(s) from **${r.provider}**. Sync refreshes data only — the league advances only through the advance procedure.`);
+      return interactionExecution.for(interaction).editReply(`✅ Synced from **${r.provider}**. Current week: **${r.currentWeek ?? 'N/A'}** • stored weeks **${r.storedWeeks}** • channels created **${r.auto?.created || 0}**, reused **${r.auto?.skipped || 0}**, held **${r.auto?.held || 0}**.`);
     } catch (e) {
-      return interaction.editReply(`❌ Sync failed: ${e.message}`);
+      return interactionExecution.for(interaction).editReply(`❌ Sync failed: ${e.message}`);
     }
   }
   if (sub === 'update') {
     const ch = interaction.options.getChannel('channel') || interaction.channel;
     const r = await gameChannelService.refreshGameChannelOwners(guild, ch).catch(e => ({ ok: false, reason: e.message }));
-    if (!r.ok) return interaction.reply({ content: `⚠️ ${r.reason === 'not-a-managed-game-channel' ? 'That is not an active managed game channel.' : r.reason}`, flags: 64 });
-    return interaction.reply({ content: `✅ Game channel owners refreshed. Access granted to **${r.added.length}** newly resolved owner(s).${!r.owners.user1Id || !r.owners.user2Id ? ' ⚠️ One side still has no assigned owner — use `/teams assign`.' : ''}`, flags: 64 });
+    if (!r.ok) return interactionExecution.for(interaction).reply({ content: `⚠️ ${r.reason === 'not-a-managed-game-channel' ? 'That is not an active managed game channel.' : r.reason}`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: `✅ Game channel owners refreshed. Access granted to **${r.added.length}** newly resolved owner(s).${!r.owners.user1Id || !r.owners.user2Id ? ' ⚠️ One side still has no assigned owner — use `/teams assign`.' : ''}`, flags: 64 });
   }
   if (sub === 'delete') {
     const ch = interaction.options.getChannel('channel');
     const r = await gameChannelService.deleteSingleGameChannel(guild, ch, `Deleted by commissioner ${interaction.user.tag}`).catch(e => ({ ok: false, reason: e.message }));
-    if (!r.ok) return interaction.reply({ content: `⚠️ Not deleted: ${r.reason === 'not-a-weekly-game-channel' ? 'only weekly game channels can be deleted with this command.' : r.reason}`, flags: 64 });
-    return interaction.reply({ content: '🗑️ Game channel deleted.', flags: 64 });
+    if (!r.ok) return interactionExecution.for(interaction).reply({ content: `⚠️ Not deleted: ${r.reason === 'not-a-weekly-game-channel' ? 'only weekly game channels can be deleted with this command.' : r.reason}`, flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: '🗑️ Game channel deleted.', flags: 64 });
   }
-  return interaction.reply({ content: '⚠️ Unknown game-channels subcommand.', flags: 64 });
+  return interactionExecution.for(interaction).reply({ content: '⚠️ Unknown game-channels subcommand.', flags: 64 });
 }
 
 async function _refreshRules(guild) {
@@ -5138,10 +5371,18 @@ async function _refreshRules(guild) {
 }
 
 async function _saveLifetimeAward(interaction, grant) {
-  const league = activeLeagueService.findLeagueForChannel(interaction.channel) || (activeLeagueService.listActiveLeagues().length === 1 ? activeLeagueService.listActiveLeagues()[0] : null);
+  const league = activeLeagueService.findLeagueForChannel(interaction.channel) || (activeLeagueService.listOperationalLeagues().length === 1 ? activeLeagueService.listOperationalLeagues()[0] : null);
   if (!league) throw new Error('Run award commands inside the selected league channel.');
   if (!grant.userId) throw new Error('Select the member receiving credit in the user option.');
-  return require('../services/lifetimeHistoryService').award(interaction.guild.id,{...grant,id:interaction.id,leagueId:league.id,grantedBy:interaction.user.id});
+  const saved=await require('../services/lifetimeHistoryService').award(interaction.guild.id,{...grant,id:interaction.id,leagueId:league.id,grantedBy:interaction.user.id});
+  // Lifetime history is historical evidence only. When G2 is active, explicit
+  // reward metadata is bridged into canonical entitlements immediately.
+  if (grant.rewardType || grant.rewardTypes) {
+    await require('../domain/progression/legacyAwardBridge').issueIfActive({guildId:interaction.guild.id,leagueId:league.id,userId:grant.userId,sourceId:interaction.id,rewardType:grant.rewardType,rewardTypes:grant.rewardTypes,points:grant.points||0,actorId:interaction.user.id});
+  }
+  return saved;
 }
+
+require('../services/setupWizardBridgeService').register({ postSetupWizardMessage: _postSetupWizardMessage });
 
 module.exports = { init, handleInteraction, ensureSetupWizardChannel: _ensureSetupWizardChannel, postSetupWizardMessage: _postSetupWizardMessage, ensureSetupWizardStarterMessage: _ensureSetupWizardStarterMessage };
