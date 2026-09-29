@@ -19,6 +19,7 @@ const { fetchExternal, DISCORD_CDN_HOSTS } = require('../utils/httpIntake');
 const { safeUrl } = require('../utils/safeUrl');
 const env = require('../config/env');
 const { Semaphore } = require('../utils/semaphore');
+const scaleMetrics = require('../infrastructure/scaleMetrics');
 
 const ALLOWED_MEDIA_HOSTS = new Set(DISCORD_CDN_HOSTS);
 const STATIC_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -30,6 +31,7 @@ const VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 const ANALYSIS_CACHE = new Map();
 const GLOBAL_MEDIA_SEMAPHORE = new Semaphore(Number(process.env.MEDIA_CONTEXT_GLOBAL_CONCURRENCY || 3));
 const GUILD_MEDIA_SEMAPHORES = new Map();
+const USER_MEDIA_SEMAPHORES = new Map();
 
 function _num(value, fallback, min, max) {
   const n = Number(value);
@@ -49,6 +51,7 @@ function mediaConfig() {
     ffmpegPath: String(env.FFMPEG_PATH || process.env.FFMPEG_PATH || 'ffmpeg').trim() || 'ffmpeg',
     queueWaitMs: _num(process.env.MEDIA_CONTEXT_QUEUE_WAIT_MS, 8000, 1000, 30000),
     perGuildConcurrency: _num(process.env.MEDIA_CONTEXT_PER_GUILD_CONCURRENCY, 1, 1, 3),
+    perUserConcurrency: _num(process.env.MEDIA_CONTEXT_PER_USER_CONCURRENCY, 1, 1, 2),
   };
 }
 
@@ -341,17 +344,35 @@ function _guildSemaphore(guildId, limit) {
   if(existing && existing.limit===limit)return existing;
   const sem=new Semaphore(limit); GUILD_MEDIA_SEMAPHORES.set(key,sem); return sem;
 }
+function _userSemaphore(guildId, userId, limit) {
+  const key=`${String(guildId || 'dm')}:${String(userId || 'anonymous')}`;
+  const existing=USER_MEDIA_SEMAPHORES.get(key);
+  if(existing && existing.limit===limit)return existing;
+  const sem=new Semaphore(limit); USER_MEDIA_SEMAPHORES.set(key,sem); return sem;
+}
 async function _withMediaCapacity(message, cfg, fn) {
+  const guildId=String(message?.guild?.id || 'dm');
+  const userId=String(message?.author?.id || 'anonymous');
+  const waitStarted=Date.now();
   const releaseGlobal=await GLOBAL_MEDIA_SEMAPHORE.acquire(cfg.queueWaitMs);
-  let releaseGuild=null;
+  let releaseGuild=null,releaseUser=null;
   try {
-    releaseGuild=await _guildSemaphore(message?.guild?.id || 'dm',cfg.perGuildConcurrency).acquire(cfg.queueWaitMs);
+    releaseGuild=await _guildSemaphore(guildId,cfg.perGuildConcurrency).acquire(cfg.queueWaitMs);
+    releaseUser=await _userSemaphore(guildId,userId,cfg.perUserConcurrency).acquire(cfg.queueWaitMs);
+    scaleMetrics.observe('media_queue_wait_ms',{guildId},Date.now()-waitStarted);
+    scaleMetrics.inc('media_analysis_started_total',{guildId});
+    scaleMetrics.gauge('media_global_active',{},GLOBAL_MEDIA_SEMAPHORE.stats().active);
+    scaleMetrics.gauge('media_guild_active',{guildId},_guildSemaphore(guildId,cfg.perGuildConcurrency).stats().active);
     return await fn();
   } finally {
+    try{releaseUser?.();}catch{}
     try{releaseGuild?.();}catch{}
     try{releaseGlobal?.();}catch{}
+    scaleMetrics.gauge('media_global_active',{},GLOBAL_MEDIA_SEMAPHORE.stats().active);
+    scaleMetrics.gauge('media_guild_active',{guildId},_guildSemaphore(guildId,cfg.perGuildConcurrency).stats().active);
   }
 }
+
 
 async function analyzeMessageMedia(message, deps = {}) {
   const cfg = mediaConfig();
@@ -471,6 +492,7 @@ async function analyzeMessageMedia(message, deps = {}) {
     });
   } catch (err) {
     if (String(err?.message || '') === 'SEMAPHORE_TIMEOUT') {
+      scaleMetrics.inc('media_backpressure_total',{guildId:String(message?.guild?.id||'dm')});
       return { hasMedia:true, analyzed:false, summary:'', limitations:['Media analysis is busy. Try again in a moment.'], items };
     }
     throw err;

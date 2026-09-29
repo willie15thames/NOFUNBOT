@@ -23,6 +23,12 @@ const { COMM_ROLE }  = require('../config/env');
 const { postStatLeaders } = require('./statLeaderService');
 const log = makeLogger('hubRelease');
 const schedulerRegistry = require('./schedulerRegistryService');
+const { saveJsonDurable } = require('../storage/jsonStore');
+
+async function persistHubIntent(state) {
+  const { releaseTimerId, potwTimerId, ...durable } = state.hubWeeklyData || {};
+  await saveJsonDurable('hubWeeklyData.json', durable);
+}
 
 // ── Time helpers ──────────────────────────────────────────────
 // Business clocks use IANA timezone semantics so Pacific time follows PST/PDT correctly.
@@ -66,6 +72,9 @@ async function runWeeklyRelease(guild, client, state, deps, manual=false) {
   const delay = manual ? 1000 : 6*60*1000;
   state.hubWeeklyData.potwDueAt = Date.now() + delay;
   state.hubWeeklyData.potwAttempts = 0;
+  // Persist the deadline before arming a process-local wake-up. A crash in
+  // this window must not lose the business obligation.
+  await persistHubIntent(state);
   _armPotwTimer(guild, client, state, deps);
 }
 
@@ -111,7 +120,12 @@ async function _selectAndConfirmPOTW(guild, client, state, deps) {
   state.hubWeeklyData.potwTimerId = null;
   const { getCh, aiCall, MODELS } = deps;
   const lines = state.hubWeeklyData.statLines;
-  if (!lines.length) return;
+  if (!lines?.length) {
+    state.hubWeeklyData.potwDueAt = null;
+    await persistHubIntent(state);
+    log.warn('POTW follow-up has no stat lines; commissioner input is required.');
+    return;
+  }
   const week = state.hubWeeklyData.week||'?';
   const summary = lines.map(sl=>`${sl.player} (${sl.team}) — ${sl.stat}: ${sl.value}`).join('\n');
   try {
@@ -122,6 +136,7 @@ async function _selectAndConfirmPOTW(guild, client, state, deps) {
     state.hubWeeklyData.potwCandidate=pick;
     state.hubWeeklyData.potwDueAt=null;
     state.hubWeeklyData.potwAttempts=0;
+    await persistHubIntent(state);
     const embed=new EmbedBuilder().setColor(0xf1c40f).setTitle(`⭐ AI BEST-IN-LEAGUE PICK — Week ${week} — CONFIRM NEEDED`).setDescription(`**Player:** ${pick.player}\n**Team:** ${pick.team}\n**Key Stat:** ${pick.statLine}\n\n**Reason:** ${pick.reason}\n\nRun \`/potw-confirm action:confirm\` to post this.`).setTimestamp();
     const commRole=COMM_ROLE?guild.roles.cache.get(COMM_ROLE):null;
     if (commRole) for (const [,m] of commRole.members) await m.send({embeds:[embed]}).catch(()=>null);
@@ -131,13 +146,13 @@ async function _selectAndConfirmPOTW(guild, client, state, deps) {
     log.error('POTW AI failed:', e.message);
     const attempts = Number(state.hubWeeklyData.potwAttempts || 0) + 1;
     state.hubWeeklyData.potwAttempts = attempts;
-    if (attempts < 3) { state.hubWeeklyData.potwDueAt = Date.now() + 2*60*1000; _armPotwTimer(guild, client, state, deps); }
-    else { state.hubWeeklyData.potwDueAt = null; log.error('POTW AI exhausted 3 durable attempts; commissioner action required.'); }
+    if (attempts < 3) { state.hubWeeklyData.potwDueAt = Date.now() + 2*60*1000; await persistHubIntent(state); _armPotwTimer(guild, client, state, deps); }
+    else { state.hubWeeklyData.potwDueAt = null; await persistHubIntent(state); log.error('POTW AI exhausted 3 durable attempts; commissioner action required.'); }
   }
 }
 
 
-function resetHubWeek(week, state) {
+async function resetHubWeek(week, state) {
   schedulerRegistry.cancelAll('potw-followup');
   if (state.hubWeeklyData.potwTimerId) clearTimeout(state.hubWeeklyData.potwTimerId);
   const timer = state.hubWeeklyData.releaseTimerId;
@@ -146,6 +161,7 @@ function resetHubWeek(week, state) {
     potwCandidate:null, released:false,
     releaseTimerId:timer, potwTimerId:null, potwDueAt:null, potwAttempts:0,
   };
+  await persistHubIntent(state);
 }
 
 function startHubReleaseTimer(guild, client, state, deps) {

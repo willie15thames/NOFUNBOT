@@ -79,8 +79,8 @@ function access(session, interaction) {
   if (!session) return { ok:false, reason:'expired' };
   const gid = String(interaction?.guildId || interaction?.guild?.id || '');
   const uid = String(interaction?.user?.id || interaction?.member?.id || '');
-  if (session.guildId && gid && session.guildId !== gid) return { ok:false, reason:'wrong-guild' };
-  if (session.actorId && uid && session.actorId !== uid) return { ok:false, reason:'wrong-user' };
+  if (session.guildId && session.guildId !== gid) return { ok:false, reason:'wrong-guild' };
+  if (session.actorId && session.actorId !== uid) return { ok:false, reason:'wrong-user' };
   return { ok:true, userId:uid };
 }
 

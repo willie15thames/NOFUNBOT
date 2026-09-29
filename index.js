@@ -10,7 +10,7 @@
 
 'use strict';
 /**
- * NOFUNLEAGUE Bot — Entry Point
+ * CommishAI — Entry Point
  *
  * This file contains ONLY:
  *   1. Env validation (via src/config/env.js)
@@ -137,7 +137,7 @@ async function _postTimezoneOnboardingPrompt(member) {
           `Save your timezone so schedules, reminders, and league channels make sense for you.
 
 ` +
-          `Use the button below to save it. Once saved, myBot can keep your display like **wthames (PST)** or **Ravens (PST)** inside the right spaces.`
+          `Use the button below to save it. Once saved, CommishAI can keep your display like **wthames (PST)** or **Ravens (PST)** inside the right spaces.`
         )
         .setFooter({ text: 'Triggered automatically after build, when timezone gate is toggled on, and when a new member joins.' })
         .setTimestamp()],
@@ -287,10 +287,17 @@ function wireEvents() {
     const message=args[args.length-1];
     const registry=require('./src/services/activeLeagueService');
     const league=registry.findLeagueForChannel(message?.channel);
-    return require('./src/league/spaceContext').run(league?.id,async()=>{
+    const runSpace = () => require('./src/league/spaceContext').run(league?.id,async()=>{
       try { return await fn(...args); }
       finally { state.flushSpace?.(); await require('./src/storage/jsonStore').flushSpaceWrites(); }
     });
+    if (!message?.guild?.id) return runSpace();
+    return require('./src/application/requestContext').run({
+      guildId: message.guild.id,
+      leagueId: league?.id || null,
+      actorId: message.author?.id || 'system',
+      channelId: message.channel?.id || null,
+    }, runSpace);
   };
 
   // ── Stream credit (V185: extracted to src/services/streamCreditService.js) ──
@@ -686,15 +693,17 @@ if (!senderIsAdmin && READ_ONLY_BASE_CHANNELS.has(String(message.channel?.name |
       }
       await router.handleInteraction(interaction);
     } catch (e) {
-      console.error('[interactionCreate fatal]', e);
+      console.error('[interactionCreate fatal]', require('./src/utils/redact').redactValue(e));
       try {
-        if (interaction.isRepliable?.() && !interaction.replied && !interaction.deferred) {
+        if (interaction.isAutocomplete?.()) {
+          await require('./src/services/autocompleteService').respond(interaction, [], { resolverStage:'entrypoint-failure' });
+        } else if (interaction.isRepliable?.() && !interaction.replied && !interaction.deferred) {
           await interaction.reply({ content: '❌ Interaction failed. Check logs.', flags: 64 }).catch(() => null);
         } else if (interaction.isRepliable?.() && interaction.deferred) {
           await interaction.editReply({ content: '❌ Interaction failed. Check logs.' }).catch(() => null);
         }
       } catch (replyErr) {
-        console.error('[interactionCreate fallback failed]', replyErr);
+        console.error('[interactionCreate fallback failed]', require('./src/utils/redact').redactValue(replyErr));
       }
     } finally {
       responseGuard.releaseInteractionExecution(interaction);
@@ -961,7 +970,7 @@ client.once('clientReady', async () => {
   const log = makeLogger('startup');
   const _bootStart = Date.now();
 
-  log.info(`✅ NOFUNLEAGUE Bot online as: ${client.user.tag}`);
+  log.info(`✅ CommishAI online as: ${client.user.tag}`);
   log.info(`   Guild: ${GUILD_ID}`);
 
   // ── Health check — fire and forget (non-blocking, logs its own results) ──

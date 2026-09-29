@@ -74,7 +74,7 @@ async function fetchBase64(url) {
 }
 
 // ── OCR prompt — understands all Madden 26 screen types ──────
-const OCR_PROMPT = `You are reading a Madden NFL 26 franchise screenshot for a Discord league called NOFUNLEAGUE.
+const OCR_PROMPT = `You are reading a Madden NFL 26 franchise screenshot for a Discord league managed by CommishAI.
 
 IMPORTANT: There are TWO types of schedule screens in Madden 26:
 

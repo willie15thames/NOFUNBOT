@@ -19,6 +19,7 @@ const { EmbedBuilder, ChannelType } = require('discord.js');
 const { makeLogger } = require('../utils/logger');
 const { isAdminMember, sanitize, norm, stripMentions, isValidSnowflake } = require('../utils/helpers');
 const { COMM_ROLE, COMMISSIONER_IDS, IT_ROLE, IT_IDS } = require('../config/env');
+const { isCommissionerAiAuthorized } = require('../services/commissionerAuthorizationService');
 const serverSettings = require('../services/serverSettingsService');
 const templateLogic = require('../services/serverTemplateLogicService');
 const memberProfiles = require('../services/memberProfileService');
@@ -292,11 +293,11 @@ if (/^(?:reset|wipe|delete\s+all\s+leagues|reset\s+league|wipe\s+league)\b/i.tes
       if (String(message.channel?.name || '').toLowerCase() === 'setup-wizard') {
         const wizardPrefs = require('../services/wizardPreferencesService');
         const wizardStateService = require('../services/wizardStateService');
-        const router = require('../routing/interactionRouter');
+        const setupWizardBridge = require('../services/setupWizardBridgeService');
         if (String(wizardStateService.getCurrentStep() || 'flow') === 'timezone') {
           wizardStateService.patch({ installationMode: true, currentStep: 'mode', lastAdvancedAt: Date.now() });
           wizardPrefs.savePrefs({ lastTimezoneAt: Date.now() });
-          await router.postSetupWizardMessage(message.guild, 'Commissioner timezone saved. Setup core is unlocked now.', { stage: 'mode' }).catch(() => null);
+          await setupWizardBridge.post(message.guild, 'Commissioner timezone saved. Setup core is unlocked now.', { stage: 'mode' }).catch(() => null);
         }
       }
     } catch {}
@@ -647,14 +648,6 @@ function _requireChannelResolver() {
   return require('../services/channels/channelResolver');
 }
 
-/** V202: the commissioner-AI authorization gate as a reusable predicate (explicit comm role/ID or IT role/ID). */
-function isCommissionerAiAuthorized(member, userId) {
-  const dynamicCommissioners = new Set([...(COMMISSIONER_IDS || []), ...((stateStore?.commissionerIds && [...stateStore.commissionerIds]) || [])]);
-  const uid = String(userId || member?.id || '');
-  const hasCommRole = !!(COMM_ROLE && member?.roles?.cache?.has(COMM_ROLE));
-  const hasITRole = !!(IT_ROLE && member?.roles?.cache?.has(IT_ROLE));
-  return hasCommRole || dynamicCommissioners.has(uid) || hasITRole || !!(IT_IDS && IT_IDS.has(uid));
-}
 
 module.exports = { handleCommissionerAI, isCommissionerAiAuthorized, shouldHandleCommAI: (message, client, getCh) => {
   const commAICh = getCh(message.guild, 'commAI');

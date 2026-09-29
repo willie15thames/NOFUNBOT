@@ -78,7 +78,7 @@ async function notifyTop(client, count = 1, message = 'A team may be opening up 
   for (const entry of entries) {
     try {
       const user = await client.users.fetch(entry.userId);
-      await user.send(`🏟️ NOFUNLEAGUE update: ${message}`);
+      await user.send(`🏟️ CommishAI update: ${message}`);
       sent++;
     } catch {
       failed++;

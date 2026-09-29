@@ -51,7 +51,7 @@ function getServerConfig(guildId) {
     botStatus:           String(settings.botStatus || 'active'),
     audienceRating:      String(settings.audienceRating || 'pg13'),
     filterMode:          String(settings.filterMode || 'strict'),
-    botName:             String(settings.botName || 'myBot'),
+    botName:             String(settings.botName || 'CommishAI'),
     allowGifReplies:     settings.allowGifReplies !== false,
     serverInitialized:   !!settings.serverInitialized,
   };

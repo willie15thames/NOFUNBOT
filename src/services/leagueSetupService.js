@@ -1,3 +1,4 @@
+const interactionExecution = require('./interactionExecutionContext');
 /*
  * NAVIGATION HEADER
  * FILE: src/services/leagueSetupService.js
@@ -36,7 +37,7 @@ const { execute: executeLeagueBuild } = require('../league/build/leagueBuildServ
 // ── Shared rules that apply to ALL leagues (adapted per sport) ─
 const SHARED_RULES = {
   madden: `
-**UNIVERSAL NOFUNLEAGUE RULES — MADDEN**
+**UNIVERSAL COMMISHAI RULES — MADDEN**
 • Difficulty: All-Madden | Quarters: 4 minutes | Advance window: 48 hours
 • No chew clock before the 2-minute warning in the 4th quarter
 • No nano blitzing, no glitch exploits (Sim League: strictly enforced)
@@ -51,7 +52,7 @@ const SHARED_RULES = {
 • No physical attribute boosts: Speed, Agility, Strength, Acceleration, Stamina, Toughness, Injury.
 `,
   nba2k: `
-**UNIVERSAL NOFUNLEAGUE RULES — NBA 2K**
+**UNIVERSAL COMMISHAI RULES — NBA 2K**
 • Difficulty: Hall of Fame | Quarter length: 8 minutes | Advance window: 48 hours
 • No cheese: no full-court press every possession, no 5-out spam, no glitch exploits
 • Trades require commissioner approval. No trade abuse.
@@ -64,7 +65,7 @@ const SHARED_RULES = {
 • No cheese builds: no sliders abuse, no unrealistic lineup stacking against rules.
 `,
   ncaa: `
-**UNIVERSAL NOFUNLEAGUE RULES — NCAA CFB**
+**UNIVERSAL COMMISHAI RULES — NCAA CFB**
 • Difficulty: Heisman | Quarter length: 8 minutes | Advance window: 48 hours
 • No nano blitzing, no glitch plays, realistic sim-style offense required
 • Recruiting: no poaching from other members' pipelines after mutual targeting is set
@@ -74,7 +75,7 @@ const SHARED_RULES = {
 • Recruiting violations = -10 points penalty and loss of 2 scholarship offers.
 `,
   proam: `
-**UNIVERSAL NOFUNLEAGUE RULES — PRO-AM**
+**UNIVERSAL COMMISHAI RULES — PRO-AM**
 • Custom league. All teams created and named by members.
 • Games played on mutually agreed-upon schedule within the 48-hour advance window.
 • Score must be posted in #game-results by the winner within 2 hours of game completion.
@@ -651,6 +652,14 @@ async function buildFromCategories(guild, leagueTypeId, commRoleId, leagueName, 
       const seeded = seedLeagueTeams(stateRef, def, leagueRecord);
       await spaces.transition(guild.id, reserved.id, 'ACTIVE', leagueRecord);
       const activeLeague = activeLeagueService.upsertLeague(leagueRecord);
+      // Contract v8 G2 cutover: when PostgreSQL is configured, league/team rows
+      // are projected transactionally during the successful league build. This
+      // makes canonical IDs available before progression/postseason is enabled.
+      if (require('../domain/g2/canonicalProjection').enabled()) {
+        const teamEntries = (stateRef.openTeamRegistry || []).filter(t => String(t.leagueId) === String(leagueRecord.id));
+        await require('../domain/g2/canonicalProjection').projectLeague({ guildId:guild.id, league:leagueRecord, teamEntries });
+        saveJsonDebounced('openTeamRegistry.json', stateRef.openTeamRegistry);
+      }
       try { require('./openTeamsService').refreshOpenTeamsBoard(guild).catch(e => log.warn(`Open team refresh failed: ${e.message}`)); }
       catch (e) { log.warn(`Open team refresh unavailable: ${e.message}`); }
       return { def, activeLeague, seeded };
@@ -813,7 +822,7 @@ async function handleProAmTeamModal(interaction, state, aiCall, MODELS) {
   const soFar  = pending.teams.length;
   const needed = pending.teamsNeeded;
 
-  await interaction.reply({
+  await interactionExecution.for(interaction).reply({
     content: `✅ **Team ${soFar}:** ${city} ${name}${owner ? ` (owner: ${owner})` : ''}\n` +
              (soFar < needed ? `${needed - soFar} more team${needed - soFar > 1 ? 's' : ''} to go.` : `All ${needed} teams entered! Building your league...`),
     flags: 64,
@@ -827,10 +836,10 @@ async function handleProAmTeamModal(interaction, state, aiCall, MODELS) {
         .setLabel(`Enter Team ${soFar + 1}`)
         .setStyle(ButtonStyle.Primary),
     );
-    await interaction.followUp({ content: `Click below to enter team ${soFar + 1} of ${needed}.`, components: [btn], flags: 64 });
+    await interactionExecution.for(interaction).followUp({ content: `Click below to enter team ${soFar + 1} of ${needed}.`, components: [btn], flags: 64 });
   } else {
     // All teams entered — build the league
-    await interaction.followUp({ content: '⚙️ Building your Pro-Am league...', flags: 64 });
+    await interactionExecution.for(interaction).followUp({ content: '⚙️ Building your Pro-Am league...', flags: 64 });
     await finalizeProAmSetup(interaction, state, aiCall, MODELS);
   }
 }
@@ -871,7 +880,7 @@ async function finalizeProAmSetup(interaction, state, aiCall, MODELS) {
 
     const totalWeeks = getSeasonWeeks(def.fullWeeks, pending.seasonType, def.game);
 
-    await interaction.followUp({
+    await interactionExecution.for(interaction).followUp({
       embeds: [new EmbedBuilder()
         .setColor(def.color)
         .setTitle(`✅ ${def.emoji} Pro-Am League Built!`)
@@ -890,7 +899,7 @@ async function finalizeProAmSetup(interaction, state, aiCall, MODELS) {
     });
   } catch (err) {
     log.error('Pro-Am build failed:', err.message);
-    await interaction.followUp({ content: `❌ Build failed: ${err.message}`, flags: 64 });
+    await interactionExecution.for(interaction).followUp({ content: `❌ Build failed: ${err.message}`, flags: 64 });
   }
 }
 
@@ -933,7 +942,7 @@ async function sendSetupWizard(interaction, state) {
     ],
   }).rows;
 
-  await interaction.editReply({
+  await interactionExecution.for(interaction).editReply({
     embeds: [new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle(`🏟 ${state?.leagueConfig?.leagueName || 'League'} — League Setup Wizard`)
@@ -961,12 +970,12 @@ async function handleSetupInteraction(interaction, state) {
   if (interaction.isStringSelectMenu?.() && cid.startsWith('setup_ruleset_select::')) {
     const leagueId = cid.split('::')[1];
     const league = activeLeagueService.getLeague(leagueId);
-    if (!league) return interaction.update({ content: '❌ League not found for rule setup.', components: [], embeds: [] });
+    if (!league) return interactionExecution.for(interaction).update({ content: '❌ League not found for rule setup.', components: [], embeds: [] });
     const presetKey = interaction.values[0];
     let preset;
     try { preset = await publishLeagueRulesForPreset(interaction.guild, league, presetKey); }
-    catch (err) { return interaction.update({ content: `⚠️ ${err.message}`, components: [], embeds: [] }); }
-    return interaction.update({
+    catch (err) { return interactionExecution.for(interaction).update({ content: `⚠️ ${err.message}`, components: [], embeds: [] }); }
+    return interactionExecution.for(interaction).update({
       embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle('✅ League Rules Equipped').setDescription(`**${league.leagueName}** now uses the **${preset.label}** ruleset.`).setTimestamp()],
       components: [],
     });
@@ -977,7 +986,7 @@ async function handleSetupInteraction(interaction, state) {
     const game    = interaction.values[0];
     const options = Object.values(LEAGUE_TYPES).filter(t => t.game === game);
 
-    if (!options.length) return interaction.update({ content: '❌ No leagues for that game.', components: [] });
+    if (!options.length) return interactionExecution.for(interaction).update({ content: '❌ No leagues for that game.', components: [] });
 
     const typeRows = buttonChoices.createChoiceRows({
       guildId:interaction.guildId, actorId:interaction.user.id, flow:'setup-type', legacyCustomId:'setup_type_select', minValues:1, maxValues:1,
@@ -985,7 +994,7 @@ async function handleSetupInteraction(interaction, state) {
     }).rows;
 
     const gameLabels = { madden: '🏈 Madden NFL', nba2k: '🏀 NBA 2K', ncaa: '🏟 NCAA CFB', proam: '🎮 Pro-Am Custom' };
-    await interaction.update({
+    await interactionExecution.for(interaction).update({
       embeds: [new EmbedBuilder()
         .setColor(0x5865f2)
         .setTitle(`${gameLabels[game]} — Choose League Type`)
@@ -1001,7 +1010,7 @@ async function handleSetupInteraction(interaction, state) {
   if (cid === 'setup_type_select') {
     const typeId = interaction.values[0];
     const def    = LEAGUE_TYPES[typeId];
-    if (!def) return interaction.update({ content: '❌ Unknown league type.', components: [] });
+    if (!def) return interactionExecution.for(interaction).update({ content: '❌ Unknown league type.', components: [] });
 
     if (!state.pendingSetup) state.pendingSetup = {};
     state.pendingSetup[interaction.user.id] = { typeId, leagueName: state.leagueConfig?.leagueName || null };
@@ -1012,7 +1021,7 @@ async function handleSetupInteraction(interaction, state) {
       const btn = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('setup_proam_next_team').setLabel('Enter Team 1').setStyle(ButtonStyle.Primary)
       );
-      await interaction.update({
+      await interactionExecution.for(interaction).update({
         embeds: [new EmbedBuilder()
           .setColor(def.color)
           .setTitle(`${def.emoji} ${def.label} — Team Entry`)
@@ -1043,7 +1052,7 @@ async function handleSetupInteraction(interaction, state) {
       ],
     }).rows;
 
-    await interaction.update({
+    await interactionExecution.for(interaction).update({
       embeds: [new EmbedBuilder()
         .setColor(def.color)
         .setTitle(`${def.emoji} ${def.label}`)
@@ -1066,13 +1075,13 @@ async function handleSetupInteraction(interaction, state) {
   if (cid === 'setup_season_select') {
     const seasonType = interaction.values[0];
     const pending    = state.pendingSetup?.[interaction.user.id];
-    if (!pending) return interaction.update({ content: '❌ Session expired. Run /setup-league again.', components: [] });
+    if (!pending) return interactionExecution.for(interaction).update({ content: '❌ Session expired. Run /setup-league again.', components: [] });
 
     const { typeId, leagueName: pendingLeagueName } = pending;
     const def        = LEAGUE_TYPES[typeId];
     delete state.pendingSetup[interaction.user.id];
 
-    await interaction.update({
+    await interactionExecution.for(interaction).update({
       embeds: [new EmbedBuilder()
         .setColor(def.color)
         .setTitle(`⚙️ Building ${def.label}...`)
@@ -1097,7 +1106,7 @@ async function handleSetupInteraction(interaction, state) {
       state.leagueConfig.builtChannelIds  = builtChannelIds;
       saveJsonDebounced('leagueConfig.json', state.leagueConfig);
 
-            const activeLeagueId = activeLeague?.id || activeLeagueService.listOperationalLeagues().slice(-1)[0]?.id;
+            const activeLeagueId = activeLeague?.id || activeLeagueService.listOperationalLeagues({ guildId:guild.id }).slice(-1)[0]?.id;
       const rulesRows = buttonChoices.createChoiceRows({
         guildId:guild.id, actorId:interaction.user.id, flow:'setup-ruleset', legacyCustomId:`setup_ruleset_select::${activeLeagueId}`, minValues:1, maxValues:1,
         options:[
@@ -1110,7 +1119,7 @@ async function handleSetupInteraction(interaction, state) {
         new ButtonBuilder().setCustomId(`toggle_active_check::${activeLeagueId}`).setLabel('Enable 4-Day Active Check').setStyle(ButtonStyle.Secondary)
       );
 
-      await interaction.editReply({
+      await interactionExecution.for(interaction).editReply({
         embeds: [new EmbedBuilder()
           .setColor(def.color)
           .setTitle(`✅ ${def.emoji} ${def.label} — Ready!`)
@@ -1142,7 +1151,7 @@ async function handleSetupInteraction(interaction, state) {
       });
     } catch (err) {
       log.error('Build failed:', err.message);
-      await interaction.editReply({ content: `❌ Build failed: ${err.message}`, components: [] });
+      await interactionExecution.for(interaction).editReply({ content: `❌ Build failed: ${err.message}`, components: [] });
     }
   }
 

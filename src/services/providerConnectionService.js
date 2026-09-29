@@ -7,6 +7,7 @@
  *          providerSecretService and never returned by public/status methods.
  */
 'use strict';
+const { timingSafeHexEqual } = require('../utils/secureCompare');
 const crypto=require('crypto');
 const {loadJson,saveJson}=require('../storage/jsonStore');
 const {prismaSafe,getPrisma}=require('../storage/prisma');
@@ -24,7 +25,7 @@ function _store(){const v=loadJson(FILE,{version:2,connections:[]});return v&&ty
 function _save(s){saveJson(FILE,{...s,updatedAt:Date.now()});return s;}
 function _id(l,p){return `${String(l)}:${String(p)}`;}
 function _hash(v){return crypto.createHash('sha256').update(String(v||''),'utf8').digest('hex');}
-function _safeEqHex(a,b){try{const aa=Buffer.from(String(a||''),'hex'),bb=Buffer.from(String(b||''),'hex');return aa.length===bb.length&&aa.length>0&&crypto.timingSafeEqual(aa,bb);}catch{return false;}}
+const _safeEqHex = timingSafeHexEqual;
 function generateRouteToken(){return crypto.randomBytes(32).toString('base64url');}
 function encryptSecret(v){return v?secrets.encrypt(v):null;} function decryptSecret(v){return secrets.decrypt(v);}
 function _normalize(row={}){return {...row,status:STATES.has(row.status)?row.status:'draft',healthStatus:['unknown','healthy','degraded','blocked'].includes(row.healthStatus)?row.healthStatus:'unknown',fallbackMode:['none','manual'].includes(row.fallbackMode)?row.fallbackMode:'none'};}

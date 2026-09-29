@@ -12,7 +12,7 @@
 const wizardStateService = require('./wizardStateService');
 const sendMessageService = require('./sendMessageService');
 
-const DEFAULT_MATCHER = /Setup Flow Guide|myBot Setup Wizard|Setup Wizard Ready|Start Setup/i;
+const DEFAULT_MATCHER = /Setup Flow Guide|CommishAI Setup Wizard|myBot Setup Wizard|Setup Wizard Ready|Start Setup/i;
 
 function _getTitle(msg) {
   return String(msg?.embeds?.[0]?.title || '');

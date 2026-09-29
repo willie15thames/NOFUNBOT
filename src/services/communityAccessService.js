@@ -70,7 +70,7 @@ async function ensureCommunityRoles(guild, settings = serverSettings.getSettings
   return { communities, roles: map };
 }
 
-function buildSelectorPayload(settings = serverSettings.getSettings(), note = '') {
+function buildSelectorPayload(settings = serverSettings.getSettings(), note = '', guildId = null) {
   const communities = _selectorEnabled(settings) ? getAvailableCommunities(settings) : [];
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
@@ -83,7 +83,7 @@ function buildSelectorPayload(settings = serverSettings.getSettings(), note = ''
   const components = [];
   if (communities.length) {
     components.push(...buttonChoices.createChoiceRows({
-      public:true, flow:'community-membership', legacyCustomId:'community_membership_select', minValues:0, maxValues:Math.min(communities.length, 10), pageSize:15,
+      guildId, public:true, flow:'community-membership', legacyCustomId:'community_membership_select', minValues:0, maxValues:Math.min(communities.length, 10), pageSize:15,
       options:communities.map(c => ({ label:c.name.slice(0,80), value:c.key, description:String(c.description || `Access for ${c.name}`).slice(0,100) })),
     }).rows);
   }
@@ -102,7 +102,7 @@ async function postSelectorPanel(guild, note = '') {
   }
   const ch = await ensureSelectorChannel(guild);
   if (!ch) return null;
-  const payload = buildSelectorPayload(settings, "");
+  const payload = buildSelectorPayload(settings, "", guild.id);
   const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);
   let msg = recent ? [...recent.values()].find(m => m.author?.id === guild.members?.me?.id && /Community Access/i.test(String(m.embeds?.[0]?.title || ''))) : null;
   if (msg) {

@@ -27,8 +27,8 @@ function findLeagueChannel(guild, league, keys = ['general', 'open-teams', 'anno
   return channels.find(ch => ch?.isTextBased?.()) || null;
 }
 
-function buildTimezoneRow(leagueId, userId) {
-  return timezoneGateService.buildTimezoneSelectRow(`league_member_timezone::${leagueId}::${userId}`);
+function buildTimezoneRow(leagueId, userId, guildId) {
+  return timezoneGateService.buildTimezoneSelectRow(`league_member_timezone::${leagueId}::${userId}`, { guildId, actorId:userId, public:false });
 }
 
 function _profileLeagueState(userId, leagueId) {
@@ -81,7 +81,7 @@ async function notifyMemberAdded({ guild, member, leagueId, teamName = null, act
     message = await channel.send({
       content:`<@${member.id}>`,
       embeds:[embed],
-      components:[buildTimezoneRow(league.id, member.id)],
+      components:[buildTimezoneRow(league.id, member.id, guild.id)],
       allowedMentions:{ users:[member.id], parse:[] },
     }).catch(() => null);
   }

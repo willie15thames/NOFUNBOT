@@ -85,3 +85,30 @@ npm run deploy:preflight
 ```
 
 Do not deploy if any gate fails.
+
+## Final G0/G1 completion correction — 2026-09-28
+
+A final reconciliation pass against both supplied Contract v8 documents closed three additional integrity gaps that were still present in the packaged implementation:
+
+1. **Fail-closed league data-source mode.** `activeLeagueService.setDataSourceMode()` now accepts only `external_sync` or `custom_bot_managed`. Unknown values return a typed `INVALID_STATE` error instead of silently becoming `custom_bot_managed`.
+2. **Truthful canonical league resolution.** `leagueResolverService` now resolves canonical identity against guild records before applying lifecycle policy. This allows callers to distinguish `LEAGUE_ARCHIVED`, `LEAGUE_ARCHIVING`, `LEAGUE_WRONG_GUILD`, `LEAGUE_AMBIGUOUS`, `LEAGUE_NOT_FOUND`, and `LEAGUE_NOT_JOINABLE` rather than collapsing filtered records into a generic not-found result.
+3. **No synthetic recovery identity in membership selection.** `joinLeagueService` now builds normal join candidates from `listJoinableLeagues()` and no longer uses `listResetOptions()`, preventing the migration-only synthetic `id="current"` fallback from becoming membership/team-claim authority.
+
+The Contract v8 static gate now asserts these invariants so they cannot regress silently.
+
+### Final artifact-environment validation
+
+Passed:
+- `node --check` across all shipped JavaScript files: **263 files, 0 syntax failures**
+- `node scripts/contract-v8-static-check.js`: **PASS, 207 source files checked**
+- `node scripts/check-undefined-identifiers.js`: **PASS**
+- `npm run tsc -- --pretty false`: **PASS**
+
+Dependency-backed tests:
+- The extracted artifact intentionally contains no `node_modules`.
+- `npm ci` was attempted in the artifact environment but dependency installation did not complete, so the incomplete `node_modules` tree was removed.
+- The full `npm test`, `npm run release:verify`, and environment-sensitive `npm run deploy:preflight` remain clean-extraction deployment gates and MUST be run where package installation/network access is available.
+
+### Gate interpretation
+
+This artifact claims **G0 Integrity + G1 Public Beta implementation scope**, not G2/G3. Per the reconciled Contract v8 taxonomy, disabled progression/postseason and scale/multi-guild roadmap work does not block this G0/G1 artifact.

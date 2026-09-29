@@ -72,3 +72,11 @@ A  src/utils/semaphore.js
 A  tests/contractV8.regression.test.js
 
 Removed files: 0
+
+Final completion pass additions (2026-09-28):
+M  src/services/activeLeagueService.js
+M  src/services/leagueResolverService.js
+M  src/services/joinLeagueService.js
+M  scripts/contract-v8-static-check.js
+M  CONTRACT_V8_IMPLEMENTATION_STATUS.md
+M  CONTRACT_V8_VALIDATION.txt

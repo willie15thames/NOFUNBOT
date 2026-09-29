@@ -207,23 +207,25 @@ define('post-build', [
     condition: ctx => !!ctx.state,
     fn: async ctx => {
       const { deployCommandsForCurrentState } = require('./commandRegistryService');
-      await deployCommandsForCurrentState(ctx.state).catch(e => log.warn('deploy-commands:', e.message));
+      await deployCommandsForCurrentState(ctx.state);
     },
   },
   {
     step: 'publish-patch-notes',
+    optional: true,
     condition: ctx => !!ctx.guild,
     fn: async ctx => {
       const patchNotes = require('./patchNotesService');
-      await patchNotes.publishPatchNotes(ctx.guild).catch(e => log.warn('publish-patch-notes:', e.message));
+      await patchNotes.publishPatchNotes(ctx.guild);
     },
   },
   {
     step: 'apply-bot-identity',
+    optional: true,
     condition: ctx => !!(ctx.client && ctx.guild),
     fn: async ctx => {
       const botIdentity = require('./botIdentityService');
-      await botIdentity.applyBotIdentity(ctx.client, ctx.guild).catch(e => log.warn('apply-bot-identity:', e.message));
+      await botIdentity.applyBotIdentity(ctx.client, ctx.guild);
     },
   },
   {
@@ -233,7 +235,7 @@ define('post-build', [
       const botAccess = require('./botAccessService');
       const { COMM_ROLE } = require('../config/env');
       const commRole = ctx.guild.roles.cache.find(r => r.name === COMM_ROLE || r.id === COMM_ROLE);
-      await botAccess.lockBotAccessGuildWide(ctx.guild, commRole?.id).catch(e => log.warn('lock-bot-access:', e.message));
+      await botAccess.lockBotAccessGuildWide(ctx.guild, commRole?.id);
     },
   },
 ], { wireStatus:'wired', source:'workflowEngineService', failFast:true, entrypoints:['server-build completion'] });
@@ -244,15 +246,16 @@ define('post-trash', [
     condition: ctx => !!ctx.guild,
     fn: async ctx => {
       const guideLifecycle = require('./guideLifecycleService');
-      guideLifecycle.forceRefreshAll(ctx.guild.id);
+      await guideLifecycle.forceRefreshAll(ctx.guild.id);
     },
   },
   {
     step: 'post-automation-status',
+    optional: true,
     condition: ctx => !!ctx.guild,
     fn: async ctx => {
       const onboardingAuto = require('./onboardingAutomationService');
-      await onboardingAuto.postAutomationStatus(ctx.guild).catch(e => log.warn('post-automation-status:', e.message));
+      await onboardingAuto.postAutomationStatus(ctx.guild);
     },
   },
 ], { wireStatus:'wired', source:'workflowEngineService', failFast:true, entrypoints:['trash-the-bot completion'] });
@@ -276,7 +279,7 @@ define('post-league-reset', [
     step: 'reset-hub-week',
     condition: ctx => !!(ctx.hubReleaseService && ctx.state),
     fn: async ctx => {
-      ctx.hubReleaseService.resetHubWeek(1, ctx.state);
+      await ctx.hubReleaseService.resetHubWeek(1, ctx.state);
     },
   },
 ], { wireStatus:'manual', source:'workflowEngineService', failFast:true, entrypoints:['reset-league caller'] });

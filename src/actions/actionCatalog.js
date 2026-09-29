@@ -59,7 +59,7 @@ const ACTIONS = [
     description: 'Reset the hub staging week (clears staged scores/stat lines).', fields: { week: { type: 'integer', required: true, min: 1, max: 30 } },
     async execute(f, ctx) {
       const hub = require('../services/hubReleaseService');
-      hub.resetHubWeek(f.week, ctx.state);
+      await hub.resetHubWeek(f.week, ctx.state);
       hub.startHubReleaseTimer(ctx.guild, ctx.client, ctx.state, ctx);
       return { ok: true, message: `✅ Hub week set to **Week ${f.week}**.` };
     },

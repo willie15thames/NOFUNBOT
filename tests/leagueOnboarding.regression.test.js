@@ -41,7 +41,9 @@ test('commissioner placement sends exact league, team, and member-owned timezone
   assert(embed.description.includes('**Team:** Baltimore Ravens'), 'team appears in greeting');
   assert(embed.description.includes('Choose your timezone'), 'timezone is the next action');
   const row = payload.components[0].toJSON();
-  eq(row.components[0].custom_id, `league_member_timezone::league-a::${member.id}`);
+  assert(row.components[0].custom_id.startsWith('ui:'), 'timezone choices use opaque button sessions');
+  const session = require('../src/services/componentSessionService').get(row.components[0].custom_id.split(':')[1]);
+  eq(session.legacyCustomId, `league_member_timezone::league-a::${member.id}`);
   assert(member._dms[0].content.includes('Test League A'), 'DM identifies exact league');
   assert(member._dms[0].content.includes('Baltimore Ravens'), 'DM identifies assigned team');
 });

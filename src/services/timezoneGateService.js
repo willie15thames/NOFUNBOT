@@ -115,7 +115,9 @@ async function postGatePrompt(member) {
       .setDescription('Choose your timezone using the buttons below to unlock the rest of the server.')
       .setFooter({ text: 'Once your timezone saves, the rest of the server unlocks automatically.' })
       .setTimestamp()],
-    components: [buildTimezoneSelectRow()],
+    // The gate panel is shared and edited for new arrivals. Keep the guild
+    // binding, but let each member select their own timezone from it.
+    components: [buildTimezoneSelectRow('timezone_onboarding_select', { guildId:guild.id, public:true })],
     allowedMentions: { parse: [] }
   };
   const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);

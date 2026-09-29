@@ -8,7 +8,7 @@
 
 'use strict';
 
-const { createProvider } = require('../gameProvider');
+const { createProvider } = require('../providerContract');
 const { createEndpointProvider } = require('../customEndpoint');
 const exportGateway = require('./companion/exportGateway');
 

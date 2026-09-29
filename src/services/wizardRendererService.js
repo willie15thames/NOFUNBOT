@@ -292,7 +292,7 @@ function _buildMainEmbed(guild, note, settings, prefs) {
   const theme = templateTheme.getThemePreset(settings);
 
   const isEdit = !!settings.serverInitialized;
-  const title = isEdit ? '🛠️ myBot Setup Wizard • EDIT MODE' : '🛠️ myBot Setup Wizard';
+  const title = isEdit ? '🛠️ CommishAI Setup Wizard • EDIT MODE' : '🛠️ CommishAI Setup Wizard';
 
   const stage = wizardState.getCurrentStep() || 'mode';
   const stageMeta = stageRegistry.getStage(stage);
@@ -418,7 +418,7 @@ function buildErrorPayload(errMessage) {
   return {
     embeds: [new EmbedBuilder()
       .setColor(0xe74c3c)
-      .setTitle('🛠️ myBot Setup Wizard')
+      .setTitle('🛠️ CommishAI Setup Wizard')
       .setDescription(`⚠️ Wizard build error: ${errMessage}\n\nPress **Reset** below to restart setup cleanly.`)
       .setTimestamp()],
     components: [new ActionRowBuilder().addComponents(

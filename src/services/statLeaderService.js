@@ -79,7 +79,7 @@ function buildStatLeadersBoardEmbed(leaders) {
   return new EmbedBuilder().setColor(0x0096c7)
     .setTitle(`📊 STAT LEADERS — WEEK ${sl.week}`)
     .addFields(fields)
-    .setFooter({ text: `Week ${sl.week} • NOFUNLEAGUE` }).setTimestamp();
+    .setFooter({ text: `Week ${sl.week} • CommishAI` }).setTimestamp();
 }
 
 // ── Post stat leaders to #stat-leaders + mirror to #scoresheets ─────────

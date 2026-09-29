@@ -20,3 +20,24 @@ Required promotion commands:
   npm run deploy:preflight
 
 Do not deploy if any command fails.
+
+=== FINAL G0/G1 COMPLETION PASS — 2026-09-28 ===
+PASS node --check: 263 JavaScript files, 0 syntax failures
+PASS node scripts/contract-v8-static-check.js: 207 source files checked
+PASS node scripts/check-undefined-identifiers.js
+PASS npm run tsc -- --pretty false
+
+FULL DEPENDENCY GATE STATUS:
+The extracted ZIP does not ship node_modules. npm ci was attempted but did not complete in this artifact environment.
+The partial dependency tree was removed. Run on target/CI:
+  npm ci
+  npm test
+  npm run tsc
+  npm run release:verify
+  npm run deploy:preflight
+
+FINAL PATCHED INVARIANTS:
+- setDataSourceMode rejects unknown values (no silent coercion)
+- league resolver distinguishes archived/archiving/wrong-guild/ambiguous/not-found lifecycle outcomes
+- join-league uses canonical joinable records only; synthetic reset/recovery id="current" is excluded
+- static Contract v8 gate protects all three invariants

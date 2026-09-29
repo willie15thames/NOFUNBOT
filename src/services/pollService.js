@@ -10,6 +10,7 @@
 
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 
 const { EmbedBuilder } = require('discord.js');
 const buttonChoices = require('./buttonChoiceService');
@@ -63,13 +64,13 @@ async function handleVote(interaction) {
   const choice = interaction.values?.[0];
   const all = getAll();
   const poll = all.polls[pollId];
-  if (!poll) return interaction.reply({ content:'⚠️ This poll no longer exists.', flags:64 });
+  if (!poll) return interactionExecution.for(interaction).reply({ content:'⚠️ This poll no longer exists.', flags:64 });
   poll.votes[String(interaction.user.id)] = choice;
   all.polls[pollId] = poll;
   saveAll(all);
   const msg = interaction.message;
   await msg.edit({ embeds:[_buildEmbed(poll)], components:_buildRows(pollId, poll, interaction.guildId || interaction.guild?.id || null) }).catch(()=>null);
-  return interaction.reply({ content:`✅ Your vote has been recorded: **${choice}**`, flags:64 });
+  return interactionExecution.for(interaction).reply({ content:`✅ Your vote has been recorded: **${choice}**`, flags:64 });
 }
 
 module.exports = { createPoll, handleVote };

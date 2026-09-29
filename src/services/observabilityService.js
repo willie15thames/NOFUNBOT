@@ -11,6 +11,8 @@
 'use strict';
 
 const { makeLogger } = require('../utils/logger');
+const scaleMetrics = require('../infrastructure/scaleMetrics');
+const compatibilityRegistry = require('../infrastructure/compatibilityRegistry');
 const log = makeLogger('observability');
 
 // ── Metrics storage (in-memory, rolling window) ──────────────────────
@@ -140,6 +142,8 @@ function getHealthReport() {
     claims,
     selfHeals: heals,
     releases,
+    scale: scaleMetrics.snapshot(),
+    compatibility: compatibilityRegistry.retirementReport(),
   };
 }
 
@@ -155,6 +159,8 @@ function getMetrics() {
     claimRejections: report.claims.rejected,
     selfHeals: report.selfHeals,
     releaseCount: report.releases.length,
+    scale: report.scale,
+    compatibilityHits: Object.fromEntries(report.compatibility.map(row => [row.compatId, row.hits])),
   };
 }
 
@@ -176,6 +182,10 @@ function formatHealthEmbed() {
 
   // Self-heals
   lines.push(`**Self-Heals**: ${r.selfHeals.total} total, ${r.selfHeals.healed} healed, ${r.selfHeals.failed} failed`);
+
+  const compatHits = r.compatibility.reduce((sum, row) => sum + Number(row.hits || 0), 0);
+  const scaleCounters = Object.values(r.scale?.counters || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  lines.push(`**G3 Scale/Compatibility**: ${scaleCounters} counter events, ${compatHits} compatibility hits`);
 
   // Releases
   if (r.releases.length) {

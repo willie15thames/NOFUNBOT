@@ -30,7 +30,7 @@ async function routeSuggestion({ guild, client, user, type, text, commissionerId
     for (const id of uniqueIds) {
       try {
         const target = await client.users.fetch(id);
-        await target.send(`📬 NOFUNLEAGUE server suggestion\n\n${payload}`);
+        await target.send(`📬 CommishAI server suggestion\n\n${payload}`);
         sent++;
       } catch {
         failed++;
@@ -39,7 +39,7 @@ async function routeSuggestion({ guild, client, user, type, text, commissionerId
     return { ok: true, sent, failed, route: 'staff_dm' };
   }
 
-  const hook = await _sendWebhook(`🤖 NOFUNLEAGUE bot suggestion\n\n${payload}`);
+  const hook = await _sendWebhook(`🤖 CommishAI bot suggestion\n\n${payload}`);
   if (hook.ok) return { ok: true, route: 'webhook' };
   return { ok: false, route: 'webhook', reason: hook.reason || 'delivery_failed' };
 }

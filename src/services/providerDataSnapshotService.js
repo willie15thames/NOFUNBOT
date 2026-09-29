@@ -4,6 +4,8 @@
  * v204.7: stage writes are revision-aware so delayed provider deliveries cannot overwrite newer canonical data.
  */
 'use strict';
+const compatibilityRegistry = require('../infrastructure/compatibilityRegistry');
+function _compatHit(){ void compatibilityRegistry.hit(null,'legacy-json-provider-snapshots'); }
 const { loadJson, saveJson } = require('../storage/jsonStore');
 const FILE='providerDataSnapshots.json';
 function _store(){const s=loadJson(FILE,{version:2,providers:{}});return s&&typeof s==='object'?{version:2,...s,providers:s.providers||{}}:{version:2,providers:{}};}
@@ -21,7 +23,7 @@ function _isStale(existing,meta={}){
   if(a==null&&b==null&&at==null&&bt==null&&ar!=null&&br!=null&&ar<br)return true;
   return false;
 }
-function saveStage(provider,stage,data,meta={}){
+function saveStage(provider,stage,data,meta={}){ _compatHit();
   const s=_store();const key=String(provider||'unknown');const stageKey=String(stage||'unknown');
   s.providers[key]=s.providers[key]||{stages:{}};s.providers[key].stages=s.providers[key].stages||{};
   const existing=s.providers[key].stages[stageKey]||null;
@@ -29,7 +31,7 @@ function saveStage(provider,stage,data,meta={}){
   const row={stage:stageKey,data,meta:{...meta},updatedAt:Date.now(),ignoredStale:false};
   s.providers[key].stages[row.stage]=row;s.providers[key].latestStage=row.stage;s.providers[key].updatedAt=row.updatedAt;saveJson(FILE,s);return row;
 }
-function getStage(provider,stage){return _store().providers?.[String(provider)]?.stages?.[String(stage)]||null;}
+function getStage(provider,stage){ _compatHit();return _store().providers?.[String(provider)]?.stages?.[String(stage)]||null;}
 function getProvider(provider){return _store().providers?.[String(provider)]||null;}
 function summary(provider){const p=getProvider(provider);if(!p)return {provider,stages:[]};return {provider,stages:Object.values(p.stages||{}).map(x=>({stage:x.stage,updatedAt:x.updatedAt,count:Array.isArray(x.data)?x.data.length:null,meta:x.meta||{}})),latestStage:p.latestStage||null,updatedAt:p.updatedAt||null};}
 module.exports={FILE,saveStage,getStage,getProvider,summary,_isStale};

@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 /**
  * validationPipelineService.js
  *
@@ -21,7 +22,7 @@
  * Usage:
  *   const vp = require('./validationPipelineService');
  *   const result = await vp.validate(interaction, { state, guild });
- *   if (!result.ok) return interaction.reply({ content: result.reason, flags: 64 });
+ *   if (!result.ok) return interactionExecution.for(interaction).reply({ content: result.reason, flags: 64 });
  *
  * Checks run in order — first failure short-circuits.
  */

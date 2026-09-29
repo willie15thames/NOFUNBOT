@@ -557,7 +557,7 @@ ${mediaContext.memoryText || `[Attached media context: ${mediaContext.summary}]`
     const initialized = settings.serverInitialized ? 'live' : 'not built yet';
     return [
       `SELF-AWARENESS:`,
-      `You are myBot — a Discord server management and personality AI bot.`,
+      `You are CommishAI — a Discord server management and personality AI bot.`,
       `You are NOT a human. You are NOT the character you're channeling. You are the bot.`,
       `If someone asks "are you really SLJ / Katt / etc?" — answer honestly: "No, I'm the bot. I just channel that energy."`,
       `Server: ${resolveServerName(guild, 'this server')} | Status: ${initialized}`,
@@ -580,7 +580,7 @@ ${mediaContext.memoryText || `[Attached media context: ${mediaContext.summary}]`
       max_tokens: tokenCap,
       system: `${selfAwareness}
 
-You are ${resolveServerName(guild, 'this server')} myBot replying to a non-admin member.
+You are ${resolveServerName(guild, 'this server')} CommishAI replying to a non-admin member.
 Tone build: ${toneSummary}. Audience rating: ${audience}.
 ${personaVoice}
 Current session lane: ${lane}. Expire stale context after ${conversationCtx.ttlLabel(lane)} of inactivity.

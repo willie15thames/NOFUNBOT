@@ -107,6 +107,18 @@ function listActive(week = null) {
   return Object.values(_load().sessions).filter(s => s.status === SESSION_STATUS.ACTIVE && (!require('./spaceContext').current() || s.leagueId === require('./spaceContext').current()) && (week == null || Number(s.week) === Number(week)));
 }
 
+function clearGuild(guildId, leagueIds = []) {
+  const store = _load();
+  const leagues = new Set(leagueIds.map(String));
+  let removed = 0;
+  for (const [key, session] of Object.entries(store.sessions)) {
+    if (String(session.guildId || '') !== String(guildId) && !leagues.has(String(session.leagueId || ''))) continue;
+    delete store.sessions[key]; removed++;
+  }
+  if (removed) _save(store);
+  return removed;
+}
+
 function _patch(key, patch) {
   const store = _load();
   const cur = store.sessions[key];
@@ -237,6 +249,7 @@ function getStatusSummary() {
 }
 
 module.exports = {
+  clearGuild,
   FILE,
   SESSION_STATUS,
   TWENTY_FOUR_HOURS,

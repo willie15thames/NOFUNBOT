@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 
 const responseGuard = require('./responseGuardService');
 
@@ -35,166 +36,34 @@ function _normalizePayload(payload, mode = 'reply') {
 
 function protectInteraction(interaction) {
   if (!interaction || interaction.__nofunSafeWrapped) return interaction;
-  // Autocomplete has a different acknowledgement contract: only respond() is valid.
-  // Never bind chat-input reply methods onto autocomplete interactions.
+  // Autocomplete is intentionally isolated: only respond() is legal there.
   if (interaction.isAutocomplete?.()) return interaction;
   interaction.__nofunSafeWrapped = true;
-
-  const bind = (name) => typeof interaction[name] === 'function' ? interaction[name].bind(interaction) : null;
-  const orig = {
-    reply: bind('reply'),
-    followUp: bind('followUp'),
-    editReply: bind('editReply'),
-    deferReply: bind('deferReply'),
-    update: bind('update'),
-    deferUpdate: bind('deferUpdate'),
-    showModal: bind('showModal'),
-  };
-
-  interaction.reply = async (payload) => {
-    try {
-      const normalized = _normalizePayload(payload, 'reply');
-      if (responseGuard.isInteractionSettled(interaction)) return null;
-      if (interaction.replied || interaction.deferred) {
-        const out = await orig.followUp(normalized);
-        interaction.__nofunFinalized = true;
-        responseGuard.markInteractionSettled(interaction);
-        return out;
-      }
-      const res = await orig.reply(normalized);
-      interaction.__nofunFinalized = true;
-      responseGuard.markInteractionSettled(interaction);
-      return res;
-    } catch (err) {
-      if (_isAckErr(err)) return null;
-      throw err;
-    }
-  };
-
-  interaction.deferReply = async (payload) => {
-    try {
-      const normalized = _normalizePayload(payload, 'deferReply');
-      if (responseGuard.isInteractionSettled(interaction) || interaction.replied || interaction.deferred) return true;
-      const res = await orig.deferReply(normalized);
-      interaction.__nofunAckType = 'deferReply';
-      return res;
-    } catch (err) {
-      if (_isAckErr(err)) return true;
-      throw err;
-    }
-  };
-
-  interaction.editReply = async (payload) => {
-    try {
-      const normalized = _normalizePayload(payload, 'editReply');
-      if (responseGuard.isInteractionSettled(interaction) && !(interaction.replied || interaction.deferred)) return null;
-      if (interaction.replied || interaction.deferred) {
-        const out = await orig.editReply(normalized);
-        interaction.__nofunFinalized = true;
-        return out;
-      }
-      const res = await orig.reply(normalized);
-      interaction.__nofunFinalized = true;
-      responseGuard.markInteractionSettled(interaction);
-      return res;
-    } catch (err) {
-      if (_isAckErr(err)) return null;
-      throw err;
-    }
-  };
-
-  interaction.followUp = async (payload) => {
-    try {
-      const normalized = _normalizePayload(payload, 'followUp');
-      if (responseGuard.isInteractionSettled(interaction)) return null;
-      if (interaction.replied || interaction.deferred) {
-        const out = await orig.followUp(normalized);
-        interaction.__nofunFinalized = true;
-        responseGuard.markInteractionSettled(interaction);
-        return out;
-      }
-      const res = await orig.reply(normalized);
-      responseGuard.markInteractionSettled(interaction);
-      return res;
-    } catch (err) {
-      if (_isAckErr(err)) return null;
-      throw err;
-    }
-  };
-
-  if (orig.update) {
-    interaction.update = async (payload) => {
-      try {
-        const normalized = _normalizePayload(payload, 'update');
-        if (responseGuard.isInteractionSettled(interaction) && !(interaction.replied || interaction.deferred)) return null;
-        if (interaction.replied || interaction.deferred) {
-          const out = await orig.editReply(normalized);
-          interaction.__nofunFinalized = true;
-          return out;
-        }
-        const res = await orig.update(normalized);
-        interaction.__nofunFinalized = true;
-        responseGuard.markInteractionSettled(interaction);
-        return res;
-      } catch (err) {
-        if (_isAckErr(err)) return null;
-        throw err;
-      }
-    };
-  }
-
-  if (orig.deferUpdate) {
-    interaction.deferUpdate = async () => {
-      try {
-        if (responseGuard.isInteractionSettled(interaction) || interaction.replied || interaction.deferred) return true;
-        const res = await orig.deferUpdate();
-        interaction.__nofunAckType = 'deferUpdate';
-        return res;
-      } catch (err) {
-        if (_isAckErr(err)) return true;
-        throw err;
-      }
-    };
-  }
-
-  if (orig.showModal) {
-    interaction.showModal = async (payload) => {
-      try {
-        if (responseGuard.isInteractionSettled(interaction) || interaction.replied || interaction.deferred) return null;
-        const res = await orig.showModal(payload);
-        interaction.__nofunFinalized = true;
-        responseGuard.markInteractionSettled(interaction);
-        return res;
-      } catch (err) {
-        if (_isAckErr(err)) return null;
-        throw err;
-      }
-    };
-  }
-
+  // Force construction now so raw Discord methods are captured once by the canonical adapter.
+  interactionExecution.for(interaction);
   return interaction;
 }
 
 async function safeInitialReply(interaction, payload) {
   if (interaction.replied || interaction.deferred) {
-    return interaction.followUp(_normalizePayload(payload, 'followUp'));
+    return interactionExecution.for(interaction).followUp(_normalizePayload(payload, 'followUp'));
   }
-  return interaction.reply(_normalizePayload(payload, 'reply'));
+  return interactionExecution.for(interaction).reply(_normalizePayload(payload, 'reply'));
 }
 
 async function safeDeferred(interaction, payload) {
   if (interaction.replied || interaction.deferred) {
     return true;
   }
-  await interaction.deferReply(typeof payload === 'object' ? _normalizePayload(payload, 'deferReply') : undefined);
+  await interactionExecution.for(interaction).deferReply(typeof payload === 'object' ? _normalizePayload(payload, 'deferReply') : undefined);
   return true;
 }
 
 async function safeEdit(interaction, payload) {
   if (interaction.deferred || interaction.replied) {
-    return interaction.editReply(_normalizePayload(payload, 'editReply'));
+    return interactionExecution.for(interaction).editReply(_normalizePayload(payload, 'editReply'));
   }
-  return interaction.reply(_normalizePayload(payload, 'reply'));
+  return interactionExecution.for(interaction).reply(_normalizePayload(payload, 'reply'));
 }
 
 
@@ -204,15 +73,15 @@ async function safeAcknowledge(interaction, opts = {}) {
   if (!interaction || interaction.replied || interaction.deferred) return true;
   try {
     if (preferUpdate && interaction.deferUpdate) {
-      await interaction.deferUpdate();
+      await interactionExecution.for(interaction).deferUpdate();
       return true;
     }
-    await interaction.reply(ephemeral ? { content: '⏳ Working...', flags: 64 } : { content: '⏳ Working...' });
+    await interactionExecution.for(interaction).reply(ephemeral ? { content: '⏳ Working...', flags: 64 } : { content: '⏳ Working...' });
     return true;
   } catch (err) {
     if (_isAckErr(err)) return true;
     try {
-      await interaction.deferReply(ephemeral ? { flags: 64 } : undefined);
+      await interactionExecution.for(interaction).deferReply(ephemeral ? { flags: 64 } : undefined);
       return true;
     } catch (err2) {
       if (_isAckErr(err2)) return true;

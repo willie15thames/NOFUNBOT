@@ -73,7 +73,7 @@ async function startWorker(redisUrl, databaseUrl) {
     );
     await audit('completed', job.name, job.data, { filename, checksum: sum }, null);
     return { filename, checksum: sum };
-  }, { connection });
+  }, { connection, concurrency: 4, limiter: { max: 100, duration: 1000 } });
 
   worker.on('ready', () => console.log('[worker] storage-sync ready'));
   worker.on('error', err => console.error('[worker] error:', err?.message || err));

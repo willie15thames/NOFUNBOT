@@ -34,7 +34,7 @@ function _cmdBlock(items) {
 const MANUAL = {
   commissioner: {
     overview: {
-      title: 'myBot Manual - Commissioner Overview',
+      title: 'CommishAI Manual - Commissioner Overview',
       description: 'You have the full control lane. Use the manual commands below for setup, league creation, moderation, boards, automation, identity, and reset flows.',
       fields: [
         {
@@ -84,11 +84,11 @@ const MANUAL = {
         },
         {
           name: 'Bot Identity',
-          value: 'Default name is **myBot**. Default avatar uses the server image. You can override the name and avatar during install or later with `/set-bot-identity`, including choosing an imported server emoji as the avatar source.',
+          value: 'Default name is **CommishAI**. Default avatar uses the server image. You can override the name and avatar during install or later with `/set-bot-identity`, including choosing an imported server emoji as the avatar source.',
         },
         {
           name: 'Server Rules',
-          value: 'Server rules stay separate from league rules. Use the optional server-rules wizard to select custom rules and enforcement levels, then myBot republishes the rules message in #rules.',
+          value: 'Server rules stay separate from league rules. Use the optional server-rules wizard to select custom rules and enforcement levels, then CommishAI republishes the rules message in #rules.',
         },
       ],
     },
@@ -245,7 +245,7 @@ const MANUAL = {
     },
     actions: {
       title: 'Bot Actions Manual - Commissioner',
-      description: 'This is what myBot can do automatically once configured.',
+      description: 'This is what CommishAI can do automatically once configured.',
       fields: [
         {
           name: 'Automatic Behaviors',
@@ -267,7 +267,7 @@ const MANUAL = {
   },
   member: {
     overview: {
-      title: 'myBot Manual - Member Overview',
+      title: 'CommishAI Manual - Member Overview',
       description: 'This is your lane. The manual below only shows the commands and actions you are allowed to use.',
       fields: [
         {
@@ -389,10 +389,10 @@ const MANUAL = {
     },
     actions: {
       title: 'Bot Actions Manual - Member',
-      description: 'What you can expect from myBot as a member.',
+      description: 'What you can expect from CommishAI as a member.',
       fields: [
         {
-          name: 'What myBot Will Help With',
+          name: 'What CommishAI Will Help With',
           value:
             '- answer questions\n' +
             '- tell you how to join\n' +
@@ -401,7 +401,7 @@ const MANUAL = {
             '- talk trash back within the configured tone',
         },
         {
-          name: 'What myBot Will Not Do',
+          name: 'What CommishAI Will Not Do',
           value:
             '- reveal hidden staff tools\n' +
             '- let you talk in read-only info channels\n' +

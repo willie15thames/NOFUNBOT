@@ -1,4 +1,4 @@
-# NOFUNBOT Public Patch Notes
+# CommishAI Public Patch Notes
 
 ## v1.0.0 — Public Beta
 

@@ -19,12 +19,11 @@ async function assignTeam({ guild, member, leagueId, league = null, team, timezo
   if (!member?.id) return typedFailure('MEMBER_REQUIRED', 'A valid guild member is required.');
   if (!team) return typedFailure('TEAM_REQUIRED', 'Choose a team.');
 
-  let resolvedLeague = league;
-  if (!resolvedLeague) {
-    const resolved = leagueResolver.resolveLeague(leagueId, { guildId: guild.id, mode: 'joinable' });
-    if (!resolved.ok) return typedFailure(resolved.code || 'LEAGUE_NOT_FOUND', resolved.message || 'League not found.');
-    resolvedLeague = resolved.league;
-  }
+  // A caller-provided object is a hint, not authority. Re-read status and guild
+  // at execution time even for a button or an earlier autocomplete result.
+  const resolved = leagueResolver.resolveLeague(leagueId || league?.id, { guildId: guild.id, mode: 'joinable' });
+  if (!resolved.ok) return typedFailure(resolved.code || 'LEAGUE_NOT_FOUND', resolved.message || 'League not found.');
+  const resolvedLeague = resolved.league;
   const canonicalLeagueId = String(resolvedLeague.id);
   const available = openTeamsService.getOpenTeamsForLeague(canonicalLeagueId) || [];
   const candidate = available.find(t => norm(t.baseTeam) === norm(team) || norm(t.displayTeam) === norm(team));

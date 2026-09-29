@@ -10,6 +10,7 @@
 
 
 'use strict';
+const interactionExecution = require('./interactionExecutionContext');
 
 const {
   EmbedBuilder, ActionRowBuilder,
@@ -38,8 +39,8 @@ function _buildLeagueRows(opts, context = {}) {
   }).rows;
 }
 
-function leagueOptions(state) {
-  return activeLeagueService.listResetOptions(state).slice(0,25).map(l => ({
+function leagueOptions(state, guildId = null) {
+  return activeLeagueService.listJoinableLeagues({ guildId:guildId || state?.guildId || null }).slice(0,25).map(l => ({
     label: String(l.leagueName || 'League').slice(0,100),
     value: String(l.id),
     description: String(activeLeagueService.leagueTypeLabel(l.leagueTypeId)).slice(0,100),
@@ -74,24 +75,25 @@ function _selectedLeaguePayload(league, state, context = {}) {
 }
 
 async function sendJoinLeaguePrompt(interaction, state, requestedLeagueId = null) {
-  const opts = leagueOptions(state);
+  const opts = leagueOptions(state, interaction.guildId || interaction.guild?.id || null);
   if (!opts.length) {
-    return interaction.reply({ content: '🏗️ No active league exists yet. A commissioner can create the first league with `/setup-league`. A separate league-enabled community is not required.', flags: 64 });
+    return interactionExecution.for(interaction).reply({ content: '🏗️ No active league exists yet. A commissioner can create the first league with `/setup-league`. A separate league-enabled community is not required.', flags: 64 });
   }
   if (requestedLeagueId && requestedLeagueId !== '_none_') {
-    const selected = activeLeagueService.getLeague(requestedLeagueId) || activeLeagueService.listResetOptions(state).find(l => String(l.id) === String(requestedLeagueId));
-    if (selected) return interaction.reply({ ..._selectedLeaguePayload(selected, state, { guildId:interaction.guildId, actorId:interaction.user.id }), flags:64 });
+    const resolved = require('./leagueResolverService').resolveLeague(requestedLeagueId, { guildId:interaction.guildId || interaction.guild?.id, mode:'joinable' });
+    if (!resolved.ok) return interactionExecution.for(interaction).reply({ content:`❌ ${resolved.message}`, flags:64 });
+    return interactionExecution.for(interaction).reply({ ..._selectedLeaguePayload(resolved.league, state, { guildId:interaction.guildId, actorId:interaction.user.id }), flags:64 });
   }
   const totalOpen = Array.isArray(state.openTeamRegistry) ? state.openTeamRegistry.filter(t => t.isOpen).length : 0;
   const rows = _buildLeagueRows(opts, { guildId:interaction.guildId, actorId:interaction.user.id });
-  return interaction.reply({
+  return interactionExecution.for(interaction).reply({
     embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle('🏟 Join a League').setDescription(totalOpen > 0 ? 'Pick the exact league you want to join. Team choices shown next are scoped only to that league.' : 'Pick a league to browse. Standard slots may be full right now, so you may need the wait-list or a custom-team path depending on the league.').setTimestamp()],
     components:rows, flags:64
   });
 }
 
 async function sendJoinLeaguePromptFromMessage(message, state) {
-  const opts = leagueOptions(state);
+  const opts = leagueOptions(state, message.guild?.id || null);
   const totalOpen = Array.isArray(state.openTeamRegistry) ? state.openTeamRegistry.filter(t => t.isOpen).length : 0;
   if (!opts.length) {
     return message.channel.send({ content: '❌ No active leagues exist yet. The commissioner must run `/setup-league league-name:<name>` first.' });
@@ -108,17 +110,18 @@ async function handleJoinInteraction(interaction, state) {
   const cid = interaction.customId;
   if (interaction.isStringSelectMenu?.() && cid === 'join_league_select') {
     const leagueId = interaction.values[0];
-    const league = activeLeagueService.getLeague(leagueId);
-    if (!league) return interaction.update({ content:'❌ League not found anymore.', components:[], embeds:[] });
-    return interaction.update(_selectedLeaguePayload(league, state, { guildId:interaction.guildId, actorId:interaction.user.id }));
+    const resolved = require('./leagueResolverService').resolveLeague(leagueId, { guildId:interaction.guildId, mode:'joinable' });
+    if (!resolved.ok) return interactionExecution.for(interaction).update({ content:`❌ ${resolved.message}`, components:[], embeds:[] });
+    return interactionExecution.for(interaction).update(_selectedLeaguePayload(resolved.league, state, { guildId:interaction.guildId, actorId:interaction.user.id }));
   }
 
   if (interaction.isStringSelectMenu?.() && cid.startsWith('join_team_select::')) {
     const leagueId = cid.split('::')[1];
     const team = interaction.values[0];
-    const league = activeLeagueService.getLeague(leagueId);
-    if (!league) return interaction.update({ content:'❌ League not found anymore.', embeds:[], components:[] });
-    return interaction.update({
+    const resolved = require('./leagueResolverService').resolveLeague(leagueId, { guildId:interaction.guildId, mode:'joinable' });
+    if (!resolved.ok) return interactionExecution.for(interaction).update({ content:`❌ ${resolved.message}`, embeds:[], components:[] });
+    const league = resolved.league;
+    return interactionExecution.for(interaction).update({
       embeds:[new EmbedBuilder().setColor(0x5865f2).setTitle(`👋 One last step for ${league.leagueName}`).setDescription(`**Team:** ${team}\n\nChoose your timezone. After it saves, your team claim is finalized and your timezone nickname suffix is applied.`).setTimestamp()],
       components:[require('./timezoneGateService').buildTimezoneSelectRow(`join_tz::${leagueId}::${encodeURIComponent(team)}`, { guildId:interaction.guildId, actorId:interaction.user.id, public:false })],
     });
@@ -128,13 +131,13 @@ async function handleJoinInteraction(interaction, state) {
     const [, leagueId, encTeam] = cid.split('::');
     const team = decodeURIComponent(encTeam || '');
     const timezone = normalizeTimezone(interaction.values?.[0] || '');
-    if (!timezone) return interaction.reply({ content:'❌ Invalid timezone choice.', flags:64 });
+    if (!timezone) return interactionExecution.for(interaction).reply({ content:'❌ Invalid timezone choice.', flags:64 });
     const result = await claimTeam(interaction.guild, interaction.member, team, { timezone, leagueId });
-    if (!result.success) return interaction.update({ content:`❌ ${result.reason}`, embeds:[], components:[] });
+    if (!result.success) return interactionExecution.for(interaction).update({ content:`❌ ${result.reason}`, embeds:[], components:[] });
     memberProfiles.upsertProfile(interaction.member.id, { timezone, timezoneLabel:nicknamePolicy.timezoneLabel(timezone) });
     const nick = await nicknamePolicy.syncMemberNickname(interaction.member, state, { reason:'League join onboarding complete' }).catch(() => null);
     onboardingService.markTimezoneComplete(interaction.member.id, leagueId, timezone, nick);
-    return interaction.update({
+    return interactionExecution.for(interaction).update({
       content:'',
       embeds:[new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ Welcome to ${result.entry.leagueName || 'your league'}`).setDescription(`You joined as **${result.entry.displayTeam}**.\n\n**Timezone:** ${nicknamePolicy.timezoneLabel(timezone) || timezone}\n**League:** ${result.entry.leagueName || leagueId}\n\nYour league access and scheduling profile are ready.`).setTimestamp()],
       components:[],
@@ -160,11 +163,11 @@ async function handleJoinModal(interaction, state, guild, grantMemberAccess) {
     const [, leagueId, encTeam] = cid.split('::');
     const team = decodeURIComponent(encTeam || '');
     const timezone = normalizeTimezone(interaction.fields.getTextInputValue('timezone'));
-    if (!timezone) return interaction.reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
+    if (!timezone) return interactionExecution.for(interaction).reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
     const result = await claimTeam(guild, interaction.member, team, { timezone, leagueId });
-    if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
+    if (!result.success) return interactionExecution.for(interaction).reply({ content:`❌ ${result.reason}`, flags:64 });
 
-    return interaction.reply({ content:`✅ You joined **${result.entry.leagueName || 'the league'}** as **${result.entry.displayTeam}**. Timezone saved as **${timezone}**.`, flags:64 });
+    return interactionExecution.for(interaction).reply({ content:`✅ You joined **${result.entry.leagueName || 'the league'}** as **${result.entry.displayTeam}**. Timezone saved as **${timezone}**.`, flags:64 });
   }
 
   if (cid.startsWith('join_custom_team_modal::')) {
@@ -173,12 +176,12 @@ async function handleJoinModal(interaction, state, guild, grantMemberAccess) {
     const replacementFor = interaction.fields.getTextInputValue('replacement_slot');
     const logoUrl = interaction.fields.getTextInputValue('logo_url');
     const timezone = normalizeTimezone(interaction.fields.getTextInputValue('timezone'));
-    if (!timezone) return interaction.reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
+    if (!timezone) return interactionExecution.for(interaction).reply({ content:'❌ Invalid timezone. Use `America/Los_Angeles`, `America/New_York`, `UTC`, `EST`, or `PST`.', flags:64 });
     const result = await createOrClaimCustomTeam(guild, interaction.member, { leagueId, teamName, replacementFor, logoUrl, timezone });
-    if (!result.success) return interaction.reply({ content:`❌ ${result.reason}`, flags:64 });
+    if (!result.success) return interactionExecution.for(interaction).reply({ content:`❌ ${result.reason}`, flags:64 });
 
     const replaceText = result.entry.replacementFor ? ` replacing **${result.entry.replacementFor}**` : '';
-    return interaction.reply({ content:`✅ Welcome to **${result.entry.leagueName || 'the league'}**. Custom team **${result.entry.displayTeam}** joined${replaceText}. Timezone saved as **${timezone}** and your scheduling profile is ready.`, flags:64 });
+    return interactionExecution.for(interaction).reply({ content:`✅ Welcome to **${result.entry.leagueName || 'the league'}**. Custom team **${result.entry.displayTeam}** joined${replaceText}. Timezone saved as **${timezone}** and your scheduling profile is ready.`, flags:64 });
   }
 }
 

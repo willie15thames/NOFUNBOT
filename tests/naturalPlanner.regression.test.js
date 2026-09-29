@@ -21,33 +21,36 @@ function league(id,name){ return {id,leagueName:name,status:'active'}; }
 (async()=>{
   const Paul=member('900000000000000002','Paul'); const Sam=member('900000000000000003','Sam'); const Comm=member('900000000000000001','Comm');
   activeLeagueService.getLeague = id => ({l1:league('l1','Sunday League'),l2:league('l2','Weeknight League')})[id]||null;
+  const assignment = require('../src/application/teamAssignmentUseCase');
+  const realAssign = assignment.assignTeam;
 
   await test('new full request clears stale member from prior ambiguity', async()=>{
     planner.clearPending(); const s=state([
       {leagueId:'l1',baseTeam:'Ravens',displayTeam:'Ravens',isOpen:true}, {leagueId:'l2',baseTeam:'Ravens',displayTeam:'Ravens',isOpen:true},
       {leagueId:'l1',baseTeam:'Jets',displayTeam:'Jets',isOpen:true},
     ]);
-    let claims=[];
+    let claims=[]; assignment.assignTeam=async input=>{claims.push(input);return {success:true,entry:{displayTeam:input.team},league:activeLeagueService.getLeague(input.leagueId)};};
     let r=await planner.tryHandleCommissionerMessage(fakeMessage('put Paul on the Ravens',[Comm,Paul,Sam]),{state:s,claimTeam:async(...a)=>{claims.push(a);return {success:true,entry:a[2]};}});
     assert.equal(r.handled,true); assert.match(r.reply,/more than one league/i); assert.equal(claims.length,0);
     r=await planner.tryHandleCommissionerMessage(fakeMessage('put Sam on the Jets',[Comm,Paul,Sam]),{state:s,claimTeam:async(g,m,t,o)=>{claims.push({m,t,o});return {success:true,entry:{leagueId:o.leagueId,displayTeam:t}};}});
-    assert.equal(r.executed,true); assert.equal(claims.length,1); assert.equal(claims[0].m.id,Sam.id);
+    assert.equal(r.executed,true); assert.equal(claims.length,1); assert.equal(claims[0].member.id,Sam.id);
   });
 
   await test('unique team across multiple leagues executes without league clarification', async()=>{
     planner.clearPending(); const s=state([{leagueId:'l1',baseTeam:'Ravens',displayTeam:'Ravens',isOpen:true},{leagueId:'l2',baseTeam:'Jets',displayTeam:'Jets',isOpen:true}]);
-    let got=null; const r=await planner.tryHandleCommissionerMessage(fakeMessage('put Paul on the Ravens',[Comm,Paul]),{state:s,claimTeam:async(g,m,t,o)=>{got={m,t,o};return {success:true,entry:{leagueId:o.leagueId,displayTeam:t}};}});
-    assert.equal(r.executed,true); assert.equal(got.m.id,Paul.id); assert.equal(got.o.leagueId,'l1');
+    let got=null; assignment.assignTeam=async input=>{got=input;return {success:true,entry:{displayTeam:input.team},league:activeLeagueService.getLeague(input.leagueId)};}; const r=await planner.tryHandleCommissionerMessage(fakeMessage('put Paul on the Ravens',[Comm,Paul]),{state:s,claimTeam:async(g,m,t,o)=>{got={m,t,o};return {success:true,entry:{leagueId:o.leagueId,displayTeam:t}};}});
+    assert.equal(r.executed,true); assert.equal(got.member.id,Paul.id); assert.equal(got.leagueId,'l1');
   });
 
   await test('duplicate team asks league then explicit mention follow-up resumes safely', async()=>{
     planner.clearPending(); const s=state([{leagueId:'l1',baseTeam:'Ravens',displayTeam:'Ravens',isOpen:true},{leagueId:'l2',baseTeam:'Ravens',displayTeam:'Ravens',isOpen:true}]);
-    let claims=[]; let r=await planner.tryHandleCommissionerMessage(fakeMessage('put Paul on the Ravens',[Comm,Paul]),{state:s,claimTeam:async()=>{throw new Error('should not claim yet');}});
+    let claims=[]; assignment.assignTeam=async input=>{claims.push(input);return {success:true,entry:{displayTeam:input.team},league:activeLeagueService.getLeague(input.leagueId)};}; let r=await planner.tryHandleCommissionerMessage(fakeMessage('put Paul on the Ravens',[Comm,Paul]),{state:s,claimTeam:async()=>{throw new Error('should not claim yet');}});
     assert.match(r.reply,/which league/i);
     r=await planner.tryHandleCommissionerMessage(fakeMessage('Sunday League',[Comm,Paul]),{state:s,claimTeam:async(g,m,t,o)=>{claims.push({m,t,o});return {success:true,entry:{leagueId:o.leagueId,displayTeam:t}};}});
-    assert.equal(r.executed,true); assert.equal(claims[0].m.id,Paul.id); assert.equal(claims[0].o.leagueId,'l1');
+    assert.equal(r.executed,true); assert.equal(claims[0].member.id,Paul.id); assert.equal(claims[0].leagueId,'l1');
   });
 
+  assignment.assignTeam=realAssign;
   const catalogCases=[
     ['create a channel called film-room',{type:'create_channel',name:'film-room'}],
     ['rename channel film-room to scouting',{type:'rename_channel',oldName:'film-room',newName:'scouting'}],

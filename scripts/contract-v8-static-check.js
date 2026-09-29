@@ -22,6 +22,30 @@ for (const file of files) {
   if (text.includes('StringSelectMenuBuilder')) fail(`${rel}: production select menu builder remains`);
   if (/\|\|\s*true\b/.test(text)) fail(`${rel}: always-true "|| true" expression remains`);
 }
+
+const activeLeague=fs.readFileSync(path.join(SRC,'services/activeLeagueService.js'),'utf8');
+const setModeBody=(activeLeague.match(/function setDataSourceMode\([\s\S]*?\n\}/)||[''])[0];
+if (/external_sync'\s*\?\s*'external_sync'\s*:\s*'custom_bot_managed'/.test(setModeBody)) {
+  fail('src/services/activeLeagueService.js: unknown data source modes are still silently coerced');
+}
+if (!/allowed\s*=\s*new Set\(\['external_sync','custom_bot_managed'\]\)/.test(activeLeague)) {
+  fail('src/services/activeLeagueService.js: data source mode allowlist/fail-closed guard missing');
+}
+const leagueResolver=fs.readFileSync(path.join(SRC,'services/leagueResolverService.js'),'utf8');
+for (const code of ['LEAGUE_ARCHIVED','LEAGUE_ARCHIVING','LEAGUE_WRONG_GUILD','LEAGUE_AMBIGUOUS','LEAGUE_NOT_FOUND']) {
+  if (!leagueResolver.includes(code)) fail(`src/services/leagueResolverService.js: typed league resolution code ${code} missing`);
+}
+if (!leagueResolver.includes('listLeagueRecords()')) {
+  fail('src/services/leagueResolverService.js: resolver must identify canonical record before lifecycle filtering');
+}
+const joinLeague=fs.readFileSync(path.join(SRC,'services/joinLeagueService.js'),'utf8');
+if (/function leagueOptions[\s\S]{0,500}listResetOptions\(/.test(joinLeague)) {
+  fail('src/services/joinLeagueService.js: membership flow still admits synthetic reset/recovery fallback records');
+}
+if (!/function leagueOptions[\s\S]{0,500}listJoinableLeagues\(/.test(joinLeague)) {
+  fail('src/services/joinLeagueService.js: membership candidates must use listJoinableLeagues');
+}
+
 const anthropic=fs.readFileSync(path.join(SRC,'services/ai/anthropicService.js'),'utf8');
 if (/Promise\.race\s*\(/.test(anthropic)) fail('src/services/ai/anthropicService.js: duplicate Promise.race timeout owner remains');
 const planner=fs.readFileSync(path.join(SRC,'services/naturalActionPlannerService.js'),'utf8');

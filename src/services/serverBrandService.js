@@ -19,6 +19,6 @@ function resolveServerName(source, fallback = 'this server') {
 }
 function replaceBrand(text, source, fallback = 'this server') {
   const serverName = resolveServerName(source, fallback);
-  return String(text || '').replace(/NOFUNLEAGUE/gi, serverName);
+  return String(text || '').replace(/NOFUNLEAGUE|COMMISHAI/gi, serverName);
 }
 module.exports = { resolveServerName, replaceBrand };

@@ -148,9 +148,10 @@ async function _pickPrimaryCategory(guild) {
     .sort((a, b) => (_channelRank(b) - _channelRank(a)) || (a.rawPosition - b.rawPosition));
   let cat = matches.first();
   if (!cat) {
-    // V198 FIX: Use findOrCreateCategory instead of raw guild.channels.create
-    const { findOrCreateCategory } = require('./baseInitService');
-    cat = await findOrCreateCategory(guild, CATEGORY_NAME);
+    // G3: patch notes no longer imports baseInitService. This avoids a service cycle while
+    // retaining exact-name reuse and Discord-side creation as this service's own asset authority.
+    cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && _normalizeName(c.name) === _normalizeName(CATEGORY_NAME));
+    if (!cat) cat = await guild.channels.create({ name: CATEGORY_NAME, type: ChannelType.GuildCategory });
   } else if (cat.name !== CATEGORY_NAME) {
     await cat.setName(CATEGORY_NAME).catch(() => null);
   }
